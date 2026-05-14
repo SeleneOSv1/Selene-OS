@@ -21163,6 +21163,12 @@ fn committed_voice_unsafe_transcript_reason(
             Ph1cRetryAdvice::Repeat,
         ));
     }
+    if committed_voice_severe_non_speech_capture_artifact(trimmed, capture) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
     if committed_voice_cjk_noise_or_filler_fragment(trimmed) {
         return Some((
             ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
@@ -21666,6 +21672,37 @@ fn committed_voice_unclear_short_latin_fragment(transcript_text: &str) -> bool {
                 | "mizeri"
         )
     })
+}
+
+fn committed_voice_severe_non_speech_capture_artifact(
+    transcript_text: &str,
+    capture: &VoiceTurnAudioCaptureRef,
+) -> bool {
+    if transcript_text.chars().any(is_cjk_char_for_build1c) {
+        return false;
+    }
+
+    let lower = transcript_text.to_ascii_lowercase();
+    if committed_voice_has_protected_latin_action(&lower) {
+        return false;
+    }
+
+    let words: Vec<&str> = lower
+        .split(|ch: char| !ch.is_ascii_alphabetic() && ch != '\'')
+        .filter(|word| !word.is_empty())
+        .collect();
+    if words.is_empty() || words.len() > 8 {
+        return false;
+    }
+
+    let severe_capture_evidence = (capture.capture_degraded.unwrap_or(false)
+        || capture.stream_gap_detected.unwrap_or(false))
+        && bp_to_confidence(capture.vad_confidence_bp, 1.0) < 0.60
+        && bp_to_confidence(capture.acoustic_confidence_bp, 1.0) < 0.60
+        && bp_to_confidence(capture.speech_likeness_bp, 1.0) < 0.60
+        && bp_to_confidence(capture.echo_safe_confidence_bp, 1.0) < 0.60
+        && bp_to_confidence(capture.nearfield_confidence_bp, 0.0) < 0.55;
+    severe_capture_evidence
 }
 
 fn committed_voice_has_actionable_latin_intent(lower: &str) -> bool {
@@ -40196,6 +40233,71 @@ mod tests {
         assert!(out.response_text.is_empty());
         assert!(out.tts_text.is_empty());
         assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_short_latin_noise_question_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_118_1;
+        req.turn_id = 420_118_1;
+        req.user_text_final = Some("Do you have a bike?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(2_400);
+            capture.vad_confidence_bp = Some(2_500);
+            capture.prosody_confidence_bp = Some(2_000);
+            capture.speech_likeness_bp = Some(1_800);
+            capture.echo_safe_confidence_bp = Some(2_000);
+            capture.nearfield_confidence_bp = None;
+            capture.capture_degraded = Some(true);
+            capture.stream_gap_detected = Some(false);
+            capture.aec_unstable = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("short Latin non-speech hallucination should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_valid_short_latin_question_still_dispatches() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_118_2;
+        req.turn_id = 420_118_2;
+        req.user_text_final = Some("Do you have a bike?".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.prosody_confidence_bp = Some(8_800);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_200);
+            capture.nearfield_confidence_bp = Some(8_300);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+            capture.aec_unstable = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("valid short Latin question should dispatch");
+        assert_eq!(out.status, "ok");
+        assert_ne!(out.outcome, "IGNORED");
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_some());
     }
 
     #[test]

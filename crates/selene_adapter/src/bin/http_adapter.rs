@@ -1886,7 +1886,7 @@ const OPENAI_REALTIME_TRANSCRIPTION_LANGUAGE_HINT_POLICY: &str =
     "provider_auto_detect_neutral_prompt";
 
 fn openai_realtime_transcription_prompt() -> &'static str {
-    "Transcribe exactly in the speaker's language. Auto-detect Chinese, English, and mixed Chinese/English. Preserve code-switching. Do not translate."
+    "Transcribe exactly in the speaker's language. Auto-detect Chinese, English, and mixed Chinese/English. Preserve code-switching. Do not translate. If the audio is cough, breath, transient noise, background noise, or has no clear spoken words, return an empty transcript. Never infer or invent conversational text from non-speech audio."
 }
 
 fn openai_api_key_for_realtime_transcription() -> Result<String, String> {
@@ -2328,7 +2328,7 @@ fn desktop_openai_tts_failure_response(
         session_id: request.session_id.clone(),
         turn_id: request.turn_id.clone(),
         request_id: request.request_id.clone(),
-        fallback_allowed: true,
+        fallback_allowed: false,
         ai_voice_disclosure: "synthetic_ai_voice".to_string(),
     }
 }
@@ -4164,6 +4164,11 @@ mod tests {
         assert!(request_text.contains("Auto-detect Chinese, English, and mixed Chinese/English"));
         assert!(request_text.contains("Preserve code-switching"));
         assert!(request_text.contains("Do not translate"));
+        assert!(request_text.contains("return an empty transcript"));
+        assert!(
+            request_text
+                .contains("Never infer or invent conversational text from non-speech audio")
+        );
         assert!(request_text.contains("\"noise_reduction\":{\"type\":\"near_field\"}"));
         assert!(!request_text.contains("OpenAI-Beta"));
         assert!(!request_text.contains("\"language\""));
@@ -4239,7 +4244,7 @@ mod tests {
         let serialized = serde_json::to_string(&body).expect("response should serialize");
         assert!(!serialized.contains("sk-"));
         assert!(body.audio_base64.is_none());
-        assert!(body.fallback_allowed);
+        assert!(!body.fallback_allowed);
         let _ = fs::remove_file(vault_path);
         let _ = fs::remove_file(key_path);
     }
@@ -4307,7 +4312,7 @@ mod tests {
             body.safe_failure_reason.as_deref(),
             Some("openai_tts_request_failed")
         );
-        assert!(body.fallback_allowed);
+        assert!(!body.fallback_allowed);
         let serialized = serde_json::to_string(&body).expect("response should serialize");
         for forbidden in [
             permanent_key,

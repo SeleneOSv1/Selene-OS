@@ -2,6 +2,9 @@ import AppKit
 import SwiftUI
 
 final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
+    private var mainWindow: NSWindow?
+    private var mainWindowDelegate: SeleneMacDesktopMainWindowDelegate?
+
     override init() {
         super.init()
         NSLog("SeleneMacDesktop app delegate initialized")
@@ -30,13 +33,14 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
+        showMainWindow()
     }
 
     func applicationShouldHandleReopen(
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        sender.activate(ignoringOtherApps: true)
+        showMainWindow()
         return false
     }
 
@@ -90,6 +94,44 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
 
         return modifiedAt
     }
+
+    private func showMainWindow() {
+        let window: NSWindow
+        if let existingWindow = mainWindow {
+            window = existingWindow
+        } else {
+            let hostingController = NSHostingController(rootView: DesktopSessionShellView())
+            let mainWindowDelegate = SeleneMacDesktopMainWindowDelegate()
+            let createdWindow = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 1220, height: 760),
+                styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                backing: .buffered,
+                defer: false
+            )
+            createdWindow.title = "Selene"
+            createdWindow.contentViewController = hostingController
+            createdWindow.delegate = mainWindowDelegate
+            createdWindow.setFrameAutosaveName("SeleneMainWindow")
+            createdWindow.center()
+            self.mainWindow = createdWindow
+            self.mainWindowDelegate = mainWindowDelegate
+            window = createdWindow
+        }
+
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        NSApplication.shared.unhide(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+}
+
+private final class SeleneMacDesktopMainWindowDelegate: NSObject, NSWindowDelegate {
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        sender.orderOut(nil)
+        return false
+    }
 }
 
 @main
@@ -98,16 +140,11 @@ struct SeleneMacDesktopApp: App {
     private var appDelegate: SeleneMacDesktopAppDelegate
 
     var body: some Scene {
-        Window("Selene", id: "selene-main") {
-            DesktopSessionShellView()
-        }
-        .defaultSize(width: 1220, height: 760)
-        .commands {
-            CommandGroup(replacing: .newItem) {}
-        }
-
         Settings {
             EmptyView()
+        }
+        .commands {
+            CommandGroup(replacing: .newItem) {}
         }
     }
 }

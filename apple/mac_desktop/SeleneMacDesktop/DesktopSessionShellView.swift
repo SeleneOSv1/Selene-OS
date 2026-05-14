@@ -172,7 +172,6 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
     case thinkingProcessing = "thinking_processing"
     case ttsPreparing = "tts_preparing"
     case speaking = "speaking"
-    case fallbackSpeaking = "fallback_speaking"
     case mutedNotListening = "muted_not_listening"
     case errorDegraded = "error_degraded"
     case hiddenAvailable = "hidden_available"
@@ -183,14 +182,14 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
         case .mutedNotListening, .unavailableFailClosed:
             return "Off"
         case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking,
-             .fallbackSpeaking, .errorDegraded, .hiddenAvailable:
+             .errorDegraded, .hiddenAvailable:
             return "On"
         }
     }
 
     var shouldPulseDockIcon: Bool {
         switch self {
-        case .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking, .fallbackSpeaking:
+        case .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking:
             return true
         case .idleAvailable, .mutedNotListening, .errorDegraded, .hiddenAvailable, .unavailableFailClosed:
             return false
@@ -1634,6 +1633,10 @@ private struct DesktopAudioEvidenceAccumulator {
     private(set) var lastAudioBufferNS: UInt64?
     private(set) var maxInterBufferGapNS: UInt64 = 0
     private(set) var audioBufferCount: UInt64 = 0
+    private(set) var audibleAudioDurationNS: UInt64 = 0
+    private(set) var speechLikeAudioDurationNS: UInt64 = 0
+    private(set) var speechLikeBufferCount: UInt64 = 0
+    private(set) var impulsiveNoiseBufferCount: UInt64 = 0
     private(set) var appendedAudioBytes: UInt64 = 0
     private(set) var peakSampleMagnitude: Int32 = 0
     private(set) var accumulatedMeanSquare: Double = 0
@@ -1643,6 +1646,10 @@ private struct DesktopAudioEvidenceAccumulator {
         lastAudioBufferNS = nil
         maxInterBufferGapNS = 0
         audioBufferCount = 0
+        audibleAudioDurationNS = 0
+        speechLikeAudioDurationNS = 0
+        speechLikeBufferCount = 0
+        impulsiveNoiseBufferCount = 0
         appendedAudioBytes = 0
         peakSampleMagnitude = 0
         accumulatedMeanSquare = 0
@@ -1664,15 +1671,51 @@ private struct DesktopAudioEvidenceAccumulator {
         let samples = UnsafeBufferPointer(start: channelData[0], count: Int(buffer.frameLength))
         var localPeak: Int32 = 0
         var localSquareSum = 0.0
+        var localZeroCrossings = 0
+        var previousNonZeroSign: Int?
         for sample in samples {
-            let magnitude = Int32(abs(Int(sample)))
+            let sampleValue = Int(sample)
+            let magnitude = Int32(abs(sampleValue))
             localPeak = Swift.max(localPeak, magnitude)
             let normalized = Double(sample) / 32_768.0
             localSquareSum += normalized * normalized
+            let sign = sampleValue > 0 ? 1 : (sampleValue < 0 ? -1 : 0)
+            if sign != 0 {
+                if let previousNonZeroSign, previousNonZeroSign != sign {
+                    localZeroCrossings += 1
+                }
+                previousNonZeroSign = sign
+            }
         }
 
         peakSampleMagnitude = Swift.max(peakSampleMagnitude, localPeak)
         accumulatedMeanSquare += localSquareSum
+
+        let sampleCount = Swift.max(samples.count, 1)
+        let localRMS = sqrt(localSquareSum / Double(sampleCount))
+        let localPeakRatio = Double(localPeak) / 32_768.0
+        let zeroCrossingRate = Double(localZeroCrossings) / Double(sampleCount)
+        let crestFactor = localPeakRatio / Swift.max(localRMS, 0.000_001)
+        let frameDurationNS = UInt64(
+            (Double(buffer.frameLength) / Swift.max(buffer.format.sampleRate, 1)) * 1_000_000_000
+        )
+        let audibleFrame = localPeakRatio >= 0.015 || localRMS >= 0.006
+        if audibleFrame {
+            audibleAudioDurationNS = audibleAudioDurationNS.saturatingAdd(frameDurationNS)
+        }
+
+        let speechLikeFrame = audibleFrame
+            && localRMS >= 0.0045
+            && zeroCrossingRate >= 0.004
+            && zeroCrossingRate <= 0.40
+            && crestFactor <= 32.0
+        if speechLikeFrame {
+            speechLikeAudioDurationNS = speechLikeAudioDurationNS.saturatingAdd(frameDurationNS)
+            speechLikeBufferCount &+= 1
+        } else if audibleFrame
+                    && (zeroCrossingRate < 0.004 || zeroCrossingRate > 0.45 || crestFactor > 40.0) {
+            impulsiveNoiseBufferCount &+= 1
+        }
     }
 
     func snapshot(
@@ -1699,6 +1742,19 @@ private struct DesktopAudioEvidenceAccumulator {
         let rms = appendedAudioBytes == 0 ? 0 : sqrt(accumulatedMeanSquare / Double(Swift.max(appendedAudioBytes / 2, 1)))
         let peakRatio = Double(peakSampleMagnitude) / 32_768.0
         let audibleEnergy = peakRatio >= 0.015 || rms >= 0.006
+        let transcriptTokenCount = Self.transcriptSpeechTokenCount(finalTranscript)
+        let requiredSpeechLikeDurationNS = Self.requiredSpeechLikeDurationNS(
+            transcriptTokenCount: transcriptTokenCount
+        )
+        let requiredSpeechLikeBuffers = Self.requiredSpeechLikeBufferCount(
+            transcriptTokenCount: transcriptTokenCount
+        )
+        let localSpeechEvidenceIsStrong = speechLikeAudioDurationNS >= requiredSpeechLikeDurationNS
+            && speechLikeBufferCount >= requiredSpeechLikeBuffers
+        let localSpeechEvidenceIsWeak = finalTranscriptPresent && !localSpeechEvidenceIsStrong
+        let impulsiveNoiseDominates = audibleAudioDurationNS > 0
+            && speechLikeAudioDurationNS.saturatingMultiply(2) < audibleAudioDurationNS
+            && impulsiveNoiseBufferCount > speechLikeBufferCount
 
         let evidenceClass: DesktopAudioEvidenceClass
         if finalTranscriptMatchesTtsEcho {
@@ -1710,6 +1766,10 @@ private struct DesktopAudioEvidenceAccumulator {
         } else if streamGapDetected {
             evidenceClass = .unsafeUncertain
         } else if !finalTranscriptPresent && audibleEnergy {
+            evidenceClass = .noiseRejected
+        } else if localSpeechEvidenceIsWeak {
+            evidenceClass = .noiseRejected
+        } else if finalTranscriptPresent && transcriptTokenCount > 1 && impulsiveNoiseDominates {
             evidenceClass = .noiseRejected
         } else if finalTranscriptPresent && audibleEnergy {
             evidenceClass = .safeUserSpeech
@@ -1730,9 +1790,50 @@ private struct DesktopAudioEvidenceAccumulator {
             peakRatio: peakRatio,
             rmsRatio: rms,
             audioBufferCount: audioBufferCount,
+            audibleAudioDurationNS: audibleAudioDurationNS,
+            speechLikeAudioDurationNS: speechLikeAudioDurationNS,
+            speechLikeBufferCount: speechLikeBufferCount,
+            impulsiveNoiseBufferCount: impulsiveNoiseBufferCount,
             appendedAudioBytes: appendedAudioBytes,
             maxInterBufferGapNS: maxInterBufferGapNS
         )
+    }
+
+    private static func transcriptSpeechTokenCount(_ text: String?) -> Int {
+        (text ?? "")
+            .split { character in
+                !character.isLetter && !character.isNumber
+            }
+            .filter { !$0.isEmpty }
+            .count
+    }
+
+    private static func requiredSpeechLikeDurationNS(transcriptTokenCount: Int) -> UInt64 {
+        switch transcriptTokenCount {
+        case 0:
+            return 240_000_000
+        case 1:
+            return 160_000_000
+        case 2...3:
+            return 320_000_000
+        case 4...6:
+            return 650_000_000
+        default:
+            return 900_000_000
+        }
+    }
+
+    private static func requiredSpeechLikeBufferCount(transcriptTokenCount: Int) -> UInt64 {
+        switch transcriptTokenCount {
+        case 0...1:
+            return 2
+        case 2...3:
+            return 3
+        case 4...6:
+            return 5
+        default:
+            return 7
+        }
     }
 
     private func matchesUnsafeEvidence(_ evidenceClass: DesktopAudioEvidenceClass) -> Bool {
@@ -1755,8 +1856,20 @@ private struct DesktopAudioEvidenceSnapshot: Equatable {
     let peakRatio: Double
     let rmsRatio: Double
     let audioBufferCount: UInt64
+    let audibleAudioDurationNS: UInt64
+    let speechLikeAudioDurationNS: UInt64
+    let speechLikeBufferCount: UInt64
+    let impulsiveNoiseBufferCount: UInt64
     let appendedAudioBytes: UInt64
     let maxInterBufferGapNS: UInt64
+
+    var audibleAudioDurationMS: UInt64 {
+        audibleAudioDurationNS / 1_000_000
+    }
+
+    var speechLikeAudioDurationMS: UInt64 {
+        speechLikeAudioDurationNS / 1_000_000
+    }
 
     var vadConfidenceBP: UInt16 {
         switch evidenceClass {
@@ -1884,6 +1997,16 @@ private struct DesktopAudioEvidenceSnapshot: Equatable {
 private extension UInt64 {
     func saturatingSubtract(_ other: UInt64) -> UInt64 {
         self >= other ? self - other : 0
+    }
+
+    func saturatingAdd(_ other: UInt64) -> UInt64 {
+        let (result, overflow) = self.addingReportingOverflow(other)
+        return overflow ? UInt64.max : result
+    }
+
+    func saturatingMultiply(_ other: UInt64) -> UInt64 {
+        let (result, overflow) = self.multipliedReportingOverflow(by: other)
+        return overflow ? UInt64.max : result
     }
 }
 
@@ -2117,7 +2240,7 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
         phase: .idle,
         title: "Authoritative reply playback idle",
         summary: "Playback remains available only for cloud-authored reply text that is already visible in the bounded reply surface.",
-        detail: "OpenAI TTS is requested first through the runtime bridge. Native macOS speech may be used only as bounded playback for already-rendered runtime reply text when the runtime TTS response allows fallback; this shell remains explicitly non-authoritative without transcript mutation, wake parity, or autonomous-unlock capability."
+        detail: "OpenAI TTS is the only approved audible Selene voice path. If OpenAI TTS is unavailable, the visible runtime answer remains, voice playback fails closed, and this shell does not use native macOS speech."
     )
 
     static func speaking(authoritativeResponseText: String) -> DesktopAuthoritativeReplyPlaybackState {
@@ -2154,15 +2277,6 @@ private struct DesktopAuthoritativeReplyPlaybackState: Equatable {
             title: "OpenAI TTS reply playback unavailable",
             summary: "Reply playback is unavailable because OpenAI TTS did not return audio and the runtime path did not allow fallback playback.",
             detail: "OPENAI_TTS_UNAVAILABLE reason=\(boundedFailureLogToken(reason)) native_macos_tts_attempted=false runtime_fallback_allowed=false fallback_counted_as_success=false"
-        )
-    }
-
-    static func playingNativeMacOSTTS(answerTextSHA256: String, fallbackReason: String) -> DesktopAuthoritativeReplyPlaybackState {
-        DesktopAuthoritativeReplyPlaybackState(
-            phase: .speaking,
-            title: "Runtime-allowed Apple fallback reply playback active",
-            summary: "Playing local speech for the already-rendered Selene runtime answer after the OpenAI TTS runtime path allowed fallback.",
-            detail: "PLAYING_NATIVE_MACOS_TTS answer_text_sha256=\(answerTextSHA256) openai_tts_unavailable_reason=\(boundedFailureLogToken(fallbackReason)) native_macos_tts=true runtime_fallback_allowed=true fallback_counted_as_success=true local_reply_synthesis=false"
         )
     }
 
@@ -2203,11 +2317,10 @@ private struct DesktopOpenAITtsPlaybackToken: Equatable {
 }
 
 @MainActor
-private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, AVAudioPlayerDelegate, AVSpeechSynthesizerDelegate {
+private final class DesktopAuthoritativeReplyPlaybackController: NSObject, ObservableObject, AVAudioPlayerDelegate {
     @Published private(set) var playbackState: DesktopAuthoritativeReplyPlaybackState = .idle
 
     private var openAIAudioPlayer: AVAudioPlayer?
-    private var nativeSpeechSynthesizer: AVSpeechSynthesizer?
     private var activeOpenAITtsToken: DesktopOpenAITtsPlaybackToken?
     private var stopWasRequested = false
 
@@ -2352,51 +2465,6 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
     }
 
     @discardableResult
-    func playRuntimeAllowedNativeMacOSTTSFallback(
-        authoritativeResponseText: String?,
-        answerTextSHA256: String,
-        fallbackReason: String
-    ) -> DesktopAuthoritativeReplyPlaybackState {
-        guard let authoritativeResponseText else {
-            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
-                summary: "Playback is unavailable because no cloud-authored reply text is present.",
-                detail: "This shell fails closed when canonical runtime reply text is missing and does not fabricate local speech content."
-            )
-            playbackState = failedState
-            return failedState
-        }
-
-        let trimmed = authoritativeResponseText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            let failedState = DesktopAuthoritativeReplyPlaybackState.failed(
-                summary: "Playback is unavailable because the reply text is empty.",
-                detail: "This shell fails closed when canonical runtime reply text is empty and does not synthesize substitute content."
-            )
-            playbackState = failedState
-            return failedState
-        }
-
-        stopAnyPlayback()
-        stopWasRequested = false
-        activeOpenAITtsToken = nil
-
-        let synthesizer = AVSpeechSynthesizer()
-        let utterance = AVSpeechUtterance(string: trimmed)
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
-        utterance.volume = 1.0
-        synthesizer.delegate = self
-        nativeSpeechSynthesizer = synthesizer
-        synthesizer.speak(utterance)
-
-        let playingState = DesktopAuthoritativeReplyPlaybackState.playingNativeMacOSTTS(
-            answerTextSHA256: answerTextSHA256,
-            fallbackReason: fallbackReason
-        )
-        playbackState = playingState
-        return playingState
-    }
-
-    @discardableResult
     func stop() -> DesktopAuthoritativeReplyPlaybackState {
         stopWasRequested = true
         stopAnyPlayback()
@@ -2418,13 +2486,6 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
             openAIAudioPlayer.stop()
         }
         openAIAudioPlayer = nil
-        if let nativeSpeechSynthesizer {
-            nativeSpeechSynthesizer.delegate = nil
-            if nativeSpeechSynthesizer.isSpeaking {
-                nativeSpeechSynthesizer.stopSpeaking(at: .immediate)
-            }
-        }
-        nativeSpeechSynthesizer = nil
     }
 
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
@@ -2453,43 +2514,6 @@ private final class DesktopAuthoritativeReplyPlaybackController: NSObject, Obser
                 summary: "OpenAI TTS reply playback could not decode the returned audio.",
                 detail: "PLAYBACK_FAILED fallback_counted_as_success=false"
             )
-        }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            guard nativeSpeechSynthesizer === synthesizer else {
-                return
-            }
-            synthesizer.delegate = nil
-            nativeSpeechSynthesizer = nil
-            activeOpenAITtsToken = nil
-            if stopWasRequested {
-                stopWasRequested = false
-                playbackState = .stopped()
-            } else {
-                playbackState = .completed()
-            }
-        }
-    }
-
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in
-            guard nativeSpeechSynthesizer === synthesizer else {
-                return
-            }
-            synthesizer.delegate = nil
-            nativeSpeechSynthesizer = nil
-            activeOpenAITtsToken = nil
-            if stopWasRequested {
-                stopWasRequested = false
-                playbackState = .stopped()
-            } else {
-                playbackState = .failed(
-                    summary: "Runtime-allowed Apple fallback TTS ended before completion.",
-                    detail: "NATIVE_MACOS_TTS_FAILED runtime_fallback_allowed=true fallback_counted_as_success=false local_reply_synthesis=false"
-                )
-            }
         }
     }
 
@@ -2860,6 +2884,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     @Published private(set) var transcriptPreview = ""
     @Published private(set) var pendingRequest: ExplicitVoiceTurnRequestState?
     @Published private(set) var failedRequest: InterruptContinuityResponseFailureState?
+    @Published private(set) var failedRequestSequence: UInt64 = 0
 
     private let maxVoiceTurnBytes = 16_384
     private let autoPrepareAfterSilenceDelay: TimeInterval = 1.8
@@ -2884,6 +2909,9 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     private var realtimeFirstAudioFrameNS: UInt64?
     private var realtimePreviewSuppressedForEchoTail = false
     private var realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
+    private var realtimeTransportReady = false
+    private var realtimeQueuedOutboundMessages: [String] = []
+    private let maxRealtimeQueuedOutboundMessages = 256
 
     init(locale: Locale? = nil) {
         _ = locale
@@ -2945,10 +2973,6 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
-        guard let websocketURL = URL(string: session.websocketURL) else {
-            return
-        }
-
         teardownRecognitionSession()
         realtimeSession = session
         realtimePartialTranscript = ""
@@ -2958,20 +2982,11 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeFirstDeltaNS = nil
         realtimeFirstAudioFrameNS = nil
         realtimePreviewSuppressedForEchoTail = false
+        realtimeTransportReady = false
+        realtimeQueuedOutboundMessages.removeAll(keepingCapacity: true)
         transcriptPreview = ""
-
-        let websocketTask = realtimeURLSession.webSocketTask(
-            with: websocketURL,
-            protocols: [
-                "realtime",
-                "openai-insecure-api-key.\(session.clientSecret)",
-            ]
-        )
-        realtimeWebSocketTask = websocketTask
-        websocketTask.resume()
-        receiveRealtimeTranscriptionEvents()
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) openai realtime transcription websocket_preconnect=true request=\(session.requestID)"
+            "\(desktopTraceClockFields()) openai realtime transcription prewarm token_ready=true websocket_preconnect=false request=\(session.requestID)"
         )
     }
 
@@ -3202,6 +3217,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             }
 
             if realtimeWebSocketTask == nil {
+                realtimeTransportReady = false
+                realtimeQueuedOutboundMessages.removeAll(keepingCapacity: true)
                 let websocketTask = realtimeURLSession.webSocketTask(
                     with: websocketURL,
                     protocols: [
@@ -3308,6 +3325,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     }
 
     private func sendRealtimeTranscriptionEvent(_ event: [String: Any]) {
+        let eventType = (event["type"] as? String) ?? "unknown"
         guard let websocketTask = realtimeWebSocketTask,
               JSONSerialization.isValidJSONObject(event),
               let data = try? JSONSerialization.data(withJSONObject: event),
@@ -3315,11 +3333,60 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        if eventType.hasPrefix("input_audio_buffer."), !realtimeTransportReady {
+            guard realtimeQueuedOutboundMessages.count < maxRealtimeQueuedOutboundMessages else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) openai realtime transcription outbound queue overflow event_type=\(boundedFailureLogToken(eventType)) redacted=true"
+                )
+                return
+            }
+
+            realtimeQueuedOutboundMessages.append(message)
+            if realtimeQueuedOutboundMessages.count == 1 {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) openai realtime transcription outbound queued awaiting_session_created=true event_type=\(boundedFailureLogToken(eventType))"
+                )
+            }
+            return
+        }
+
         websocketTask.send(.string(message)) { error in
             if error != nil {
                 desktopAppendRuntimeBridgeDebugLog(
-                    "openai realtime transcription send failure redacted=true"
+                    "openai realtime transcription send failure redacted=true event_type=\(boundedFailureLogToken(eventType))"
                 )
+            }
+        }
+    }
+
+    private func markRealtimeTranscriptionTransportReady() {
+        realtimeAudioQueue.async { [weak self] in
+            guard let self else {
+                return
+            }
+
+            self.realtimeTransportReady = true
+            guard !self.realtimeQueuedOutboundMessages.isEmpty else {
+                return
+            }
+
+            let messages = self.realtimeQueuedOutboundMessages
+            self.realtimeQueuedOutboundMessages.removeAll(keepingCapacity: true)
+            guard let websocketTask = self.realtimeWebSocketTask else {
+                return
+            }
+
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) openai realtime transcription outbound flush count=\(messages.count)"
+            )
+            for message in messages {
+                websocketTask.send(.string(message)) { error in
+                    if error != nil {
+                        desktopAppendRuntimeBridgeDebugLog(
+                            "openai realtime transcription send failure redacted=true event_type=queued_input_audio_buffer"
+                        )
+                    }
+                }
             }
         }
     }
@@ -3380,6 +3447,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         if eventType == "transcription_session.created" || eventType == "session.created" {
+            markRealtimeTranscriptionTransportReady()
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) openai realtime transcription session created observed=true"
             )
@@ -3683,6 +3751,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeFirstDeltaNS = nil
         realtimeFirstAudioFrameNS = nil
         realtimePreviewSuppressedForEchoTail = false
+        realtimeTransportReady = false
+        realtimeQueuedOutboundMessages.removeAll(keepingCapacity: true)
         realtimeAudioQueue.sync {
             realtimeAudioEvidenceAccumulator = DesktopAudioEvidenceAccumulator()
         }
@@ -3791,6 +3861,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             summary: summary,
             detail: detail
         )
+        failedRequestSequence &+= 1
     }
 
     private func refreshPermissionState() {
@@ -3906,7 +3977,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) clipping_ratio_bp=\(evidenceSnapshot.clippingRatioBP) buffers=\(evidenceSnapshot.audioBufferCount)"
+            "\(desktopTraceClockFields()) desktop audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) clipping_ratio_bp=\(evidenceSnapshot.clippingRatioBP) buffers=\(evidenceSnapshot.audioBufferCount) audible_ms=\(evidenceSnapshot.audibleAudioDurationMS) speech_like_ms=\(evidenceSnapshot.speechLikeAudioDurationMS) speech_like_buffers=\(evidenceSnapshot.speechLikeBufferCount) impulsive_noise_buffers=\(evidenceSnapshot.impulsiveNoiseBufferCount)"
         )
 
         return DesktopVoiceTurnAudioCaptureRefState(
@@ -4676,7 +4747,7 @@ private final class DesktopWakeListenerController: ObservableObject {
         }
 
         desktopAppendRuntimeBridgeDebugLog(
-            "desktop wake audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) clipping_ratio_bp=\(evidenceSnapshot.clippingRatioBP) buffers=\(evidenceSnapshot.audioBufferCount)"
+            "desktop wake audio evidence class=\(evidenceSnapshot.evidenceClass.rawValue) tts_active=\(evidenceSnapshot.ttsPlaybackActive) stream_gap=\(evidenceSnapshot.streamGapDetected) capture_degraded=\(evidenceSnapshot.captureDegraded) clipping_ratio_bp=\(evidenceSnapshot.clippingRatioBP) buffers=\(evidenceSnapshot.audioBufferCount) audible_ms=\(evidenceSnapshot.audibleAudioDurationMS) speech_like_ms=\(evidenceSnapshot.speechLikeAudioDurationMS) speech_like_buffers=\(evidenceSnapshot.speechLikeBufferCount) impulsive_noise_buffers=\(evidenceSnapshot.impulsiveNoiseBufferCount)"
         )
 
         return DesktopVoiceTurnAudioCaptureRefState(
@@ -7427,7 +7498,7 @@ struct DesktopSessionShellView: View {
             await dispatchPreparedExplicitVoiceRequestIfNeeded()
             await synchronizeDesktopWakeListenerLifecycleState()
         }
-        .task(id: explicitVoiceController.failedRequest?.id) {
+        .task(id: explicitVoiceController.failedRequestSequence) {
             if explicitVoiceController.failedRequest?.id == "failed_realtime_transcription_unsafe_audio_evidence"
                 || explicitVoiceController.failedRequest?.id == "failed_explicit_voice_unsafe_audio_evidence" {
                 desktopAppendRuntimeBridgeDebugLog(
@@ -10100,6 +10171,7 @@ struct DesktopSessionShellView: View {
               desktopComposerVoiceModeEnabled,
               [
                   "failed_realtime_transcription_connection",
+                  "failed_realtime_transcription_empty_transcript",
                   "failed_realtime_transcription_provider_transcription",
                   "failed_realtime_transcription_provider_error",
                   "failed_realtime_transcription_timeout",
@@ -11346,7 +11418,6 @@ struct DesktopSessionShellView: View {
         }
 
         let playbackState = desktopAuthoritativeReplyPlaybackState
-        let playbackUsesRuntimeAllowedFallback = playbackState.detail.contains("PLAYING_NATIVE_MACOS_TTS")
 
         if playbackState.phase == .failed {
             return snapshot(
@@ -11392,24 +11463,20 @@ struct DesktopSessionShellView: View {
 
         if playbackState.phase == .speaking {
             return snapshot(
-                playbackUsesRuntimeAllowedFallback ? .fallbackSpeaking : .speaking,
-                detail: playbackUsesRuntimeAllowedFallback
-                    ? "Selene is speaking the final runtime answer through a runtime-approved Apple fallback after OpenAI TTS failed."
-                    : "Selene is playing the final runtime reply through OpenAI TTS.",
+                .speaking,
+                detail: "Selene is playing the final runtime reply through OpenAI TTS.",
                 extraEvidenceRows: [
                     DesktopAvailabilityEvidenceRow(
                         label: "tts_policy",
-                        value: playbackUsesRuntimeAllowedFallback
-                            ? "runtime_allowed_native_fallback"
-                            : DesktopVoiceProviderLane.ttsProviderID
+                        value: DesktopVoiceProviderLane.ttsProviderID
                     ),
                     DesktopAvailabilityEvidenceRow(
                         label: "tts_state",
-                        value: playbackUsesRuntimeAllowedFallback ? "fallback_playing" : "openai_playing"
+                        value: "openai_playing"
                     ),
                     DesktopAvailabilityEvidenceRow(
                         label: "fallback",
-                        value: playbackUsesRuntimeAllowedFallback ? "apple_native" : "none"
+                        value: "none"
                     ),
                 ]
             )
@@ -20609,21 +20676,6 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop openai tts unavailable latency_ms=\(ttsLatencyMS) reason=\(fallbackReason) runtime_fallback_allowed=\(ttsFailure.fallbackAllowed)"
             )
-            if ttsFailure.fallbackAllowed {
-                desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
-                    .playRuntimeAllowedNativeMacOSTTSFallback(
-                        authoritativeResponseText: authoritativeResponseText,
-                        answerTextSHA256: answerTextSHA256,
-                        fallbackReason: fallbackReason
-                    )
-                desktopAppendRuntimeBridgeDebugLog(
-                    "\(desktopTraceClockFields()) desktop native macos tts fallback phase=\(desktopAuthoritativeReplyPlaybackState.phase.rawValue) reason=\(fallbackReason) runtime_fallback_allowed=true fallback_used=true fallback_counted_as_success=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking)"
-                )
-                if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
-                    releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "runtime_allowed_native_tts_fallback_failed")
-                }
-                return desktopAuthoritativeReplyPlaybackState.phase == .speaking
-            }
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
