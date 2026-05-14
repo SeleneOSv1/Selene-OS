@@ -566,6 +566,60 @@ Solo Shipping Mode does not relax determinism, contract safety, idempotency, aud
 
 speed is gained by removing ceremony, not by skipping engineering discipline
 
+Clean Replacement / No Dead Legacy Path Law
+
+When Codex fixes, replaces, reroutes, or repairs behavior, Codex must not simply add a new path and leave the old broken, duplicate, disconnected, or obsolete path behind.
+
+Before final testing and before commit, Codex must search for old code, stale helpers, duplicate owners, unused UI paths, unused assets, stale tests, obsolete feature branches, old routes, old status strings, old providers, old bridge paths, and disconnected replacement logic related to the changed function.
+
+Codex must remove obsolete code/assets/tests when they are no longer part of the current product behavior.
+
+Codex must not leave:
+
+duplicate owners
+
+unreachable old code
+
+stale UI paths
+
+unused assets
+
+obsolete tests
+
+dead helper functions
+
+old routing paths
+
+obsolete feature flags
+
+disconnected replacement logic
+
+shadow implementations
+
+stale app/runtime/adapter paths
+
+Exception:
+
+Old code may remain only when it is still required for migration, backward compatibility, active tests, API contract stability, audit/legal proof, rollback safety, documented feature flags, or an actively used runtime path.
+
+If any old path remains, Codex must prove it is still referenced and explain why it remains.
+
+Every implementation build must include a Legacy Cleanup Proof section in the final report:
+
+searches performed for old strings/functions/routes/assets/tests
+
+obsolete paths removed
+
+retained old paths justified
+
+proof no duplicate owner remains
+
+proof tests still pass
+
+proof final tree is clean
+
+This law applies only inside the approved build scope. Codex must not perform broad unrelated cleanup outside the task scope.
+
 Mandatory voice-first smoke test law:
 
 Every implementation build, behavior-changing edit, UI/app change, provider/runtime change, adapter change, contract change, or user-visible feature change must include an end-to-end smoke test before final handoff.
