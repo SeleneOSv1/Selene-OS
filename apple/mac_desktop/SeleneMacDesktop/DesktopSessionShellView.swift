@@ -178,98 +178,13 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
     case hiddenAvailable = "hidden_available"
     case unavailableFailClosed = "unavailable_fail_closed"
 
-    var label: String {
-        switch self {
-        case .idleAvailable:
-            return "Available"
-        case .wakeListening:
-            return "Listening"
-        case .activeListening:
-            return "Capturing"
-        case .thinkingProcessing:
-            return "Thinking"
-        case .ttsPreparing:
-            return "Preparing voice"
-        case .speaking:
-            return "Speaking"
-        case .fallbackSpeaking:
-            return "Fallback voice"
-        case .mutedNotListening:
-            return "Muted / not listening"
-        case .errorDegraded:
-            return "Degraded / error"
-        case .hiddenAvailable:
-            return "Hidden, available"
-        case .unavailableFailClosed:
-            return "Unavailable"
-        }
-    }
-
-    var systemImage: String {
-        switch self {
-        case .idleAvailable:
-            return "dot.radiowaves.left.and.right"
-        case .wakeListening:
-            return "waveform"
-        case .activeListening:
-            return "waveform.path"
-        case .thinkingProcessing:
-            return "brain.head.profile"
-        case .ttsPreparing:
-            return "speaker.wave.2.fill"
-        case .speaking:
-            return "bubble.left.and.bubble.right.fill"
-        case .fallbackSpeaking:
-            return "speaker.wave.2.fill"
-        case .mutedNotListening:
-            return "mic.slash.fill"
-        case .errorDegraded:
-            return "exclamationmark.triangle.fill"
-        case .hiddenAvailable:
-            return "eye.fill"
-        case .unavailableFailClosed:
-            return "icloud.slash.fill"
-        }
-    }
-
-    var tint: Color {
-        switch self {
-        case .idleAvailable, .speaking:
-            return .blue
-        case .wakeListening:
-            return .red
-        case .activeListening:
-            return .purple
-        case .thinkingProcessing:
-            return .orange
-        case .ttsPreparing:
-            return .blue
-        case .hiddenAvailable:
-            return .green
-        case .mutedNotListening:
-            return .gray
-        case .fallbackSpeaking, .errorDegraded:
-            return .yellow
-        case .unavailableFailClosed:
-            return .gray
-        }
-    }
-
-    var availabilityBadgeLabel: String {
+    var dockBadgeLabel: String? {
         switch self {
         case .mutedNotListening, .unavailableFailClosed:
             return "Off"
         case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking,
              .fallbackSpeaking, .errorDegraded, .hiddenAvailable:
             return "On"
-        }
-    }
-
-    var dockBadgeLabel: String? {
-        switch self {
-        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking,
-             .fallbackSpeaking, .errorDegraded, .hiddenAvailable, .mutedNotListening, .unavailableFailClosed:
-            return availabilityBadgeLabel
         }
     }
 
@@ -11391,7 +11306,7 @@ struct DesktopSessionShellView: View {
         let baseEvidenceRows = [
             DesktopAvailabilityEvidenceRow(
                 label: "runtime",
-                value: desktopReadyTimeHandoffIsActive ? "ready" : "pre_ready"
+                value: desktopReadyTimeHandoffIsActive ? "ready" : "not_ready"
             ),
             DesktopAvailabilityEvidenceRow(
                 label: "wake",
@@ -11534,7 +11449,7 @@ struct DesktopSessionShellView: View {
         if desktopWakeListenerController.listenerState.isActiveForMicrophone {
             return snapshot(
                 .wakeListening,
-                detail: "Desktop is listening only for the wake entry handoff."
+                detail: "Wake listener active."
             )
         }
 
@@ -15539,15 +15454,6 @@ struct DesktopSessionShellView: View {
 
     private var desktopEvidenceFirstConversationPane: some View {
         VStack(spacing: 0) {
-            desktopAvailabilityStatusStrip(desktopAvailabilityStatusSnapshot)
-                .padding(.horizontal, 28)
-                .padding(.top, 18)
-                .padding(.bottom, 12)
-                .background(Color(nsColor: .windowBackgroundColor))
-
-            Divider()
-                .overlay(Color.primary.opacity(0.05))
-
             ScrollView {
                 desktopConversationReadyCanvas(
                     title: "Selene",
@@ -15584,15 +15490,6 @@ struct DesktopSessionShellView: View {
             && desktopForegroundSelectionShowsCurrentDominantSurface
 
         return VStack(spacing: 0) {
-            desktopAvailabilityStatusStrip(desktopAvailabilityStatusSnapshot)
-                .padding(.horizontal, 28)
-                .padding(.top, 18)
-                .padding(.bottom, 12)
-                .background(Color(nsColor: .windowBackgroundColor))
-
-            Divider()
-                .overlay(Color.primary.opacity(0.05))
-
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     desktopConversationPrimaryPane(state)
@@ -16470,81 +16367,6 @@ struct DesktopSessionShellView: View {
             .padding(.vertical, 8)
             .background(Color.accentColor.opacity(0.14))
             .clipShape(Capsule())
-    }
-
-    private func desktopAvailabilityStatusStrip(
-        _ snapshot: DesktopAvailabilityStatusSnapshot
-    ) -> some View {
-        let tint = snapshot.kind.tint
-
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .center, spacing: 10) {
-                ZStack(alignment: .topTrailing) {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(tint.opacity(0.13))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .stroke(tint.opacity(0.34), lineWidth: 1)
-                        )
-
-                    Image(systemName: snapshot.kind.systemImage)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(tint)
-                        .frame(width: 34, height: 34)
-
-                    Text(snapshot.kind.availabilityBadgeLabel)
-                        .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(tint.gradient)
-                        .clipShape(Capsule())
-                        .offset(x: 5, y: -5)
-                }
-                .frame(width: 34, height: 34)
-
-                Text(snapshot.kind.label)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(Color.primary)
-                    .lineLimit(1)
-
-                Spacer(minLength: 12)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(snapshot.evidenceRows.prefix(5))) { row in
-                            Text("\(row.label)=\(row.value)")
-                                .font(.caption2.monospaced())
-                                .foregroundStyle(Color.primary.opacity(0.72))
-                                .lineLimit(1)
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 4)
-                                .background(Color.primary.opacity(0.045))
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        }
-                    }
-                }
-                .frame(maxWidth: 420)
-            }
-
-            Text(snapshot.detail)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(tint.opacity(0.08))
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(tint.opacity(0.24), lineWidth: 1)
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("Selene availability \(snapshot.kind.label)")
-        .accessibilityValue(snapshot.detail)
     }
 
     private func desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
