@@ -6673,6 +6673,18 @@ struct DesktopConversationTimelineEntryState: Identifiable, Equatable {
     }
 }
 
+private struct DesktopConversationDisplayBlock: Equatable {
+    enum Kind: Equatable {
+        case heading(level: Int)
+        case paragraph
+        case bullet
+        case numbered(prefix: String)
+    }
+
+    let kind: Kind
+    let text: String
+}
+
 private struct DesktopSubmittedUserContinuityPreviewState: Identifiable, Equatable {
     enum InputMode: String, Equatable {
         case typed = "typed"
@@ -8461,71 +8473,6 @@ struct DesktopSessionShellView: View {
         }
         .padding(24)
         .frame(width: 360)
-    }
-
-    private func desktopSecondaryPanelButton(
-        title: String,
-        systemImage: String,
-        panel: DesktopShellSecondaryPanel
-    ) -> some View {
-        Button {
-            desktopPresentedSecondaryPanel = panel
-        } label: {
-            Label(title, systemImage: systemImage)
-        }
-        .buttonStyle(.bordered)
-    }
-
-    private func desktopShellHeader(
-        title: String,
-        detail: String,
-        voiceState: String?,
-        workspaceTitle: String
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .top, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(title)
-                        .font(.system(size: 30, weight: .semibold, design: .default))
-
-                    Text(detail)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Spacer(minLength: 20)
-
-                if let voiceState {
-                    desktopConversationVoiceStateBadge(voiceState)
-                }
-
-                HStack(spacing: 10) {
-                    desktopSecondaryPanelButton(
-                        title: "History",
-                        systemImage: "clock.arrow.circlepath",
-                        panel: .history
-                    )
-
-                    desktopSecondaryPanelButton(
-                        title: workspaceTitle,
-                        systemImage: "slider.horizontal.3",
-                        panel: .workspace
-                    )
-
-                    Menu {
-                        Button("Developer details") {
-                            desktopPresentedSecondaryPanel = .developer
-                        }
-                    } label: {
-                        Label("More", systemImage: "ellipsis.circle")
-                    }
-                }
-            }
-        }
-        .padding(20)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.65))
-        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 
     private func desktopSecondaryPanelSheetContainer<Content: View>(
@@ -15590,25 +15537,6 @@ struct DesktopSessionShellView: View {
         }
     }
 
-    private func desktopConversationTopBar(
-        title: String,
-        voiceState: String?
-    ) -> some View {
-        HStack(spacing: 14) {
-            Text(title)
-                .font(.system(size: 22, weight: .semibold))
-                .lineLimit(1)
-
-            Spacer()
-
-            if let voiceState {
-                desktopConversationVoiceStateBadge(voiceState)
-            }
-        }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 18)
-    }
-
     private func desktopConversationPrimaryPane(
         _ state: DesktopConversationPrimaryPaneState
     ) -> some View {
@@ -15643,6 +15571,10 @@ struct DesktopSessionShellView: View {
                                 authoritativeReplyCompletionState: state.authoritativeReplyCompletionState,
                                 runtimeDispatchFailureAttachmentState: state.runtimeDispatchFailureAttachmentState
                             )
+                        }
+
+                        if desktopConversationShouldShowInlineThinking(for: state) {
+                            desktopConversationInlineThinkingPlaceholder
                         }
                     }
                 }
@@ -16394,46 +16326,281 @@ struct DesktopSessionShellView: View {
         authoritativeReplyCompletionState: DesktopConversationAuthoritativeReplyCompletionState?,
         runtimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState?
     ) -> some View {
-        let bubbleColor = Color.white
-        let bubbleStroke = Color.primary.opacity(0.08)
-        let foregroundColor = Color.primary
-
-        return HStack(alignment: .top, spacing: 0) {
+        Group {
             if entry.isUserAuthored {
-                Spacer(minLength: 88)
-            }
-
-            VStack(alignment: .leading, spacing: 10) {
-                Text(entry.body)
-                    .textSelection(.enabled)
-                    .foregroundStyle(foregroundColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 16)
-            .frame(maxWidth: 500, alignment: .leading)
-            .background(bubbleColor)
-            .overlay(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(bubbleStroke, lineWidth: 1)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .shadow(color: Color.black.opacity(0.03), radius: 8, x: 0, y: 3)
-
-            if !entry.isUserAuthored {
-                Spacer(minLength: 88)
+                desktopConversationUserMessageBubble(entry.body)
+            } else {
+                desktopConversationSeleneOpenResponse(entry)
             }
         }
+    }
+
+    private func desktopConversationUserMessageBubble(_ body: String) -> some View {
+        HStack(alignment: .top, spacing: 0) {
+            Spacer(minLength: 96)
+
+            Text(body)
+                .font(.system(size: 16, weight: .regular))
+                .lineSpacing(3)
+                .textSelection(.enabled)
+                .foregroundStyle(.white)
+                .padding(.horizontal, 18)
+                .padding(.vertical, 14)
+                .background(Color.black)
+                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
+                .frame(maxWidth: 520, alignment: .trailing)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .trailing)
+    }
+
+    private func desktopConversationSeleneOpenResponse(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            desktopConversationStructuredResponseText(entry.body)
+
+            if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry),
+               let sourceChips = desktopAuthoritativeReplyProvenanceRenderState?.sourceChips,
+               !sourceChips.isEmpty {
+                desktopCompactSourceChipGrid(sourceChips)
+            }
+        }
+        .frame(maxWidth: 680, alignment: .leading)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func desktopConversationVoiceStateBadge(_ voiceState: String) -> some View {
-        Text(voiceState)
-            .font(.caption.weight(.semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.accentColor.opacity(0.14))
-            .clipShape(Capsule())
+    private func desktopConversationStructuredResponseText(_ body: String) -> some View {
+        let blocks = desktopConversationDisplayBlocks(from: body)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+                desktopConversationDisplayBlockView(block)
+            }
+        }
+        .textSelection(.enabled)
+    }
+
+    @ViewBuilder
+    private func desktopConversationDisplayBlockView(
+        _ block: DesktopConversationDisplayBlock
+    ) -> some View {
+        switch block.kind {
+        case .heading(let level):
+            desktopConversationMarkdownText(block.text)
+                .font(.system(size: level <= 1 ? 23 : 19, weight: .semibold))
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .paragraph:
+            desktopConversationMarkdownText(block.text)
+                .font(.system(size: 16, weight: .regular))
+                .lineSpacing(4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+        case .bullet:
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Text("•")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.primary.opacity(0.72))
+
+                desktopConversationMarkdownText(block.text)
+                    .font(.system(size: 16, weight: .regular))
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+        case .numbered(let prefix):
+            HStack(alignment: .firstTextBaseline, spacing: 9) {
+                Text(prefix)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.primary.opacity(0.72))
+                    .frame(minWidth: 26, alignment: .trailing)
+
+                desktopConversationMarkdownText(block.text)
+                    .font(.system(size: 16, weight: .regular))
+                    .lineSpacing(4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
+    private func desktopConversationMarkdownText(_ text: String) -> Text {
+        if let attributedText = try? AttributedString(markdown: text) {
+            return Text(attributedText)
+        }
+
+        return Text(text)
+    }
+
+    private func desktopConversationDisplayBlocks(
+        from body: String
+    ) -> [DesktopConversationDisplayBlock] {
+        let normalizedBody = body.replacingOccurrences(of: "\r\n", with: "\n")
+        var blocks: [DesktopConversationDisplayBlock] = []
+        var pendingParagraphLines: [String] = []
+
+        func flushParagraph() {
+            let paragraph = pendingParagraphLines
+                .joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            pendingParagraphLines.removeAll()
+            guard !paragraph.isEmpty else {
+                return
+            }
+
+            blocks.append(
+                DesktopConversationDisplayBlock(kind: .paragraph, text: paragraph)
+            )
+        }
+
+        for rawLine in normalizedBody.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            let trimmedLine = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            guard !trimmedLine.isEmpty else {
+                flushParagraph()
+                continue
+            }
+
+            if let heading = desktopConversationMarkdownHeading(from: trimmedLine) {
+                flushParagraph()
+                blocks.append(
+                    DesktopConversationDisplayBlock(
+                        kind: .heading(level: heading.level),
+                        text: heading.text
+                    )
+                )
+                continue
+            }
+
+            if let bullet = desktopConversationMarkdownBullet(from: trimmedLine) {
+                flushParagraph()
+                blocks.append(
+                    DesktopConversationDisplayBlock(kind: .bullet, text: bullet)
+                )
+                continue
+            }
+
+            if let numbered = desktopConversationMarkdownNumberedLine(from: trimmedLine) {
+                flushParagraph()
+                blocks.append(
+                    DesktopConversationDisplayBlock(
+                        kind: .numbered(prefix: numbered.prefix),
+                        text: numbered.text
+                    )
+                )
+                continue
+            }
+
+            pendingParagraphLines.append(line)
+        }
+
+        flushParagraph()
+        if blocks.isEmpty {
+            return [
+                DesktopConversationDisplayBlock(
+                    kind: .paragraph,
+                    text: body.trimmingCharacters(in: .whitespacesAndNewlines)
+                ),
+            ]
+        }
+
+        return blocks
+    }
+
+    private func desktopConversationMarkdownHeading(
+        from trimmedLine: String
+    ) -> (level: Int, text: String)? {
+        let markerCount = trimmedLine.prefix { $0 == "#" }.count
+        guard markerCount > 0, markerCount <= 3 else {
+            return nil
+        }
+
+        let remainder = trimmedLine.dropFirst(markerCount)
+        guard remainder.first == " " else {
+            return nil
+        }
+
+        let text = remainder.dropFirst()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return nil
+        }
+
+        return (markerCount, text)
+    }
+
+    private func desktopConversationMarkdownBullet(
+        from trimmedLine: String
+    ) -> String? {
+        for marker in ["- ", "* ", "• "] where trimmedLine.hasPrefix(marker) {
+            let text = String(trimmedLine.dropFirst(marker.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return text.isEmpty ? nil : text
+        }
+
+        return nil
+    }
+
+    private func desktopConversationMarkdownNumberedLine(
+        from trimmedLine: String
+    ) -> (prefix: String, text: String)? {
+        let digitPrefix = trimmedLine.prefix { $0.isNumber }
+        guard !digitPrefix.isEmpty else {
+            return nil
+        }
+
+        let remainder = trimmedLine.dropFirst(digitPrefix.count)
+        guard let separator = remainder.first,
+              separator == "." || separator == ")",
+              remainder.dropFirst().first == " " else {
+            return nil
+        }
+
+        let text = remainder.dropFirst(2)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            return nil
+        }
+
+        return ("\(digitPrefix)\(separator)", text)
+    }
+
+    private var desktopConversationInlineThinkingPlaceholder: some View {
+        HStack(spacing: 7) {
+            Text("Thinking")
+                .font(.system(size: 16, weight: .regular))
+                .foregroundStyle(.secondary)
+
+            ProgressView()
+                .controlSize(.small)
+        }
+        .padding(.vertical, 6)
+        .frame(maxWidth: 680, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func desktopConversationShouldShowInlineThinking(
+        for state: DesktopConversationPrimaryPaneState
+    ) -> Bool {
+        guard desktopForegroundSelectionShowsCurrentDominantSurface,
+              state.dominantPosture != "SESSION_SUSPENDED_VISIBLE",
+              state.dominantPosture != "QUARANTINED_LOCAL_STATE" else {
+            return false
+        }
+
+        let hasFinalAnswerText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        guard !hasFinalAnswerText else {
+            return false
+        }
+
+        return desktopCanonicalRuntimeOutcomeState?.phase == .dispatching
+            || desktopTypedTurnDispatchInFlightRequestID != nil
+            || desktopWakeTriggeredDispatchInFlightRequestID != nil
+            || (desktopTypedTurnPendingRequest != nil && state.timelineEntries.contains(where: \.isUserAuthored))
     }
 
     private func desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
