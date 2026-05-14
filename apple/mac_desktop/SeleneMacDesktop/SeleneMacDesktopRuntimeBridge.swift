@@ -107,6 +107,13 @@ struct DesktopOpenAITtsSpeechFailure: LocalizedError {
     }
 }
 
+struct DesktopScreenLifecycleAction: Equatable {
+    let canonicalIntent: String
+    let action: String
+    let source: String
+    let evidence: String
+}
+
 struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -132,6 +139,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let sourceChips: [AuthoritativeSourceChip]
     let imageCards: [AuthoritativeImageCard]
     let sourceLinkCitationCards: [AuthoritativeSourceLinkCitationCard]
+    let screenLifecycleAction: DesktopScreenLifecycleAction?
 
     static func dispatching(
         preparedRequestID: String,
@@ -156,7 +164,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
-            sourceLinkCitationCards: []
+            sourceLinkCitationCards: [],
+            screenLifecycleAction: nil
         )
     }
 
@@ -183,7 +192,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
-            sourceLinkCitationCards: []
+            sourceLinkCitationCards: [],
+            screenLifecycleAction: nil
         )
     }
 
@@ -210,7 +220,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
-            sourceLinkCitationCards: []
+            sourceLinkCitationCards: [],
+            screenLifecycleAction: nil
         )
     }
 
@@ -238,7 +249,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
-            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
+            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards),
+            screenLifecycleAction: response.screenLifecycleAction?.desktopAction
         )
     }
 
@@ -266,7 +278,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
-            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
+            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards),
+            screenLifecycleAction: response.screenLifecycleAction?.desktopAction
         )
     }
 
@@ -294,7 +307,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
-            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards)
+            sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards),
+            screenLifecycleAction: response.screenLifecycleAction?.desktopAction
         )
     }
 
@@ -327,7 +341,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
-            sourceLinkCitationCards: []
+            sourceLinkCitationCards: [],
+            screenLifecycleAction: nil
         )
     }
 
@@ -360,7 +375,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
-            sourceLinkCitationCards: []
+            sourceLinkCitationCards: [],
+            screenLifecycleAction: nil
         )
     }
 
@@ -393,7 +409,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
-            sourceLinkCitationCards: []
+            sourceLinkCitationCards: [],
+            screenLifecycleAction: nil
         )
     }
 }
@@ -4309,6 +4326,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sourceChips: [VoiceTurnWebSourceChipPayload]?
         let imageCards: [VoiceTurnSearchImageCardPayload]?
         let deepResearch: VoiceTurnDeepResearchPayload?
+        let screenLifecycleAction: VoiceTurnScreenLifecycleActionPayload?
 
         private enum CodingKeys: String, CodingKey {
             case status
@@ -4326,6 +4344,30 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case sourceChips = "source_chips"
             case imageCards = "image_cards"
             case deepResearch = "deep_research"
+            case screenLifecycleAction = "screen_lifecycle_action"
+        }
+    }
+
+    struct VoiceTurnScreenLifecycleActionPayload: Decodable {
+        let canonicalIntent: String
+        let action: String
+        let source: String
+        let evidence: String
+
+        var desktopAction: DesktopScreenLifecycleAction {
+            DesktopScreenLifecycleAction(
+                canonicalIntent: canonicalIntent,
+                action: action,
+                source: source,
+                evidence: evidence
+            )
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case canonicalIntent = "canonical_intent"
+            case action
+            case source
+            case evidence
         }
     }
 

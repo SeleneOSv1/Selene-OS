@@ -2235,6 +2235,7 @@ fn voice_turn_security_reject_response(reject: SecurityReject, turn_id: Option<u
         metadata_safe_for_user: true,
         trace_id: None,
         deep_research: None,
+        screen_lifecycle_action: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
@@ -2491,6 +2492,7 @@ fn voice_turn_ingress_error_response(status: StatusCode, error: VoiceTurnIngress
             metadata_safe_for_user: true,
             trace_id: None,
             deep_research: None,
+            screen_lifecycle_action: None,
         }),
     )
         .into_response()
@@ -4165,10 +4167,8 @@ mod tests {
         assert!(request_text.contains("Preserve code-switching"));
         assert!(request_text.contains("Do not translate"));
         assert!(request_text.contains("return an empty transcript"));
-        assert!(
-            request_text
-                .contains("Never infer or invent conversational text from non-speech audio")
-        );
+        assert!(request_text
+            .contains("Never infer or invent conversational text from non-speech audio"));
         assert!(request_text.contains("\"noise_reduction\":{\"type\":\"near_field\"}"));
         assert!(!request_text.contains("OpenAI-Beta"));
         assert!(!request_text.contains("\"language\""));

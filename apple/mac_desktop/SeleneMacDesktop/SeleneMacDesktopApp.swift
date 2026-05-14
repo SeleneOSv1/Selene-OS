@@ -1,6 +1,10 @@
 import AppKit
 import SwiftUI
 
+extension Notification.Name {
+    static let seleneDesktopScreenLifecycleAction = Notification.Name("seleneDesktopScreenLifecycleAction")
+}
+
 final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
     private var mainWindow: NSWindow?
     private var mainWindowDelegate: SeleneMacDesktopMainWindowDelegate?
@@ -33,6 +37,12 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleApprovedScreenLifecycleAction(_:)),
+            name: .seleneDesktopScreenLifecycleAction,
+            object: nil
+        )
         showMainWindow()
     }
 
@@ -40,7 +50,7 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
         _ sender: NSApplication,
         hasVisibleWindows flag: Bool
     ) -> Bool {
-        showMainWindow()
+        toggleMainWindowVisibilityFromAppIcon()
         return false
     }
 
@@ -95,6 +105,10 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
         return modifiedAt
     }
 
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+    }
+
     private func showMainWindow() {
         let window: NSWindow
         if let existingWindow = mainWindow {
@@ -125,11 +139,49 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
+
+    private func hideMainWindow() {
+        guard let window = mainWindow else {
+            return
+        }
+
+        if !window.isMiniaturized {
+            window.miniaturize(nil)
+        }
+    }
+
+    private func toggleMainWindowVisibilityFromAppIcon() {
+        guard let window = mainWindow else {
+            showMainWindow()
+            return
+        }
+
+        if window.isVisible && !window.isMiniaturized {
+            hideMainWindow()
+        } else {
+            showMainWindow()
+        }
+    }
+
+    @objc private func handleApprovedScreenLifecycleAction(_ notification: Notification) {
+        guard let action = notification.userInfo?["action"] as? String else {
+            return
+        }
+
+        switch action {
+        case "show":
+            showMainWindow()
+        case "hide":
+            hideMainWindow()
+        default:
+            break
+        }
+    }
 }
 
 private final class SeleneMacDesktopMainWindowDelegate: NSObject, NSWindowDelegate {
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        sender.orderOut(nil)
+        sender.miniaturize(nil)
         return false
     }
 }

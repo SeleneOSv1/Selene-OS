@@ -357,6 +357,16 @@ pub struct VoiceTurnAdapterResponse {
     pub trace_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deep_research: Option<VoiceTurnDeepResearchMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen_lifecycle_action: Option<VoiceTurnScreenLifecycleActionPacket>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VoiceTurnScreenLifecycleActionPacket {
+    pub canonical_intent: String,
+    pub action: String,
+    pub source: String,
+    pub evidence: String,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -2716,6 +2726,264 @@ fn h380_assistant_direct_command_after_name(token: &str) -> bool {
             | "start"
             | "stop"
     )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage4ScreenLifecycleIntent {
+    ScreenShow,
+    ScreenHide,
+}
+
+impl Stage4ScreenLifecycleIntent {
+    const fn canonical_intent(self) -> &'static str {
+        match self {
+            Stage4ScreenLifecycleIntent::ScreenShow => "SCREEN_SHOW",
+            Stage4ScreenLifecycleIntent::ScreenHide => "SCREEN_HIDE",
+        }
+    }
+
+    const fn action(self) -> &'static str {
+        match self {
+            Stage4ScreenLifecycleIntent::ScreenShow => "show",
+            Stage4ScreenLifecycleIntent::ScreenHide => "hide",
+        }
+    }
+
+    const fn reason_code(self) -> &'static str {
+        match self {
+            Stage4ScreenLifecycleIntent::ScreenShow => "STAGE4_SCREEN_SHOW",
+            Stage4ScreenLifecycleIntent::ScreenHide => "STAGE4_SCREEN_HIDE",
+        }
+    }
+}
+
+fn stage4_classify_screen_lifecycle_command(text: &str) -> Option<Stage4ScreenLifecycleIntent> {
+    let normalized = stage4_normalize_screen_lifecycle_text(text);
+    if normalized.is_empty() || stage4_lifecycle_negative_guard(&normalized) {
+        return None;
+    }
+
+    let show = stage4_lifecycle_show_command(&normalized);
+    let hide = stage4_lifecycle_hide_command(&normalized);
+    match (show, hide) {
+        (true, false) => Some(Stage4ScreenLifecycleIntent::ScreenShow),
+        (false, true) => Some(Stage4ScreenLifecycleIntent::ScreenHide),
+        _ => None,
+    }
+}
+
+fn stage4_normalize_screen_lifecycle_text(text: &str) -> String {
+    let mut normalized = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            normalized.push(ch.to_ascii_lowercase());
+        } else {
+            normalized.push(' ');
+        }
+    }
+    normalized.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn stage4_lifecycle_negative_guard(normalized: &str) -> bool {
+    let exact_no_match = matches!(
+        normalized,
+        "close it" | "show it" | "open it" | "hide it" | "screen" | "window" | "desktop" | "app"
+    );
+    exact_no_match
+        || stage4_lifecycle_starts_with_any(
+            normalized,
+            &[
+                "do not ",
+                "dont ",
+                "don t ",
+                "i am not asking ",
+                "im not asking ",
+                "i m not asking ",
+                "what does ",
+                "what is ",
+                "explain ",
+                "write ",
+                "tell me why ",
+                "show me how ",
+                "should i ",
+            ],
+        )
+        || stage4_lifecycle_contains_any(
+            normalized,
+            &[
+                " open source ",
+                " screen printing",
+                " close reading",
+                "openai is different from open the app",
+                " screen time",
+                " movie was bright",
+                " desktop computer",
+                " window is open outside",
+                " hide information",
+                " hide and seek",
+                " close the topic",
+                " close my laptop",
+                " not asking you to open",
+                " do not hide",
+            ],
+        )
+}
+
+fn stage4_lifecycle_show_command(normalized: &str) -> bool {
+    if stage4_lifecycle_contains_any(normalized, &["not show screen"]) {
+        return false;
+    }
+
+    if matches!(
+        normalized,
+        "screen please"
+            | "screen up"
+            | "show screen"
+            | "open screen"
+            | "open screen now"
+            | "opened screen"
+            | "opened the screen"
+            | "showed screen"
+            | "showed me screen"
+            | "showed me the screen"
+            | "screen come back"
+            | "selene show"
+            | "show me app"
+            | "i want see screen"
+            | "where screen go show it"
+            | "bring screen"
+            | "bring it back"
+            | "i need the screen"
+            | "let screen come back"
+    ) {
+        return true;
+    }
+
+    let has_surface = stage4_lifecycle_has_any_token(
+        normalized,
+        &[
+            "screen",
+            "chat",
+            "selene",
+            "desktop",
+            "app",
+            "window",
+            "conversation",
+            "interface",
+        ],
+    );
+    if !has_surface {
+        return false;
+    }
+
+    stage4_lifecycle_has_any_token(
+        normalized,
+        &[
+            "show", "open", "bring", "display", "visible", "see", "back", "forward",
+        ],
+    ) || stage4_lifecycle_contains_any(
+        normalized,
+        &[
+            "put selene on screen",
+            "put screen up",
+            "make selene visible",
+            "make the screen visible",
+            "wake the screen up",
+            "let me see",
+            "i want to see",
+            "i want see",
+            "bring back",
+            "bring up",
+        ],
+    )
+}
+
+fn stage4_lifecycle_hide_command(normalized: &str) -> bool {
+    if matches!(
+        normalized,
+        "screen down"
+            | "screen go away"
+            | "selene hide"
+            | "screen off"
+            | "closed screen"
+            | "closed the screen"
+            | "minimized screen"
+            | "minimized the screen"
+            | "no screen now"
+            | "no need screen"
+            | "put it away"
+            | "take it off screen"
+    ) {
+        return true;
+    }
+
+    let has_surface = stage4_lifecycle_has_any_token(
+        normalized,
+        &[
+            "screen",
+            "chat",
+            "selene",
+            "desktop",
+            "app",
+            "window",
+            "conversation",
+            "view",
+        ],
+    );
+    if !has_surface {
+        return false;
+    }
+
+    stage4_lifecycle_has_any_token(
+        normalized,
+        &[
+            "hide",
+            "close",
+            "closed",
+            "minimize",
+            "minimized",
+            "remove",
+            "away",
+            "disappear",
+            "background",
+            "off",
+            "down",
+            "hidden",
+        ],
+    ) || stage4_lifecycle_contains_any(
+        normalized,
+        &[
+            "put selene away",
+            "put the app away",
+            "put the window away",
+            "put the screen down",
+            "take selene off screen",
+            "take away the chat",
+            "send selene away",
+            "move selene away",
+            "make screen disappear",
+            "make selene hidden",
+            "make chat disappear",
+            "make window go away",
+            "get rid of the screen",
+            "not show screen",
+        ],
+    )
+}
+
+fn stage4_lifecycle_has_any_token(normalized: &str, needles: &[&str]) -> bool {
+    normalized
+        .split_whitespace()
+        .any(|token| needles.iter().any(|needle| token == *needle))
+}
+
+fn stage4_lifecycle_starts_with_any(normalized: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| normalized.starts_with(needle))
+}
+
+fn stage4_lifecycle_contains_any(normalized: &str, needles: &[&str]) -> bool {
+    let padded = format!(" {normalized} ");
+    needles.iter().any(|needle| padded.contains(needle))
 }
 
 fn h380_contains_chinese(text: &str) -> bool {
@@ -8199,6 +8467,7 @@ impl AdapterRuntime {
                             metadata_safe_for_user: true,
                             trace_id: None,
                             deep_research: None,
+                            screen_lifecycle_action: None,
                         };
                         if !ignored_unsafe_transcript {
                             if let Some(trace) = h410_build_public_brain_trace(
@@ -8449,6 +8718,41 @@ impl AdapterRuntime {
                 base_thread_state,
             )
             .map_err(post_session_error)?;
+            if app_platform == AppPlatform::Desktop && request.audio_capture_ref.is_some() {
+                if let Some(screen_lifecycle_intent) = user_text_final
+                    .as_deref()
+                    .and_then(stage4_classify_screen_lifecycle_command)
+                {
+                    finalize_session_turn_record(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &runtime_device_id,
+                        session_turn_state.session_id_for_commits,
+                        None,
+                        session_turn_state.device_turn_sequence,
+                        &runtime_execution_envelope.idempotency_key,
+                        &self.runtime_node_id,
+                        self.session_lease_ttl_ms,
+                    )
+                    .map_err(post_session_error)?;
+                    let response = stage4_screen_lifecycle_adapter_response(
+                        &runtime_execution_envelope,
+                        session_turn_state.session_snapshot.session_state,
+                        Some(session_turn_state.session_attach_outcome),
+                        screen_lifecycle_intent,
+                    );
+                    cache_authoritative_turn_response(
+                        &self.session_retry_cache,
+                        &actor_user_id,
+                        &runtime_execution_envelope.idempotency_key,
+                        &response,
+                    )
+                    .map_err(post_session_error)?;
+                    return Ok(response);
+                }
+            }
             let weather_context_place = latest_weather_context_place(
                 &self.weather_context_state,
                 &actor_user_id,
@@ -8556,6 +8860,7 @@ impl AdapterRuntime {
                         metadata_safe_for_user: true,
                         trace_id: None,
                         deep_research: None,
+                        screen_lifecycle_action: None,
                     };
                     cache_authoritative_turn_response(
                         &self.session_retry_cache,
@@ -8624,6 +8929,7 @@ impl AdapterRuntime {
                         metadata_safe_for_user: true,
                         trace_id: None,
                         deep_research: None,
+                        screen_lifecycle_action: None,
                     };
                     cache_authoritative_turn_response(
                         &self.session_retry_cache,
@@ -8683,6 +8989,7 @@ impl AdapterRuntime {
                         metadata_safe_for_user: true,
                         trace_id: None,
                         deep_research: None,
+                        screen_lifecycle_action: None,
                     };
                     let h411_discourse_frame_after = self
                         .record_public_discourse_turn(
@@ -8767,6 +9074,7 @@ impl AdapterRuntime {
                         metadata_safe_for_user: true,
                         trace_id: None,
                         deep_research: None,
+                        screen_lifecycle_action: None,
                     };
                     if let Some(trace) = h410_build_public_brain_trace(
                         &request_for_journal,
@@ -16514,6 +16822,46 @@ fn execution_outcome_to_adapter_response(
             .tool_response
             .as_ref()
             .and_then(deep_research_metadata_from_tool_response),
+        screen_lifecycle_action: None,
+    }
+}
+
+fn stage4_screen_lifecycle_adapter_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: Option<SessionAttachOutcome>,
+    intent: Stage4ScreenLifecycleIntent,
+) -> VoiceTurnAdapterResponse {
+    VoiceTurnAdapterResponse {
+        status: "ok".to_string(),
+        outcome: "SCREEN_LIFECYCLE".to_string(),
+        session_id: runtime_execution_envelope
+            .session_id
+            .clone()
+            .map(session_id_to_string),
+        turn_id: Some(runtime_execution_envelope.turn_id.0),
+        session_state: Some(session_state_to_api_value(session_state)),
+        session_attach_outcome,
+        failure_class: None,
+        reason: Some("screen lifecycle command accepted by runtime route".to_string()),
+        next_move: "desktop_lifecycle_action".to_string(),
+        response_text: String::new(),
+        reason_code: intent.reason_code().to_string(),
+        provenance: None,
+        tts_text: String::new(),
+        source_chips: Vec::new(),
+        source_cards: Vec::new(),
+        image_cards: Vec::new(),
+        answer_class: Some("desktop_screen_lifecycle".to_string()),
+        metadata_safe_for_user: true,
+        trace_id: None,
+        deep_research: None,
+        screen_lifecycle_action: Some(VoiceTurnScreenLifecycleActionPacket {
+            canonical_intent: intent.canonical_intent().to_string(),
+            action: intent.action().to_string(),
+            source: "adapter_runtime_lifecycle_classifier".to_string(),
+            evidence: "post_ph1c_valid_desktop_voice_transcript".to_string(),
+        }),
     }
 }
 
@@ -18725,6 +19073,7 @@ fn wake_guest_lane_response(
         metadata_safe_for_user: true,
         trace_id: None,
         deep_research: None,
+        screen_lifecycle_action: None,
     }
 }
 
@@ -19078,6 +19427,7 @@ fn continuing_speech_identity_prompt_response(
         metadata_safe_for_user: true,
         trace_id: None,
         deep_research: None,
+        screen_lifecycle_action: None,
     }))
 }
 
@@ -19120,6 +19470,7 @@ fn activation_greeting_handoff_response(
         metadata_safe_for_user: true,
         trace_id: None,
         deep_research: None,
+        screen_lifecycle_action: None,
     }
 }
 
@@ -23690,6 +24041,7 @@ fn session_posture_evidence_response_returns_current_device_fields_for_session()
                 metadata_safe_for_user: true,
                 trace_id: None,
                 deep_research: None,
+                screen_lifecycle_action: None,
             }),
         },
     );
@@ -24127,6 +24479,245 @@ mod tests {
             capture.selected_mic = Some("mac_builtin_mic".to_string());
             capture.selected_speaker = Some("mac_builtin_speaker".to_string());
         }
+    }
+
+    fn stage4_screen_lifecycle_show_positive_variants() -> Vec<&'static str> {
+        vec![
+            "show me the screen",
+            "open the screen",
+            "open the chat",
+            "show the chat",
+            "show Selene",
+            "bring Selene up",
+            "display the conversation",
+            "open desktop",
+            "show desktop",
+            "open the app",
+            "show the app",
+            "bring back the screen",
+            "make Selene visible",
+            "show window",
+            "bring window forward",
+            "I want to see Selene",
+            "let me see the chat",
+            "screen please",
+            "screen up",
+            "show screen",
+            "open screen",
+            "open screen now",
+            "opened screen",
+            "opened the screen",
+            "showed me the screen",
+            "bring screen",
+            "screen come back",
+            "Selene show",
+            "show me app",
+            "I want see screen",
+            "where screen go show it",
+            "can you show the app",
+            "put the chat back",
+            "bring the chat back",
+            "display chat",
+            "display screen",
+            "make the screen visible",
+            "wake the screen up",
+            "open Selene window",
+            "show me Selene window",
+            "put Selene on screen",
+            "screen back please",
+            "show the conversation",
+            "let me see the conversation",
+            "bring up the conversation",
+            "open conversation",
+            "show interface",
+            "open interface",
+            "put screen up",
+            "bring it back",
+            "I need the screen",
+            "let screen come back",
+            "please open the app window",
+            "bring the Selene screen forward",
+            "show me the Selene app",
+        ]
+    }
+
+    fn stage4_screen_lifecycle_hide_positive_variants() -> Vec<&'static str> {
+        vec![
+            "hide the screen",
+            "close the screen",
+            "close desktop",
+            "hide Selene",
+            "minimize Selene",
+            "put Selene away",
+            "remove the screen",
+            "make screen disappear",
+            "close the window",
+            "hide the window",
+            "put the app away",
+            "screen down",
+            "close chat",
+            "hide chat",
+            "minimize the app",
+            "take Selene off screen",
+            "make Selene hidden",
+            "get rid of the screen",
+            "close this view",
+            "put the window away",
+            "hide screen",
+            "close screen now",
+            "closed screen",
+            "closed the screen",
+            "minimized screen",
+            "minimized the screen",
+            "screen go away",
+            "put away Selene",
+            "Selene hide",
+            "hide app please",
+            "screen off",
+            "make it hidden screen",
+            "no screen now",
+            "hide the app",
+            "close the app screen",
+            "put the screen down",
+            "take away the chat",
+            "make chat disappear",
+            "remove chat",
+            "hide conversation",
+            "close conversation view",
+            "put Selene in background",
+            "send Selene away",
+            "move Selene away",
+            "minimize the window",
+            "close window",
+            "hide window now",
+            "make window go away",
+            "not show screen",
+            "no need screen",
+            "turn screen off",
+            "put it away",
+            "take it off screen",
+            "please hide the Selene window",
+        ]
+    }
+
+    fn stage4_screen_lifecycle_negative_controls() -> Vec<&'static str> {
+        vec![
+            "explain what an open screen means",
+            "write a story about a hidden screen",
+            "what does close desktop mean",
+            "OpenAI is different from open the app",
+            "I closed the deal yesterday",
+            "the screen in the movie was bright",
+            "tell me why people hide information",
+            "show me how screens are made",
+            "explain screen printing",
+            "close the topic, not the app",
+            "do not hide the screen",
+            "I am not asking you to open the app",
+            "should I close my laptop",
+            "what is a desktop computer",
+            "write a poem about a window",
+            "the window is open outside",
+            "hide and seek is a game",
+            "screen time is unhealthy",
+            "open source software is useful",
+            "close reading is a study method",
+            "close it",
+            "show it",
+        ]
+    }
+
+    #[test]
+    fn stage4_screen_lifecycle_phrase_pack_maps_to_canonical_intents() {
+        let show_variants = stage4_screen_lifecycle_show_positive_variants();
+        let hide_variants = stage4_screen_lifecycle_hide_positive_variants();
+        let negative_controls = stage4_screen_lifecycle_negative_controls();
+        assert!(
+            show_variants.len() >= 50,
+            "Stage 4 requires at least 50 show/open positive variants"
+        );
+        assert!(
+            hide_variants.len() >= 50,
+            "Stage 4 requires at least 50 hide/close positive variants"
+        );
+        assert!(
+            negative_controls.len() >= 20,
+            "Stage 4 requires at least 20 negative controls"
+        );
+
+        for phrase in show_variants {
+            assert_eq!(
+                stage4_classify_screen_lifecycle_command(phrase),
+                Some(Stage4ScreenLifecycleIntent::ScreenShow),
+                "{phrase}"
+            );
+        }
+        for phrase in hide_variants {
+            assert_eq!(
+                stage4_classify_screen_lifecycle_command(phrase),
+                Some(Stage4ScreenLifecycleIntent::ScreenHide),
+                "{phrase}"
+            );
+        }
+        for phrase in negative_controls {
+            assert_eq!(
+                stage4_classify_screen_lifecycle_command(phrase),
+                None,
+                "{phrase}"
+            );
+        }
+    }
+
+    #[test]
+    fn stage4_screen_lifecycle_adapter_response_has_action_packet_without_tts() {
+        let runtime = AdapterRuntime::default();
+        let mut show = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut show);
+        show.correlation_id = 4_004_001;
+        show.turn_id = 4_004_001;
+        show.device_turn_sequence = Some(4_004_001);
+        show.now_ns = Some(4_004_001);
+        show.user_text_final = Some("show me the screen".to_string());
+        let show_out = runtime
+            .run_voice_turn(show)
+            .expect("screen show lifecycle command should return action packet");
+        assert_eq!(show_out.status, "ok");
+        assert_eq!(show_out.outcome, "SCREEN_LIFECYCLE");
+        assert_eq!(show_out.next_move, "desktop_lifecycle_action");
+        assert_eq!(show_out.response_text, "");
+        assert_eq!(show_out.tts_text, "");
+        assert_eq!(
+            show_out.answer_class.as_deref(),
+            Some("desktop_screen_lifecycle")
+        );
+        let show_action = show_out
+            .screen_lifecycle_action
+            .as_ref()
+            .expect("show action packet should be present");
+        assert_eq!(show_action.canonical_intent, "SCREEN_SHOW");
+        assert_eq!(show_action.action, "show");
+
+        let mut hide = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut hide);
+        hide.correlation_id = 4_004_002;
+        hide.turn_id = 4_004_002;
+        hide.device_turn_sequence = Some(4_004_002);
+        hide.now_ns = Some(4_004_002);
+        hide.user_text_final = Some("hide the screen".to_string());
+        let hide_out = runtime
+            .run_voice_turn(hide)
+            .expect("screen hide lifecycle command should return action packet");
+        assert_eq!(hide_out.status, "ok");
+        assert_eq!(hide_out.outcome, "SCREEN_LIFECYCLE");
+        assert_eq!(hide_out.next_move, "desktop_lifecycle_action");
+        assert_eq!(hide_out.response_text, "");
+        assert_eq!(hide_out.tts_text, "");
+        let hide_action = hide_out
+            .screen_lifecycle_action
+            .as_ref()
+            .expect("hide action packet should be present");
+        assert_eq!(hide_action.canonical_intent, "SCREEN_HIDE");
+        assert_eq!(hide_action.action, "hide");
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {

@@ -4428,16 +4428,6 @@ private final class DesktopWakeListenerController: ObservableObject {
                     return
                 }
 
-                guard prefixMatch.transcriptRemainder.isEmpty else {
-                    self.localWakeCandidateToken = nil
-                    self.localWakeCandidateFirstNS = nil
-                    self.localWakeCandidateObservationCount = 0
-                    desktopAppendRuntimeBridgeDebugLog(
-                        "\(desktopTraceClockFields()) desktop local wake final rejected reason=non_activation_only_remainder chars=\(transcript.count) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
-                    )
-                    return
-                }
-
                 let confidenceBP = Self.localWakeRecognitionConfidenceBP(result)
                 guard confidenceBP >= 3_500 else {
                     desktopAppendRuntimeBridgeDebugLog(
@@ -4446,7 +4436,11 @@ private final class DesktopWakeListenerController: ObservableObject {
                     return
                 }
 
-                let candidateToken = normalizedWakeRecognitionToken(prefixMatch.detectionText)
+                let candidateToken = [
+                    normalizedWakeRecognitionToken(prefixMatch.detectionText),
+                    normalizedWakeRecognitionToken(prefixMatch.transcriptRemainder),
+                    "\(prefixMatch.transcriptRemainder.utf8.count)",
+                ].joined(separator: "|")
                 let nowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
                 if self.localWakeCandidateToken == candidateToken {
                     self.localWakeCandidateObservationCount += 1
@@ -4456,20 +4450,23 @@ private final class DesktopWakeListenerController: ObservableObject {
                     self.localWakeCandidateObservationCount = 1
                 }
                 let stableForNS = nowNS.saturatingSubtract(self.localWakeCandidateFirstNS ?? nowNS)
+                let hasPostWakeRemainder = !prefixMatch.transcriptRemainder
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty
                 guard result.isFinal
                         || (
                             self.localWakeCandidateObservationCount >= 2
-                            && stableForNS >= 180_000_000
+                            && stableForNS >= (hasPostWakeRemainder ? 320_000_000 : 180_000_000)
                         ) else {
                     desktopAppendRuntimeBridgeDebugLog(
-                        "\(desktopTraceClockFields()) desktop local wake candidate pending observations=\(self.localWakeCandidateObservationCount) stable_for_ns=\(stableForNS) confidence_bp=\(confidenceBP) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
+                        "\(desktopTraceClockFields()) desktop local wake candidate pending observations=\(self.localWakeCandidateObservationCount) stable_for_ns=\(stableForNS) confidence_bp=\(confidenceBP) remainder_present=\(hasPostWakeRemainder) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
                     )
                     return
                 }
 
                 self.localWakeCommittedTranscript = prefixMatch.detectionText
                 desktopAppendRuntimeBridgeDebugLog(
-                    "\(desktopTraceClockFields()) desktop local wake detected final=\(result.isFinal) observations=\(self.localWakeCandidateObservationCount) stable_for_ns=\(stableForNS) chars=\(transcript.count) confidence_bp=\(confidenceBP) provider=openai_prewake=false remote_audio=false ph1w_authority=pending"
+                    "\(desktopTraceClockFields()) desktop local wake detected final=\(result.isFinal) observations=\(self.localWakeCandidateObservationCount) stable_for_ns=\(stableForNS) chars=\(transcript.count) confidence_bp=\(confidenceBP) remainder_present=\(hasPostWakeRemainder) provider=openai_prewake=false remote_audio=false ph1w_authority=pending"
                 )
                 self.prepareWakeTriggeredVoiceTurnIfDetected(
                     prefixMatch: prefixMatch,
@@ -4575,7 +4572,22 @@ private final class DesktopWakeListenerController: ObservableObject {
             return
         }
 
-        let boundedTranscript = ""
+        let boundedTranscript = prefixMatch.transcriptRemainder
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard boundedTranscript.utf8.count <= maxVoiceTurnBytes else {
+            endCaptureInput()
+            completeStoppedCaptureSession()
+            listenerState = .failed
+            activePromptStateID = nil
+            recordFailure(
+                id: "failed_wake_listener_transcript_validation",
+                title: "Failed wake-triggered voice request",
+                summary: "The bounded post-wake transcript exceeded 16384 UTF-8 bytes before any canonical runtime dispatch occurred.",
+                detail: "Failure visibility only; retry a shorter foreground wake utterance through the same bounded wake-listener surface. No authoritative transcript turn was appended locally."
+            )
+            return
+        }
 
         let captureStopNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
         endCaptureInput()
@@ -7694,7 +7706,7 @@ struct DesktopSessionShellView: View {
         }
         .task(id: scenePhase) {
             if scenePhase != .active {
-                desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(
+                desktopHandleScreenVisibilityChangedWhilePreservingVoicePosture(
                     reason: "scene_phase_not_active"
                 )
             }
@@ -7702,14 +7714,14 @@ struct DesktopSessionShellView: View {
             await synchronizeDesktopWakeListenerLifecycleState()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didHideNotification)) { _ in
-            desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: "app_hidden")
+            desktopHandleScreenVisibilityChangedWhilePreservingVoicePosture(reason: "app_hidden")
             synchronizeDesktopAvailabilityStatus()
             Task { @MainActor in
                 await synchronizeDesktopWakeListenerLifecycleState()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
-            desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: "window_miniaturized")
+            desktopHandleScreenVisibilityChangedWhilePreservingVoicePosture(reason: "window_miniaturized")
             synchronizeDesktopAvailabilityStatus()
             Task { @MainActor in
                 await synchronizeDesktopWakeListenerLifecycleState()
@@ -9997,25 +10009,10 @@ struct DesktopSessionShellView: View {
         }
     }
 
-    private func desktopYieldInstructionCaptureToWakeListenerForHiddenScreen(reason: String) {
-        guard desktopComposerVoiceModeEnabled
-            || explicitVoiceController.isListening
-            || desktopRealtimeTranscriptionStartInFlight
-            || desktopRealtimeTranscriptionPrepareInFlight
-            || desktopPreparedRealtimeTranscriptionSession != nil else {
-            return
-        }
-
+    private func desktopHandleScreenVisibilityChangedWhilePreservingVoicePosture(reason: String) {
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop hidden-screen wake handoff reason=\(boundedFailureLogToken(reason))"
+            "\(desktopTraceClockFields()) desktop screen visibility changed reason=\(boundedFailureLogToken(reason)) preserve_active_voice=\(desktopComposerVoiceModeEnabled || explicitVoiceController.isListening || desktopRealtimeTranscriptionStartInFlight || desktopRealtimeTranscriptionPrepareInFlight)"
         )
-        desktopComposerVoiceModeEnabled = false
-        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
-        cancelDesktopRealtimeTranscriptionStartIfNeeded()
-        cancelDesktopRealtimeTranscriptionPrepareIfNeeded(reason: reason)
-        if explicitVoiceController.isListening {
-            explicitVoiceController.discardCurrentVoiceTurn()
-        }
     }
 
     private func desktopAttemptResumeComposerVoiceMode() {
@@ -10263,6 +10260,76 @@ struct DesktopSessionShellView: View {
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) desktop post-wake instruction listening starting reason=tts_idle_evidence_gated"
         )
+        startDesktopExplicitVoiceTurn()
+    }
+
+    @MainActor
+    private func executeApprovedScreenLifecycleActionIfPresent(
+        _ outcomeState: DesktopCanonicalRuntimeOutcomeState,
+        requestID: String,
+        transcript: String,
+        source: String
+    ) -> DesktopScreenLifecycleAction? {
+        guard let lifecycleAction = outcomeState.screenLifecycleAction else {
+            return nil
+        }
+
+        guard (lifecycleAction.canonicalIntent == "SCREEN_SHOW" && lifecycleAction.action == "show")
+            || (lifecycleAction.canonicalIntent == "SCREEN_HIDE" && lifecycleAction.action == "hide") else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop lifecycle action rejected reason=invalid_runtime_packet id=\(requestID) canonical_intent=\(boundedFailureLogToken(lifecycleAction.canonicalIntent)) action=\(boundedFailureLogToken(lifecycleAction.action))"
+            )
+            return nil
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop lifecycle action executing id=\(requestID) source=\(boundedFailureLogToken(source)) canonical_intent=\(lifecycleAction.canonicalIntent) action=\(lifecycleAction.action) authority=\(boundedFailureLogToken(lifecycleAction.source)) evidence=\(boundedFailureLogToken(lifecycleAction.evidence))"
+        )
+        desktopAuthoritativeReplyRenderState = nil
+        desktopAuthoritativeReplyProvenanceRenderState = nil
+        desktopAuthoritativeReplyPlaybackController.reset()
+        desktopAuthoritativeReplyPlaybackState = .idle
+        desktopSubmittedUserContinuityPreviewState = nil
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        clearComposerDraftIfItOnlyMirrorsVoiceTranscript(transcript)
+        NotificationCenter.default.post(
+            name: .seleneDesktopScreenLifecycleAction,
+            object: nil,
+            userInfo: [
+                "action": lifecycleAction.action,
+                "canonical_intent": lifecycleAction.canonicalIntent,
+                "source": lifecycleAction.source,
+                "evidence": lifecycleAction.evidence,
+            ]
+        )
+        return lifecycleAction
+    }
+
+    @MainActor
+    private func resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
+        _ lifecycleAction: DesktopScreenLifecycleAction,
+        requestID: String,
+        source: String
+    ) async {
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop lifecycle post-action rearm mode=active_instruction_listening id=\(requestID) source=\(boundedFailureLogToken(source)) canonical_intent=\(boundedFailureLogToken(lifecycleAction.canonicalIntent))"
+        )
+        desktopComposerVoiceModeEnabled = true
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        desktopWakeAutoStartAttemptedPromptID = nil
+        desktopWakeAutoStartSuppressedPromptID = nil
+
+        let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
+        if desktopWakeListenerController.listenerState.isActiveForMicrophone
+            || desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil {
+            desktopWakeListenerController.haltCaptureSession()
+            if !wakeDispatchInFlight {
+                desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                lastStagedWakeTriggeredVoiceTurnRequestState = nil
+            }
+        }
+
         startDesktopExplicitVoiceTurn()
     }
 
@@ -22287,6 +22354,20 @@ struct DesktopSessionShellView: View {
             desktopCanonicalRuntimeOutcomeState = outcomeState
             let runtimeIgnoredUnsafeVoiceTranscript =
                 desktopRuntimeIgnoredUnsafeVoiceTranscript(outcomeState)
+            if let screenLifecycleAction = executeApprovedScreenLifecycleActionIfPresent(
+                outcomeState,
+                requestID: pendingRequest.id,
+                transcript: pendingRequest.transcript,
+                source: "explicit_voice"
+            ) {
+                explicitVoiceController.clearPendingPreparedVoiceTurn()
+                await resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
+                    screenLifecycleAction,
+                    requestID: pendingRequest.id,
+                    source: "explicit_voice"
+                )
+                return
+            }
             if !runtimeIgnoredUnsafeVoiceTranscript {
                 desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
                     requestID: pendingRequest.id,
@@ -22515,6 +22596,21 @@ struct DesktopSessionShellView: View {
                     || runtimeIgnoredUnsafeVoiceTranscript
                 )
             desktopCanonicalRuntimeOutcomeState = outcomeState
+            if let screenLifecycleAction = executeApprovedScreenLifecycleActionIfPresent(
+                outcomeState,
+                requestID: pendingRequest.id,
+                transcript: pendingRequest.transcript,
+                source: "wake_triggered_voice"
+            ) {
+                desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                await resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
+                    screenLifecycleAction,
+                    requestID: pendingRequest.id,
+                    source: "wake_triggered_voice"
+                )
+                return
+            }
             if !runtimeIgnoredUnsafeVoiceTranscript {
                 desktopPersistSubmittedUserContinuityIfNeeded(
                     requestID: pendingRequest.id,
