@@ -176,23 +176,24 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
     case errorDegraded = "error_degraded"
     case hiddenAvailable = "hidden_available"
     case unavailableFailClosed = "unavailable_fail_closed"
+}
 
-    var dockBadgeLabel: String? {
-        switch self {
-        case .mutedNotListening, .unavailableFailClosed:
-            return "Off"
-        case .idleAvailable, .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking,
-             .errorDegraded, .hiddenAvailable:
-            return "On"
-        }
-    }
+private enum DesktopDockIconWord: String, Equatable {
+    case ready = "Ready"
+    case live = "Live"
+    case open = "Open"
+    case hidden = "Hidden"
 
-    var shouldPulseDockIcon: Bool {
+    var accentColor: NSColor {
         switch self {
-        case .wakeListening, .activeListening, .thinkingProcessing, .ttsPreparing, .speaking:
-            return true
-        case .idleAvailable, .mutedNotListening, .errorDegraded, .hiddenAvailable, .unavailableFailClosed:
-            return false
+        case .ready:
+            return NSColor(calibratedRed: 0.10, green: 0.72, blue: 0.38, alpha: 1.0)
+        case .live:
+            return NSColor(calibratedRed: 0.96, green: 0.12, blue: 0.10, alpha: 1.0)
+        case .open:
+            return NSColor(calibratedRed: 0.11, green: 0.42, blue: 0.96, alpha: 1.0)
+        case .hidden:
+            return NSColor(calibratedRed: 0.05, green: 0.70, blue: 0.60, alpha: 1.0)
         }
     }
 }
@@ -215,6 +216,28 @@ private struct DesktopAvailabilityStatusSnapshot: Equatable {
         ([kind.rawValue, detail] + evidenceRows.flatMap { [$0.label, $0.value] })
             .joined(separator: "|")
     }
+
+    var dockIconWord: DesktopDockIconWord {
+        switch kind {
+        case .activeListening, .thinkingProcessing, .ttsPreparing, .speaking:
+            return .live
+        case .hiddenAvailable:
+            return .hidden
+        case .idleAvailable, .wakeListening, .mutedNotListening, .errorDegraded, .unavailableFailClosed:
+            break
+        }
+
+        let evidence = Dictionary(uniqueKeysWithValues: evidenceRows.map { ($0.label, $0.value) })
+        if evidence["window"] == "hidden_or_minimized" {
+            return .hidden
+        }
+
+        if evidence["app"] == "active" && evidence["window"] == "visible" {
+            return .open
+        }
+
+        return .ready
+    }
 }
 
 @MainActor
@@ -224,47 +247,44 @@ private final class DesktopDockIconPulseController: ObservableObject {
     private var frameIndex = 0
     private var timer: Timer?
     private var appliedAvailabilityStatusID: String?
-
-    func setPulsing(_ pulsing: Bool) {
-        if pulsing {
-            startPulsing()
-        } else {
-            stopPulsing()
-        }
-    }
+    private var appliedDockIconWord: DesktopDockIconWord?
 
     func applyAvailabilityStatus(_ snapshot: DesktopAvailabilityStatusSnapshot) {
-        guard appliedAvailabilityStatusID != snapshot.id else {
-            return
+        let dockIconWord = snapshot.dockIconWord
+
+        if appliedDockIconWord != dockIconWord || timer == nil {
+            stopPulsing()
+            appliedDockIconWord = dockIconWord
+            startPulsing(dockIconWord)
         }
 
-        appliedAvailabilityStatusID = snapshot.id
-        setPulsing(snapshot.kind.shouldPulseDockIcon)
-        NSApplication.shared.dockTile.badgeLabel = snapshot.kind.dockBadgeLabel
-        NSApplication.shared.dockTile.display()
-        desktopAppendRuntimeBridgeDebugLog(
-            "desktop availability status kind=\(snapshot.kind.rawValue) detail=\(boundedFailureLogToken(snapshot.detail))"
-        )
+        if appliedAvailabilityStatusID != snapshot.id {
+            appliedAvailabilityStatusID = snapshot.id
+            desktopAppendRuntimeBridgeDebugLog(
+                "desktop availability status kind=\(snapshot.kind.rawValue) dock_word=\(dockIconWord.rawValue) detail=\(boundedFailureLogToken(snapshot.detail))"
+            )
+        }
     }
 
     func clearAvailabilityStatus() {
         appliedAvailabilityStatusID = nil
-        setPulsing(false)
-        NSApplication.shared.dockTile.badgeLabel = nil
-        NSApplication.shared.dockTile.display()
+        appliedDockIconWord = nil
+        stopPulsing()
+        NSApplication.shared.applicationIconImage = appDockIconImage() ?? originalIcon
     }
 
-    func startPulsing() {
+    func startPulsing(_ word: DesktopDockIconWord) {
         guard timer == nil else {
             return
         }
         originalIcon = NSApplication.shared.applicationIconImage?.copy() as? NSImage
-        let baseIcon = listeningDockIconImage()
+        let baseIcon = appDockIconImage()
             ?? originalIcon
-            ?? NSApplication.shared.applicationIconImage
             ?? fallbackDockIconImage()
         let frameCount = 48
-        frames = (0..<frameCount).map { renderDockIconPulseFrame(index: $0, frameCount: frameCount, baseIcon: baseIcon) }
+        frames = (0..<frameCount).map {
+            renderDockIconPulseFrame(index: $0, frameCount: frameCount, baseIcon: baseIcon, word: word)
+        }
         frameIndex = 0
         NSApplication.shared.applicationIconImage = frames.first
         let timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 18.0, repeats: true) { [weak self] _ in
@@ -280,10 +300,9 @@ private final class DesktopDockIconPulseController: ObservableObject {
         timer?.invalidate()
         timer = nil
         frameIndex = 0
-        if let originalIcon {
-            NSApplication.shared.applicationIconImage = originalIcon
-        }
+        NSApplication.shared.applicationIconImage = appDockIconImage() ?? originalIcon
         originalIcon = nil
+        frames.removeAll()
     }
 
     private func advanceFrame() {
@@ -294,75 +313,99 @@ private final class DesktopDockIconPulseController: ObservableObject {
         NSApplication.shared.applicationIconImage = frames[frameIndex]
     }
 
-    private func renderDockIconPulseFrame(index: Int, frameCount: Int, baseIcon: NSImage) -> NSImage {
+    private func renderDockIconPulseFrame(
+        index: Int,
+        frameCount: Int,
+        baseIcon: NSImage,
+        word: DesktopDockIconWord
+    ) -> NSImage {
         let size: CGFloat = 512
         let image = NSImage(size: NSSize(width: size, height: size))
         image.lockFocus()
         NSGraphicsContext.current?.imageInterpolation = .high
 
         let rect = NSRect(x: 0, y: 0, width: size, height: size)
+        let iconShape = NSBezierPath(roundedRect: rect, xRadius: size * 0.22, yRadius: size * 0.22)
+        NSColor.white.setFill()
+        iconShape.fill()
+
+        NSGraphicsContext.saveGraphicsState()
+        iconShape.addClip()
+        let loweredBaseRect = NSRect(x: 0, y: -size * 0.18, width: size, height: size)
         baseIcon.draw(
-            in: rect,
+            in: loweredBaseRect,
             from: NSRect(origin: .zero, size: baseIcon.size),
             operation: .sourceOver,
             fraction: 1.0
         )
+        NSGraphicsContext.restoreGraphicsState()
 
         let phase = Double(index) / Double(frameCount)
         let pulse = (sin(phase * Double.pi * 4.0 - Double.pi / 2.0) + 1.0) / 2.0
-        let sweepProgress = phase < 0.5 ? phase * 2.0 : (1.0 - phase) * 2.0
-        let wordPulseRect = NSRect(x: size * 0.04, y: size * 0.30, width: size * 0.92, height: size * 0.40)
-        let wordPulsePath = NSBezierPath(
-            roundedRect: wordPulseRect,
-            xRadius: size * 0.12,
-            yRadius: size * 0.12
+        let accent = word.accentColor
+        let wordRect = NSRect(
+            x: size * 0.035,
+            y: size * 0.675,
+            width: size * 0.93,
+            height: size * 0.315
         )
-        NSGraphicsContext.saveGraphicsState()
-        wordPulsePath.addClip()
-        baseIcon.draw(
-            in: rect,
-            from: NSRect(origin: .zero, size: baseIcon.size),
-            operation: .plusLighter,
-            fraction: CGFloat(0.04 + 0.14 * pulse)
+        let wordPath = NSBezierPath(
+            roundedRect: wordRect,
+            xRadius: wordRect.height * 0.48,
+            yRadius: wordRect.height * 0.48
         )
 
-        let sweepWidth = size * 0.10
-        let sweepX = size * (-0.24 + 1.48 * sweepProgress)
-        let sweepRect = NSRect(
-            x: sweepX,
-            y: wordPulseRect.minY,
-            width: sweepWidth,
-            height: wordPulseRect.height
-        )
-        let sweepPath = NSBezierPath(
-            roundedRect: sweepRect,
-            xRadius: sweepWidth * 0.5,
-            yRadius: sweepWidth * 0.5
-        )
         NSGraphicsContext.saveGraphicsState()
-        sweepPath.addClip()
-        baseIcon.draw(
-            in: rect,
-            from: NSRect(origin: .zero, size: baseIcon.size),
-            operation: .plusLighter,
-            fraction: 0.86
+        accent.withAlphaComponent(CGFloat(0.88 + 0.12 * pulse)).setFill()
+        wordPath.fill()
+        NSColor.white.withAlphaComponent(CGFloat(0.90 + 0.10 * pulse)).setStroke()
+        wordPath.lineWidth = 7
+        wordPath.stroke()
+
+        let shadow = NSShadow()
+        shadow.shadowColor = accent.withAlphaComponent(CGFloat(0.50 + 0.34 * pulse))
+        shadow.shadowBlurRadius = CGFloat(24 + 12 * pulse)
+        shadow.shadowOffset = .zero
+        shadow.set()
+        wordPath.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+
+        let paragraphStyle = NSMutableParagraphStyle()
+        paragraphStyle.alignment = .center
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 96, weight: .heavy),
+            .foregroundColor: NSColor.white,
+            .strokeColor: NSColor.black.withAlphaComponent(0.36),
+            .strokeWidth: -3.0,
+            .paragraphStyle: paragraphStyle,
+            .kern: -1.0,
+        ]
+        let attributedWord = NSAttributedString(string: word.rawValue, attributes: attributes)
+        let textSize = attributedWord.size()
+        let textRect = NSRect(
+            x: wordRect.minX + 8,
+            y: wordRect.midY - textSize.height * 0.52,
+            width: wordRect.width - 16,
+            height: textSize.height + 4
         )
-        NSGradient(colors: [
-            NSColor(calibratedRed: 0.40, green: 0.78, blue: 1.0, alpha: 0.00),
-            NSColor(calibratedRed: 0.70, green: 0.93, blue: 1.0, alpha: 0.08),
-            NSColor(calibratedRed: 1.0, green: 1.0, blue: 1.0, alpha: 0.18),
-            NSColor(calibratedRed: 0.45, green: 0.82, blue: 1.0, alpha: 0.06),
-            NSColor(calibratedRed: 0.40, green: 0.78, blue: 1.0, alpha: 0.00),
-        ])?.draw(in: sweepRect, angle: 0)
-        NSGraphicsContext.restoreGraphicsState()
-        NSGraphicsContext.restoreGraphicsState()
+        attributedWord.draw(in: textRect)
+
+        let dotSize = size * CGFloat(0.052 + 0.010 * pulse)
+        let dotRect = NSRect(
+            x: size * 0.5 - dotSize * 0.5,
+            y: size * 0.035,
+            width: dotSize,
+            height: dotSize
+        )
+        accent.withAlphaComponent(CGFloat(0.70 + 0.25 * pulse)).setFill()
+        NSBezierPath(ovalIn: dotRect).fill()
 
         image.unlockFocus()
         return image
     }
 
-    private func listeningDockIconImage() -> NSImage? {
-        guard let iconURL = Bundle.main.url(forResource: "AppIconListening", withExtension: "icns") else {
+    private func appDockIconImage() -> NSImage? {
+        guard let iconURL = Bundle.main.url(forResource: "AppIcon", withExtension: "icns") else {
             return nil
         }
         return NSImage(contentsOf: iconURL)
@@ -372,12 +415,21 @@ private final class DesktopDockIconPulseController: ObservableObject {
         let size: CGFloat = 512
         let image = NSImage(size: NSSize(width: size, height: size))
         image.lockFocus()
-        NSColor(calibratedRed: 0.01, green: 0.02, blue: 0.12, alpha: 1.0).setFill()
+        NSColor.white.setFill()
         NSBezierPath(
             roundedRect: NSRect(x: 0, y: 0, width: size, height: size),
             xRadius: size * 0.20,
             yRadius: size * 0.20
         ).fill()
+        NSColor.black.withAlphaComponent(0.86).setStroke()
+        let word = "Selene" as NSString
+        word.draw(
+            in: NSRect(x: size * 0.16, y: size * 0.42, width: size * 0.68, height: size * 0.20),
+            withAttributes: [
+                .font: NSFont.systemFont(ofSize: 58, weight: .medium),
+                .foregroundColor: NSColor.black,
+            ]
+        )
         image.unlockFocus()
         return image
     }
@@ -2757,21 +2809,27 @@ private final class DesktopChatComposerNativeTextView: NSTextView {
 }
 
 private struct DesktopLightScrollBarInstaller: NSViewRepresentable {
+    let autohidesScrollers: Bool
+
+    init(autohidesScrollers: Bool = true) {
+        self.autohidesScrollers = autohidesScrollers
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async {
-            Self.installLightScrollBar(from: view)
+            Self.installLightScrollBar(from: view, autohidesScrollers: autohidesScrollers)
         }
         return view
     }
 
     func updateNSView(_ view: NSView, context: Context) {
         DispatchQueue.main.async {
-            Self.installLightScrollBar(from: view)
+            Self.installLightScrollBar(from: view, autohidesScrollers: autohidesScrollers)
         }
     }
 
-    private static func installLightScrollBar(from view: NSView) {
+    private static func installLightScrollBar(from view: NSView, autohidesScrollers: Bool) {
         guard let scrollView = view.desktopNearestScrollView else {
             return
         }
@@ -2785,7 +2843,7 @@ private struct DesktopLightScrollBarInstaller: NSViewRepresentable {
         scrollView.contentView.wantsLayer = true
         scrollView.contentView.layer?.backgroundColor = NSColor.white.cgColor
         scrollView.scrollerStyle = .overlay
-        scrollView.autohidesScrollers = true
+        scrollView.autohidesScrollers = autohidesScrollers
         scrollView.hasVerticalScroller = true
         scrollView.scrollerInsets = NSEdgeInsetsZero
 
@@ -6685,6 +6743,42 @@ private struct DesktopConversationDisplayBlock: Equatable {
     let text: String
 }
 
+private struct DesktopInlineThinkingShimmerText: View {
+    @State private var shimmerProgress: CGFloat = -0.75
+
+    var body: some View {
+        Text("Thinking")
+            .font(.system(size: 16, weight: .regular))
+            .foregroundStyle(Color.secondary.opacity(0.62))
+            .overlay {
+                GeometryReader { proxy in
+                    let width = max(proxy.size.width, 1)
+                    LinearGradient(
+                        colors: [
+                            Color.clear,
+                            Color.primary.opacity(0.52),
+                            Color.clear,
+                        ],
+                        startPoint: .leading,
+                        endPoint: .trailing
+                    )
+                    .frame(width: width * 0.70)
+                    .offset(x: shimmerProgress * width)
+                }
+                .mask(
+                    Text("Thinking")
+                        .font(.system(size: 16, weight: .regular))
+                )
+            }
+            .onAppear {
+                shimmerProgress = -0.75
+                withAnimation(.linear(duration: 1.35).repeatForever(autoreverses: false)) {
+                    shimmerProgress = 1.35
+                }
+            }
+    }
+}
+
 private struct DesktopSubmittedUserContinuityPreviewState: Identifiable, Equatable {
     enum InputMode: String, Equatable {
         case typed = "typed"
@@ -7479,7 +7573,7 @@ struct DesktopSessionShellView: View {
                 desktopEvidenceFirstOperationalShell
             }
         }
-        .padding(.leading, 24)
+        .padding(.leading, 0)
         .padding(.vertical, 24)
         .frame(minWidth: 680, minHeight: 520, alignment: .topLeading)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -7984,8 +8078,8 @@ struct DesktopSessionShellView: View {
 
             if !desktopSidebarIsVisible {
                 desktopSidebarToggleButton
-                    .padding(.top, 18)
-                    .padding(.leading, 18)
+                    .padding(.top, 6)
+                    .padding(.leading, 48)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -8046,7 +8140,7 @@ struct DesktopSessionShellView: View {
             .padding(.top, 18)
             .padding(.bottom, 14)
 
-            ScrollView {
+            ScrollView(.vertical, showsIndicators: true) {
                 VStack(alignment: .leading, spacing: 16) {
                     desktopSidebarActionRow(
                         title: "New conversation",
@@ -8119,6 +8213,7 @@ struct DesktopSessionShellView: View {
                 .padding(.vertical, 8)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .background(DesktopLightScrollBarInstaller(autohidesScrollers: false))
 
             Divider()
                 .padding(.horizontal, 16)
@@ -8243,16 +8338,11 @@ struct DesktopSessionShellView: View {
                 desktopSidebarIsVisible.toggle()
             }
         } label: {
-            Image(systemName: desktopSidebarIsVisible ? "sidebar.left" : "line.3.horizontal")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(.primary)
-                .frame(width: 32, height: 32)
-                .background(Color.white.opacity(0.92))
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .stroke(Color.primary.opacity(0.08), lineWidth: 1)
-                )
+            Image(systemName: desktopSidebarIsVisible ? "xmark" : "arrow.right")
+                .font(.system(size: 18, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityLabel(desktopSidebarIsVisible ? "Hide sidebar" : "Show sidebar")
@@ -8352,17 +8442,10 @@ struct DesktopSessionShellView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             isSelected
-                ? Color.white.opacity(0.96)
+                ? Color(nsColor: NSColor(srgbRed: 0.93, green: 0.93, blue: 0.92, alpha: 1.0))
                 : Color.clear
         )
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(
-                    isSelected ? Color.primary.opacity(0.08) : Color.clear,
-                    lineWidth: 1
-                )
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     private func desktopSidebarHistoryTitle(for item: DesktopSidebarConversationItem) -> String {
@@ -10582,27 +10665,9 @@ struct DesktopSessionShellView: View {
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white)
-        .clipShape(
-            UnevenRoundedRectangle(
-                cornerRadii: RectangleCornerRadii(
-                    topLeading: 28,
-                    bottomLeading: 28,
-                    bottomTrailing: 28,
-                    topTrailing: 0
-                ),
-                style: .continuous
-            )
-        )
+        .clipShape(RoundedRectangle(cornerRadius: 30, style: .continuous))
         .overlay(
-            UnevenRoundedRectangle(
-                cornerRadii: RectangleCornerRadii(
-                    topLeading: 28,
-                    bottomLeading: 28,
-                    bottomTrailing: 28,
-                    topTrailing: 0
-                ),
-                style: .continuous
-            )
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
                 .stroke(Color.primary.opacity(0.12), lineWidth: 1)
         )
         .shadow(color: Color.black.opacity(0.04), radius: 10, x: 0, y: 5)
@@ -11338,6 +11403,10 @@ struct DesktopSessionShellView: View {
             DesktopAvailabilityEvidenceRow(
                 label: "playback",
                 value: desktopAuthoritativeReplyPlaybackState.phase.rawValue
+            ),
+            DesktopAvailabilityEvidenceRow(
+                label: "app",
+                value: scenePhase == .active ? "active" : "inactive"
             ),
             DesktopAvailabilityEvidenceRow(
                 label: "window",
@@ -15473,7 +15542,8 @@ struct DesktopSessionShellView: View {
                     title: "Selene",
                     detail: nil
                 )
-                .padding(.horizontal, 36)
+                .padding(.leading, 22)
+                .padding(.trailing, 44)
                 .padding(.vertical, 28)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .background(DesktopLightScrollBarInstaller())
@@ -15488,8 +15558,8 @@ struct DesktopSessionShellView: View {
                 isWritable: true,
                 readOnlyMessage: nil
             )
-            .padding(.leading, 24)
-            .padding(.trailing, 0)
+            .padding(.leading, 28)
+            .padding(.trailing, 28)
             .padding(.top, 18)
             .padding(.bottom, 24)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -15507,7 +15577,8 @@ struct DesktopSessionShellView: View {
             ScrollViewReader { scrollProxy in
                 ScrollView {
                     desktopConversationPrimaryPane(state)
-                        .padding(.horizontal, 36)
+                        .padding(.leading, 22)
+                        .padding(.trailing, 44)
                         .padding(.vertical, 28)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .background(DesktopLightScrollBarInstaller())
@@ -15529,8 +15600,8 @@ struct DesktopSessionShellView: View {
                 isWritable: isWritable,
                 readOnlyMessage: desktopConversationReadOnlyComposerMessage
             )
-            .padding(.leading, 24)
-            .padding(.trailing, 0)
+            .padding(.leading, 28)
+            .padding(.trailing, 28)
             .padding(.top, 18)
             .padding(.bottom, 24)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -16337,18 +16408,18 @@ struct DesktopSessionShellView: View {
 
     private func desktopConversationUserMessageBubble(_ body: String) -> some View {
         HStack(alignment: .top, spacing: 0) {
-            Spacer(minLength: 96)
+            Spacer(minLength: 116)
 
             Text(body)
                 .font(.system(size: 16, weight: .regular))
                 .lineSpacing(3)
                 .textSelection(.enabled)
-                .foregroundStyle(.white)
+                .foregroundStyle(.primary)
                 .padding(.horizontal, 18)
-                .padding(.vertical, 14)
-                .background(Color.black)
-                .clipShape(RoundedRectangle(cornerRadius: 26, style: .continuous))
-                .frame(maxWidth: 520, alignment: .trailing)
+                .padding(.vertical, 13)
+                .background(Color(nsColor: NSColor(srgbRed: 0.946, green: 0.946, blue: 0.938, alpha: 1.0)))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .frame(maxWidth: 560, alignment: .trailing)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .trailing)
@@ -16366,7 +16437,7 @@ struct DesktopSessionShellView: View {
                 desktopCompactSourceChipGrid(sourceChips)
             }
         }
-        .frame(maxWidth: 680, alignment: .leading)
+        .frame(maxWidth: 760, alignment: .leading)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -16569,16 +16640,9 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopConversationInlineThinkingPlaceholder: some View {
-        HStack(spacing: 7) {
-            Text("Thinking")
-                .font(.system(size: 16, weight: .regular))
-                .foregroundStyle(.secondary)
-
-            ProgressView()
-                .controlSize(.small)
-        }
+        DesktopInlineThinkingShimmerText()
         .padding(.vertical, 6)
-        .frame(maxWidth: 680, alignment: .leading)
+        .frame(maxWidth: 760, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -16593,7 +16657,8 @@ struct DesktopSessionShellView: View {
 
         let hasFinalAnswerText = desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
             .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
-        guard !hasFinalAnswerText else {
+        guard !hasFinalAnswerText,
+              !desktopConversationTimelineHasSeleneResponseAfterLatestUserTurn(state.timelineEntries) else {
             return false
         }
 
@@ -16601,6 +16666,24 @@ struct DesktopSessionShellView: View {
             || desktopTypedTurnDispatchInFlightRequestID != nil
             || desktopWakeTriggeredDispatchInFlightRequestID != nil
             || (desktopTypedTurnPendingRequest != nil && state.timelineEntries.contains(where: \.isUserAuthored))
+    }
+
+    private func desktopConversationTimelineHasSeleneResponseAfterLatestUserTurn(
+        _ timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> Bool {
+        var foundSeleneResponse = false
+
+        for entry in timelineEntries.reversed() {
+            if entry.isUserAuthored {
+                return foundSeleneResponse
+            }
+
+            if entry.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                foundSeleneResponse = true
+            }
+        }
+
+        return foundSeleneResponse
     }
 
     private func desktopConversationShouldSuppressDedicatedAuthoritativeReplyTextEntry(
