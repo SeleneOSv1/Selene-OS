@@ -135,6 +135,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let turnID: String?
     let failureClass: String?
     let authoritativeResponseText: String?
+    let authoritativeTTSOutputText: String?
     let authoritativeResponseProvenance: AuthoritativeResponseProvenance?
     let sourceChips: [AuthoritativeSourceChip]
     let imageCards: [AuthoritativeImageCard]
@@ -161,6 +162,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: nil,
             failureClass: nil,
             authoritativeResponseText: nil,
+            authoritativeTTSOutputText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
@@ -189,6 +191,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: nil,
             failureClass: nil,
             authoritativeResponseText: nil,
+            authoritativeTTSOutputText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
@@ -217,6 +220,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: nil,
             failureClass: nil,
             authoritativeResponseText: nil,
+            authoritativeTTSOutputText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
@@ -246,6 +250,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: response.turnID.map(String.init),
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
+            authoritativeTTSOutputText: boundedAuthoritativeResponseText(response.ttsText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
@@ -275,6 +280,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: response.turnID.map(String.init),
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
+            authoritativeTTSOutputText: boundedAuthoritativeResponseText(response.ttsText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
@@ -304,6 +310,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: response.turnID.map(String.init),
             failureClass: response.failureClass,
             authoritativeResponseText: boundedAuthoritativeResponseText(response.responseText),
+            authoritativeTTSOutputText: boundedAuthoritativeResponseText(response.ttsText),
             authoritativeResponseProvenance: boundedAuthoritativeResponseProvenance(response.provenance),
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
@@ -338,6 +345,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: turnID,
             failureClass: failureClass,
             authoritativeResponseText: nil,
+            authoritativeTTSOutputText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
@@ -372,6 +380,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: turnID,
             failureClass: failureClass,
             authoritativeResponseText: nil,
+            authoritativeTTSOutputText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
@@ -406,6 +415,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             turnID: turnID,
             failureClass: failureClass,
             authoritativeResponseText: nil,
+            authoritativeTTSOutputText: nil,
             authoritativeResponseProvenance: nil,
             sourceChips: [],
             imageCards: [],
@@ -4321,6 +4331,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let reason: String?
         let nextMove: String
         let responseText: String
+        let ttsText: String
         let reasonCode: String
         let provenance: VoiceTurnProvenancePayload?
         let sourceChips: [VoiceTurnWebSourceChipPayload]?
@@ -4339,6 +4350,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case reason
             case nextMove = "next_move"
             case responseText = "response_text"
+            case ttsText = "tts_text"
             case reasonCode = "reason_code"
             case provenance
             case sourceChips = "source_chips"
@@ -4852,6 +4864,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     private let tenantID: String?
     private let deviceID: String
     private let urlSession: URLSession
+    private let openAITtsURLSession: URLSession
     private var managedAdapterProcess: Process?
     private var managedAdapterLogHandle: FileHandle?
     private var applicationWillTerminateObserver: NSObjectProtocol?
@@ -4868,6 +4881,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 15
         self.urlSession = URLSession(configuration: configuration)
+        let openAITtsConfiguration = URLSessionConfiguration.ephemeral
+        openAITtsConfiguration.timeoutIntervalForRequest = 45
+        openAITtsConfiguration.timeoutIntervalForResource = 45
+        self.openAITtsURLSession = URLSession(configuration: openAITtsConfiguration)
         self.applicationWillTerminateObserver = NotificationCenter.default.addObserver(
             forName: NSApplication.willTerminateNotification,
             object: nil,
@@ -5569,6 +5586,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         var urlRequest = URLRequest(url: endpointURL)
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = body
+        urlRequest.timeoutInterval = 45
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.setValue(ingressIdentity.requestID, forHTTPHeaderField: "x-request-id")
         urlRequest.setValue(ingressIdentity.idempotencyKey, forHTTPHeaderField: "idempotency-key")
@@ -5579,7 +5597,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             forHTTPHeaderField: "Authorization"
         )
 
-        let (data, response) = try await urlSession.data(for: urlRequest)
+        let (data, response) = try await openAITtsURLSession.data(for: urlRequest)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .useDefaultKeys
         let httpResponse = response as? HTTPURLResponse

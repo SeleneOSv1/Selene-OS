@@ -8718,11 +8718,16 @@ impl AdapterRuntime {
                 base_thread_state,
             )
             .map_err(post_session_error)?;
-            if app_platform == AppPlatform::Desktop && request.audio_capture_ref.is_some() {
+            if app_platform == AppPlatform::Desktop {
                 if let Some(screen_lifecycle_intent) = user_text_final
                     .as_deref()
                     .and_then(stage4_classify_screen_lifecycle_command)
                 {
+                    let screen_lifecycle_evidence = if request.audio_capture_ref.is_some() {
+                        "post_ph1c_valid_desktop_voice_transcript"
+                    } else {
+                        "post_valid_desktop_typed_turn"
+                    };
                     finalize_session_turn_record(
                         &mut store,
                         now,
@@ -8742,6 +8747,7 @@ impl AdapterRuntime {
                         session_turn_state.session_snapshot.session_state,
                         Some(session_turn_state.session_attach_outcome),
                         screen_lifecycle_intent,
+                        screen_lifecycle_evidence,
                     );
                     cache_authoritative_turn_response(
                         &self.session_retry_cache,
@@ -16831,6 +16837,7 @@ fn stage4_screen_lifecycle_adapter_response(
     session_state: SessionState,
     session_attach_outcome: Option<SessionAttachOutcome>,
     intent: Stage4ScreenLifecycleIntent,
+    evidence: &'static str,
 ) -> VoiceTurnAdapterResponse {
     VoiceTurnAdapterResponse {
         status: "ok".to_string(),
@@ -16860,7 +16867,7 @@ fn stage4_screen_lifecycle_adapter_response(
             canonical_intent: intent.canonical_intent().to_string(),
             action: intent.action().to_string(),
             source: "adapter_runtime_lifecycle_classifier".to_string(),
-            evidence: "post_ph1c_valid_desktop_voice_transcript".to_string(),
+            evidence: evidence.to_string(),
         }),
     }
 }
@@ -21571,7 +21578,8 @@ fn committed_voice_reject_should_ignore_user_surface(
         let token = transcript_text
             .trim_matches(|ch: char| ch.is_whitespace() || ch.is_ascii_punctuation())
             .to_ascii_lowercase();
-        return committed_voice_latin_filler_artifact_token(&token)
+        return committed_voice_single_character_artifact_token(&token)
+            || committed_voice_latin_filler_artifact_token(&token)
             || capture.is_some_and(committed_voice_capture_has_unstable_or_degraded_evidence);
     }
     if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
@@ -21686,7 +21694,7 @@ fn committed_voice_single_short_unsafe_token(transcript_text: &str) -> bool {
     {
         return false;
     }
-    if matches!(token.as_str(), "yes" | "no" | "ok" | "okay") {
+    if matches!(token.as_str(), "yes" | "no") {
         return false;
     }
     token.chars().filter(|ch| ch.is_ascii_alphabetic()).count() <= 4
@@ -21934,6 +21942,10 @@ fn committed_voice_latin_filler_artifact_token(token: &str) -> bool {
             | "yep"
             | "yup"
     )
+}
+
+fn committed_voice_single_character_artifact_token(token: &str) -> bool {
+    token.chars().filter(|ch| ch.is_ascii_alphanumeric()).count() == 1
 }
 
 fn committed_voice_cjk_filler_char(ch: char) -> bool {
@@ -24696,6 +24708,10 @@ mod tests {
             .expect("show action packet should be present");
         assert_eq!(show_action.canonical_intent, "SCREEN_SHOW");
         assert_eq!(show_action.action, "show");
+        assert_eq!(
+            show_action.evidence,
+            "post_ph1c_valid_desktop_voice_transcript"
+        );
 
         let mut hide = base_request();
         mark_request_as_live_desktop_capture_for_h417_tests(&mut hide);
@@ -24718,6 +24734,70 @@ mod tests {
             .expect("hide action packet should be present");
         assert_eq!(hide_action.canonical_intent, "SCREEN_HIDE");
         assert_eq!(hide_action.action, "hide");
+        assert_eq!(
+            hide_action.evidence,
+            "post_ph1c_valid_desktop_voice_transcript"
+        );
+    }
+
+    #[test]
+    fn stage5_typed_lifecycle_commands_use_runtime_route_without_chat_pollution() {
+        let runtime = AdapterRuntime::default();
+        let mut show = base_request();
+        show.app_platform = "DESKTOP".to_string();
+        show.audio_capture_ref = None;
+        show.correlation_id = 5_505_001;
+        show.turn_id = 5_505_001;
+        show.device_turn_sequence = Some(5_505_001);
+        show.now_ns = Some(5_505_001);
+        show.user_text_final = Some("show me the screen".to_string());
+        let show_out = runtime
+            .run_voice_turn(show)
+            .expect("typed screen show lifecycle command should return an action packet");
+        assert_eq!(show_out.status, "ok", "{show_out:?}");
+        assert_eq!(show_out.outcome, "SCREEN_LIFECYCLE");
+        assert_eq!(show_out.next_move, "desktop_lifecycle_action");
+        assert_eq!(show_out.response_text, "");
+        assert_eq!(show_out.tts_text, "");
+        assert!(show_out.source_chips.is_empty());
+        assert!(show_out.source_cards.is_empty());
+        assert_eq!(
+            show_out.answer_class.as_deref(),
+            Some("desktop_screen_lifecycle")
+        );
+        let show_action = show_out
+            .screen_lifecycle_action
+            .as_ref()
+            .expect("typed show action packet should be present");
+        assert_eq!(show_action.canonical_intent, "SCREEN_SHOW");
+        assert_eq!(show_action.action, "show");
+        assert_eq!(show_action.source, "adapter_runtime_lifecycle_classifier");
+        assert_eq!(show_action.evidence, "post_valid_desktop_typed_turn");
+
+        let mut hide = base_request();
+        hide.app_platform = "DESKTOP".to_string();
+        hide.audio_capture_ref = None;
+        hide.correlation_id = 5_505_002;
+        hide.turn_id = 5_505_002;
+        hide.device_turn_sequence = Some(5_505_002);
+        hide.now_ns = Some(5_505_002);
+        hide.user_text_final = Some("hide the screen".to_string());
+        let hide_out = runtime
+            .run_voice_turn(hide)
+            .expect("typed screen hide lifecycle command should return an action packet");
+        assert_eq!(hide_out.status, "ok", "{hide_out:?}");
+        assert_eq!(hide_out.outcome, "SCREEN_LIFECYCLE");
+        assert_eq!(hide_out.next_move, "desktop_lifecycle_action");
+        assert_eq!(hide_out.response_text, "");
+        assert_eq!(hide_out.tts_text, "");
+        let hide_action = hide_out
+            .screen_lifecycle_action
+            .as_ref()
+            .expect("typed hide action packet should be present");
+        assert_eq!(hide_action.canonical_intent, "SCREEN_HIDE");
+        assert_eq!(hide_action.action, "hide");
+        assert_eq!(hide_action.source, "adapter_runtime_lifecycle_classifier");
+        assert_eq!(hide_action.evidence, "post_valid_desktop_typed_turn");
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {
@@ -40782,6 +40862,70 @@ mod tests {
         let out = runtime
             .run_voice_turn(req)
             .expect("one-token filler artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_ok_ack_fragment_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_103_1;
+        req.turn_id = 420_103_1;
+        req.user_text_final = Some("Ok.".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("one-token acknowledgement artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE.0.to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_single_keystroke_fragment_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_103_2;
+        req.turn_id = 420_103_2;
+        req.user_text_final = Some("c".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("one-character keystroke artifact should be ignored");
         assert_eq!(out.status, "ok");
         assert_eq!(out.outcome, "IGNORED");
         assert_eq!(out.next_move, "listening_window_open");

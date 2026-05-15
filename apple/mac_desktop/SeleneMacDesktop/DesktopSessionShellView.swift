@@ -2211,6 +2211,7 @@ private struct DesktopAuthoritativeReplyRenderState: Equatable {
     let title: String
     let summary: String
     let authoritativeResponseText: String?
+    let completionTimingLabel: String?
 }
 
 private struct DesktopAuthoritativeReplyProvenanceRenderState: Equatable {
@@ -3118,6 +3119,15 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
             return
         }
 
+        guard !shouldIgnoreCommittedVoiceTranscriptArtifact(trimmedTranscript) else {
+            ignoreCommittedVoiceTranscriptArtifact(
+                trimmedTranscript,
+                source: "explicit_voice",
+                keepRealtimeTransport: false
+            )
+            return
+        }
+
         guard let audioCaptureRefState = preparedAudioCaptureRefState(
             captureStopNS: captureStopNS,
             finalTranscript: trimmedTranscript
@@ -3656,6 +3666,15 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeCaptureStopNS = captureStopNS
         endCaptureInput()
 
+        guard !shouldIgnoreCommittedVoiceTranscriptArtifact(trimmedTranscript) else {
+            ignoreCommittedVoiceTranscriptArtifact(
+                trimmedTranscript,
+                source: "realtime",
+                keepRealtimeTransport: true
+            )
+            return
+        }
+
         guard let audioCaptureRefState = preparedAudioCaptureRefState(
             captureStopNS: captureStopNS,
             finalTranscript: trimmedTranscript
@@ -3716,6 +3735,62 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         return false
+    }
+
+    private static let committedVoiceTranscriptArtifactTokens: Set<String> = [
+        "ah", "eh", "er", "hm", "hmm", "huh", "ok", "okay",
+        "so", "sure", "uh", "um", "umm", "yeah", "yep", "yup"
+    ]
+
+    private func shouldIgnoreCommittedVoiceTranscriptArtifact(_ transcript: String) -> Bool {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return true
+        }
+
+        let compact = trimmed.filter { !$0.isWhitespace }
+        guard compact.contains(where: { $0.isLetter || $0.isNumber }) else {
+            return true
+        }
+
+        let words = trimmed.split { character in
+            !(character.isLetter || character.isNumber || character == "'")
+        }
+        guard words.count == 1 else {
+            return false
+        }
+
+        let token = words[0].lowercased()
+        if token.count == 1,
+           token.contains(where: { $0.isLetter || $0.isNumber }) {
+            return true
+        }
+
+        return Self.committedVoiceTranscriptArtifactTokens.contains(token)
+    }
+
+    private func ignoreCommittedVoiceTranscriptArtifact(
+        _ transcript: String,
+        source: String,
+        keepRealtimeTransport: Bool
+    ) {
+        let finalChars = transcript.trimmingCharacters(in: .whitespacesAndNewlines).count
+        clearTransientTranscriptPreview()
+        pendingRequest = nil
+        failedRequest = nil
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop committed voice transcript ignored reason=text_artifact source=\(boundedFailureLogToken(source)) final_chars=\(finalChars) rearm=\(keepRealtimeTransport)"
+        )
+
+        guard keepRealtimeTransport,
+              let session = realtimeSession,
+              let evidenceContext = activeCaptureContext?.evidenceContext else {
+            completeStoppedCaptureSession()
+            return
+        }
+
+        resetRealtimeSegmentAfterRejectedEvidence(reason: "text_artifact_keep_transport")
+        beginRealtimeTranscriptionCapture(session: session, evidenceContext: evidenceContext)
     }
 
     private func scheduleRealtimeCompletionTimeout() {
@@ -3823,7 +3898,9 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimePreviewSuppressedForEchoTail = false
     }
 
-    private func resetRealtimeSegmentAfterRejectedEvidence() {
+    private func resetRealtimeSegmentAfterRejectedEvidence(
+        reason: String = "unsafe_evidence_keep_transport"
+    ) {
         realtimePartialTranscript = ""
         realtimeCommittedTranscript = ""
         realtimeCaptureStopNS = nil
@@ -3844,7 +3921,7 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop realtime transcription segment reset reason=unsafe_evidence_keep_transport"
+            "\(desktopTraceClockFields()) desktop realtime transcription segment reset reason=\(boundedFailureLogToken(reason))"
         )
     }
 
@@ -6756,10 +6833,11 @@ private struct DesktopConversationDisplayBlock: Equatable {
 }
 
 private struct DesktopInlineThinkingShimmerText: View {
+    let label: String
     @State private var shimmerProgress: CGFloat = -0.75
 
     var body: some View {
-        Text("Thinking")
+        Text(label)
             .font(.system(size: 16, weight: .regular))
             .foregroundStyle(Color.secondary.opacity(0.62))
             .overlay {
@@ -6778,7 +6856,7 @@ private struct DesktopInlineThinkingShimmerText: View {
                     .offset(x: shimmerProgress * width)
                 }
                 .mask(
-                    Text("Thinking")
+                    Text(label)
                         .font(.system(size: 16, weight: .regular))
                 )
             }
@@ -7561,6 +7639,10 @@ struct DesktopSessionShellView: View {
     @State private var desktopComposerAttachmentSelections: [DesktopComposerAttachmentSelection] = []
     @State private var desktopComposerVoiceModeEnabled: Bool = false
     @State private var desktopComposerVoiceModeAwaitingReplyPlaybackCompletion: Bool = false
+    @State private var desktopTypedTurnShouldResumeComposerVoiceModeAfterReply: Bool = false
+    @State private var desktopPostWakeInstructionListeningAuthorized: Bool = false
+    @State private var desktopVoiceAnswerPresentationPendingRequestID: String?
+    @State private var desktopVoiceAnswerPresentationStartedNS: UInt64?
     @State private var desktopMeetingRecordingUnavailableAlertIsPresented: Bool = false
     @State private var desktopSearchRequestFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopToolRequestFailedRequest: InterruptContinuityResponseFailureState?
@@ -7655,12 +7737,8 @@ struct DesktopSessionShellView: View {
             }
         }
         .task(id: desktopTypedTurnPendingRequest?.id) {
-            let pendingTypedTurnOrigin = desktopTypedTurnPendingRequest?.origin
             await dispatchPreparedTypedTurnRequestIfNeeded()
             await synchronizeDesktopWakeListenerLifecycleState()
-            if pendingTypedTurnOrigin == .keyboardComposer {
-                requestDesktopTypedTurnComposerFocus()
-            }
         }
         .task(id: desktopOnboardingEntryContext?.id) {
             await openInviteLinkAndStartOnboardingIfNeeded()
@@ -9889,22 +9967,14 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopTypedTurnComposerEditingInterlocksActive: Bool {
+        // Draft editing is local until send. Keep it available during voice/listening
+        // so typing can switch modality without merging typed text into voice capture.
         keyboardComposerPendingTypedTurnRequest != nil
-            || desktopRealtimeTranscriptionStartInFlight
-            || explicitVoiceController.isListening
-            || explicitVoiceController.pendingRequest != nil
-            || desktopWakeListenerController.listenerState.isActiveForMicrophone
-            || desktopWakeListenerController.listenerState == .dispatching
-            || desktopWakeListenerController.pendingRequest != nil
-            || lastStagedWakeTriggeredVoiceTurnRequestState != nil
     }
 
     private var desktopTypedTurnComposerSubmissionInterlocksActive: Bool {
         keyboardComposerPendingTypedTurnRequest != nil
-            || desktopRealtimeTranscriptionStartInFlight
-            || explicitVoiceController.isListening
             || explicitVoiceController.pendingRequest != nil
-            || desktopWakeListenerController.listenerState.isActiveForMicrophone
             || desktopWakeListenerController.listenerState == .dispatching
             || desktopWakeListenerController.pendingRequest != nil
             || lastStagedWakeTriggeredVoiceTurnRequestState != nil
@@ -9942,7 +10012,10 @@ struct DesktopSessionShellView: View {
                 if desktopComposerVoiceModeEnabled,
                    !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    newValue != explicitVoiceController.transcriptPreview {
-                    desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+                    desktopDeactivateComposerVoiceMode(
+                        preserveTranscriptPreview: false,
+                        clearPostWakeAuthorization: false
+                    )
                 }
 
                 desktopTypedTurnDraft = newValue
@@ -9989,9 +10062,15 @@ struct DesktopSessionShellView: View {
         startDesktopComposerVoiceTurn()
     }
 
-    private func desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: Bool) {
+    private func desktopDeactivateComposerVoiceMode(
+        preserveTranscriptPreview: Bool,
+        clearPostWakeAuthorization: Bool = true
+    ) {
         desktopComposerVoiceModeEnabled = false
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        if clearPostWakeAuthorization {
+            desktopPostWakeInstructionListeningAuthorized = false
+        }
         cancelDesktopRealtimeTranscriptionStartIfNeeded()
         cancelDesktopRealtimeTranscriptionPrepareIfNeeded(reason: "composer_voice_mode_deactivated")
 
@@ -10022,12 +10101,11 @@ struct DesktopSessionShellView: View {
               desktopTypedTurnPendingRequest == nil,
               !desktopRealtimeTranscriptionStartInFlight,
               desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-              desktopAuthoritativeReplyPlaybackState.phase != .requesting,
+              !desktopOpenAITtsSelfEchoGateActive,
               !desktopWakeListenerController.listenerState.isActiveForMicrophone,
               desktopWakeListenerController.listenerState != .dispatching,
               desktopWakeListenerController.pendingRequest == nil,
-              lastStagedWakeTriggeredVoiceTurnRequestState == nil,
-              desktopTypedTurnDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+              lastStagedWakeTriggeredVoiceTurnRequestState == nil else {
             return
         }
 
@@ -10163,7 +10241,6 @@ struct DesktopSessionShellView: View {
                   !explicitVoiceController.isListening,
                   explicitVoiceController.pendingRequest == nil,
                   desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-                  desktopAuthoritativeReplyPlaybackState.phase != .requesting,
                   !desktopOpenAITtsSelfEchoGateActive else {
                 desktopAppendRuntimeBridgeDebugLog(
                     "\(desktopTraceClockFields()) desktop realtime transcription prewarm recovery skipped reason=\(boundedReason)"
@@ -10181,7 +10258,7 @@ struct DesktopSessionShellView: View {
 
     private func desktopAttemptResumeComposerVoiceModeAfterUnsafeEvidenceRejection() {
         guard desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-              desktopAuthoritativeReplyPlaybackState.phase != .requesting else {
+              !desktopOpenAITtsSelfEchoGateActive else {
             return
         }
 
@@ -10214,7 +10291,6 @@ struct DesktopSessionShellView: View {
                   !explicitVoiceController.isListening,
                   explicitVoiceController.pendingRequest == nil,
                   desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-                  desktopAuthoritativeReplyPlaybackState.phase != .requesting,
                   !desktopOpenAITtsSelfEchoGateActive else {
                 return
             }
@@ -10242,9 +10318,9 @@ struct DesktopSessionShellView: View {
     }
 
     private func startPostWakeInstructionListeningAfterGreeting() {
+        desktopPostWakeInstructionListeningAuthorized = true
         desktopComposerVoiceModeEnabled = true
         if desktopAuthoritativeReplyPlaybackState.phase == .speaking
-            || desktopAuthoritativeReplyPlaybackState.phase == .requesting
             || desktopOpenAITtsSelfEchoGateActive {
             desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
             desktopAppendRuntimeBridgeDebugLog(
@@ -10314,6 +10390,7 @@ struct DesktopSessionShellView: View {
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) desktop lifecycle post-action rearm mode=active_instruction_listening id=\(requestID) source=\(boundedFailureLogToken(source)) canonical_intent=\(boundedFailureLogToken(lifecycleAction.canonicalIntent))"
         )
+        desktopPostWakeInstructionListeningAuthorized = true
         desktopComposerVoiceModeEnabled = true
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         desktopWakeAutoStartAttemptedPromptID = nil
@@ -10489,8 +10566,6 @@ struct DesktopSessionShellView: View {
 
     private var desktopComposerShouldShowSendButton: Bool {
         desktopComposerHasSubmissionContent
-            && !desktopRealtimeTranscriptionStartInFlight
-            && !explicitVoiceController.isListening
     }
 
     private var desktopVisibleComposerPlaceholder: String {
@@ -11635,7 +11710,6 @@ struct DesktopSessionShellView: View {
               !desktopRealtimeTranscriptionStartInFlight,
               !desktopOpenAITtsSelfEchoGateActive,
               desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-              desktopAuthoritativeReplyPlaybackState.phase != .requesting,
               !explicitVoiceController.isListening,
               explicitVoiceController.pendingRequest == nil,
               desktopTypedTurnPendingRequest == nil,
@@ -12094,6 +12168,148 @@ struct DesktopSessionShellView: View {
             playbackTitle: desktopAuthoritativeReplyPlaybackState.title,
             playbackSummary: desktopAuthoritativeReplyPlaybackState.summary,
             playbackDetail: desktopAuthoritativeReplyPlaybackState.detail
+        )
+    }
+
+    private func desktopBeginVoiceAnswerPresentationTiming(requestID: String) {
+        desktopVoiceAnswerPresentationPendingRequestID = requestID
+        desktopVoiceAnswerPresentationStartedNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+    }
+
+    private func desktopClearVoiceAnswerPresentationTiming(requestID: String) {
+        guard desktopVoiceAnswerPresentationPendingRequestID == requestID else {
+            return
+        }
+
+        desktopVoiceAnswerPresentationPendingRequestID = nil
+        desktopVoiceAnswerPresentationStartedNS = nil
+    }
+
+    private func desktopVoiceAnswerThoughtDurationLabel(requestID: String) -> String? {
+        guard desktopVoiceAnswerPresentationPendingRequestID == requestID,
+              let startedNS = desktopVoiceAnswerPresentationStartedNS else {
+            return nil
+        }
+
+        let nowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+        let elapsedSeconds = nowNS > startedNS
+            ? Double(nowNS - startedNS) / 1_000_000_000.0
+            : 0
+        if elapsedSeconds < 2.0 {
+            return "Thought for a few seconds"
+        }
+
+        return "Thought for \(Swift.max(1, Int(elapsedSeconds.rounded())))s"
+    }
+
+    private var desktopConversationInlineProgressLabel: String {
+        guard desktopVoiceAnswerPresentationPendingRequestID != nil else {
+            return "Thinking"
+        }
+
+        if desktopAuthoritativeReplyPlaybackState.phase == .requesting
+            || desktopCanonicalRuntimeOutcomeState?.phase == .completed {
+            return "Thinking"
+        }
+
+        return "Thinking"
+    }
+
+    private func desktopAuthoritativeReplyRenderState(
+        outcomeState: DesktopCanonicalRuntimeOutcomeState,
+        missingSummary: String,
+        presentSummary: String,
+        completionTimingLabel: String? = nil
+    ) -> DesktopAuthoritativeReplyRenderState {
+        DesktopAuthoritativeReplyRenderState(
+            title: "Cloud-authored authoritative reply",
+            summary: outcomeState.authoritativeResponseText == nil ? missingSummary : presentSummary,
+            authoritativeResponseText: outcomeState.authoritativeResponseText,
+            completionTimingLabel: completionTimingLabel
+        )
+    }
+
+    private func desktopAuthoritativeReplyProvenanceRenderState(
+        outcomeState: DesktopCanonicalRuntimeOutcomeState,
+        missingSummary: String,
+        presentSummary: String
+    ) -> DesktopAuthoritativeReplyProvenanceRenderState {
+        DesktopAuthoritativeReplyProvenanceRenderState(
+            title: "Cloud-authored authoritative reply provenance",
+            summary: outcomeState.authoritativeResponseProvenance == nil ? missingSummary : presentSummary,
+            authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
+            sources: outcomeState.authoritativeResponseProvenance?.sources.map {
+                DesktopAuthoritativeReplyProvenanceRenderState.Source(
+                    title: $0.title,
+                    url: $0.url
+                )
+            } ?? [],
+            sourceChips: outcomeState.sourceChips.map {
+                DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
+                    sourceID: $0.sourceID,
+                    label: $0.label,
+                    domain: $0.domain,
+                    clickableSourcePageURL: $0.clickableSourcePageURL,
+                    accessibilityLabel: $0.accessibilityLabel
+                )
+            },
+            imageCards: outcomeState.imageCards.map {
+                DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
+                    imageID: $0.imageID,
+                    imageKind: $0.imageKind,
+                    approvedAssetRef: $0.approvedAssetRef,
+                    displayImageURL: $0.displayImageURL,
+                    caption: $0.caption,
+                    altText: $0.altText,
+                    sourceLabel: $0.sourceLabel,
+                    sourceDomain: $0.sourceDomain,
+                    clickableSourcePageURL: $0.clickableSourcePageURL,
+                    accessibilityOpenLabel: $0.accessibilityOpenLabel
+                )
+            },
+            sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
+                DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
+                    cardID: $0.cardID,
+                    provider: $0.provider,
+                    sourceTitle: $0.sourceTitle,
+                    sourceDomain: $0.sourceDomain,
+                    sourcePageURL: $0.sourcePageURL,
+                    clickableSourcePageURL: $0.clickableSourcePageURL,
+                    attributionText: $0.attributionText
+                )
+            },
+            retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
+                outcomeState.authoritativeResponseProvenance?.retrievedAt
+            ),
+            cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
+        )
+    }
+
+    private func desktopRevealAuthoritativeReply(
+        outcomeState: DesktopCanonicalRuntimeOutcomeState,
+        requestID: String,
+        conversationKey: String,
+        missingReplySummary: String,
+        presentReplySummary: String,
+        missingProvenanceSummary: String,
+        presentProvenanceSummary: String,
+        completionTimingLabel: String? = nil
+    ) {
+        desktopAuthoritativeReplyRenderState = desktopAuthoritativeReplyRenderState(
+            outcomeState: outcomeState,
+            missingSummary: missingReplySummary,
+            presentSummary: presentReplySummary,
+            completionTimingLabel: completionTimingLabel
+        )
+        desktopAuthoritativeReplyProvenanceRenderState = desktopAuthoritativeReplyProvenanceRenderState(
+            outcomeState: outcomeState,
+            missingSummary: missingProvenanceSummary,
+            presentSummary: presentProvenanceSummary
+        )
+        desktopPersistAuthoritativeReplyIfNeeded(
+            requestID: requestID,
+            text: outcomeState.authoritativeResponseText,
+            conversationKey: conversationKey
         )
     }
 
@@ -16496,6 +16712,13 @@ struct DesktopSessionShellView: View {
         _ entry: DesktopConversationTimelineEntryState
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
+            if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry),
+               let completionTimingLabel = desktopAuthoritativeReplyRenderState?.completionTimingLabel {
+                Text(completionTimingLabel)
+                    .font(.system(size: 13, weight: .regular))
+                    .foregroundStyle(Color.secondary.opacity(0.72))
+            }
+
             desktopConversationStructuredResponseText(entry.body)
 
             if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry),
@@ -16707,7 +16930,7 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopConversationInlineThinkingPlaceholder: some View {
-        DesktopInlineThinkingShimmerText()
+        DesktopInlineThinkingShimmerText(label: desktopConversationInlineProgressLabel)
         .padding(.vertical, 6)
         .frame(maxWidth: 760, alignment: .leading)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -16732,6 +16955,8 @@ struct DesktopSessionShellView: View {
         return desktopCanonicalRuntimeOutcomeState?.phase == .dispatching
             || desktopTypedTurnDispatchInFlightRequestID != nil
             || desktopWakeTriggeredDispatchInFlightRequestID != nil
+            || (desktopVoiceAnswerPresentationPendingRequestID != nil
+                && desktopAuthoritativeReplyPlaybackState.phase == .requesting)
             || (desktopTypedTurnPendingRequest != nil && state.timelineEntries.contains(where: \.isUserAuthored))
     }
 
@@ -20848,19 +21073,24 @@ struct DesktopSessionShellView: View {
 
     @MainActor
     private func playRuntimeAuthoritativeReply(
-        outcomeState: DesktopCanonicalRuntimeOutcomeState
+        outcomeState: DesktopCanonicalRuntimeOutcomeState,
+        revealAuthoritativeReplyForVoicePlayback: (() -> Void)? = nil
     ) async -> Bool {
-        guard let authoritativeResponseText = outcomeState.authoritativeResponseText?
+        guard let authoritativeTTSOutputText = outcomeState.authoritativeTTSOutputText?
             .trimmingCharacters(in: .whitespacesAndNewlines),
-              !authoritativeResponseText.isEmpty else {
+              !authoritativeTTSOutputText.isEmpty else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop openai tts skipped reason=runtime_tts_text_empty request=\(outcomeState.requestID)"
+            )
             return false
         }
 
         return await playAuthoritativeReplyViaOpenAITTS(
-            authoritativeResponseText: authoritativeResponseText,
+            authoritativeResponseText: authoritativeTTSOutputText,
             sessionID: outcomeState.sessionID,
             turnID: outcomeState.turnID,
-            runtimeRequestID: outcomeState.requestID
+            runtimeRequestID: outcomeState.requestID,
+            revealAuthoritativeReplyForVoicePlayback: revealAuthoritativeReplyForVoicePlayback
         )
     }
 
@@ -20901,7 +21131,8 @@ struct DesktopSessionShellView: View {
         authoritativeResponseText: String,
         sessionID: String?,
         turnID: String?,
-        runtimeRequestID: String?
+        runtimeRequestID: String?,
+        revealAuthoritativeReplyForVoicePlayback: (() -> Void)? = nil
     ) async -> Bool {
         guard !authoritativeResponseText.isEmpty else {
             return false
@@ -20913,6 +21144,7 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop openai tts unavailable reason=feature_flag_off native_macos_tts=false fallback_attempted=false"
             )
+            revealAuthoritativeReplyForVoicePlayback?()
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
@@ -20925,7 +21157,6 @@ struct DesktopSessionShellView: View {
             return false
         }
 
-        beginDesktopOpenAITtsSelfEchoGate(reason: "openai_tts_request_start")
         desktopOpenAITtsPlaybackGeneration &+= 1
         let playbackGeneration = desktopOpenAITtsPlaybackGeneration
         let answerTextSHA256 = desktopSessionSHA256Hex(Data(authoritativeResponseText.utf8))
@@ -20942,6 +21173,7 @@ struct DesktopSessionShellView: View {
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) desktop openai tts state=TTS_REQUESTING runtime_thinking=false tts_request_pending=true answer_ready=true tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) endpoint=\(desktopCanonicalRuntimeBridge.desktopOpenAITtsSpeechEndpoint) answer_text_sha256=\(answerTextSHA256)"
         )
+        rearmDesktopVoiceModeWhileOpenAITtsIsPendingIfNeeded()
 
         do {
             let speechState = try await desktopCanonicalRuntimeBridge.createDesktopOpenAITtsSpeech(
@@ -20968,12 +21200,16 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) desktop openai tts state=TTS_READY latency_ms=\(ttsLatencyMS) tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) model=\(speechState.model) voice=\(speechState.voice) answer_text_sha256=\(speechState.answerTextSHA256) audio_sha256=\(speechState.audioSHA256) audio_byte_len=\(speechState.audioByteLen) ai_voice_disclosure=\(speechState.aiVoiceDisclosure)"
             )
+            beginDesktopOpenAITtsSelfEchoGate(reason: "openai_tts_playback_start")
+            pauseDesktopVoiceCaptureForOpenAITtsPlaybackIfNeeded()
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .playOpenAITTS(speechState, expectedToken: token)
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) desktop openai tts state=PLAYING_OPENAI playback_started=\(desktopAuthoritativeReplyPlaybackState.phase == .speaking) tts_provider_id=\(DesktopVoiceProviderLane.ttsProviderID) fallback_used=false request=\(speechState.requestID)"
             )
-            if desktopAuthoritativeReplyPlaybackState.phase != .speaking {
+            if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+                revealAuthoritativeReplyForVoicePlayback?()
+            } else {
                 releaseDesktopOpenAITtsSelfEchoGateAfterCooldown(reason: "playback_not_started")
             }
             return desktopAuthoritativeReplyPlaybackState.phase == .speaking
@@ -20993,6 +21229,7 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop openai tts unavailable latency_ms=\(ttsLatencyMS) reason=\(fallbackReason) runtime_fallback_allowed=\(ttsFailure.fallbackAllowed)"
             )
+            revealAuthoritativeReplyForVoicePlayback?()
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
@@ -21019,6 +21256,7 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop openai tts unavailable latency_ms=\(ttsLatencyMS) reason=\(fallbackReason) runtime_fallback_allowed=false"
             )
+            revealAuthoritativeReplyForVoicePlayback?()
             desktopAuthoritativeReplyPlaybackState = desktopAuthoritativeReplyPlaybackController
                 .failClosedWithoutNativePlayback(
                     authoritativeResponseText: authoritativeResponseText,
@@ -21063,6 +21301,63 @@ struct DesktopSessionShellView: View {
         desktopWakeListenerController.updateActiveAudioEvidenceContext(desktopCurrentAudioEvidenceContext())
     }
 
+    private func rearmDesktopVoiceModeWhileOpenAITtsIsPendingIfNeeded() {
+        guard desktopComposerVoiceModeEnabled
+                || desktopPostWakeInstructionListeningAuthorized
+                || desktopComposerVoiceModeAwaitingReplyPlaybackCompletion else {
+            return
+        }
+
+        desktopComposerVoiceModeEnabled = true
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop voice rearm during_openai_tts_request reason=answer_text_ready_audio_pending"
+        )
+        prepareDesktopRealtimeTranscriptionSessionIfNeeded(
+            reason: "openai_tts_request_pending_voice_rearm"
+        )
+        desktopAttemptResumeComposerVoiceMode()
+    }
+
+    private func pauseDesktopVoiceCaptureForOpenAITtsPlaybackIfNeeded() {
+        let shouldResumeAfterPlayback =
+            desktopComposerVoiceModeEnabled
+            || desktopPostWakeInstructionListeningAuthorized
+            || desktopComposerVoiceModeAwaitingReplyPlaybackCompletion
+            || explicitVoiceController.isListening
+            || desktopRealtimeTranscriptionStartInFlight
+            || desktopRealtimeTranscriptionPrepareInFlight
+
+        guard shouldResumeAfterPlayback else {
+            return
+        }
+
+        desktopComposerVoiceModeEnabled = true
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
+        cancelDesktopRealtimeTranscriptionStartIfNeeded()
+        cancelDesktopRealtimeTranscriptionPrepareIfNeeded(
+            reason: "openai_tts_playback_self_echo_guard"
+        )
+        if explicitVoiceController.isListening {
+            explicitVoiceController.discardCurrentVoiceTurn()
+        }
+
+        let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
+        if desktopWakeListenerController.listenerState.isActiveForMicrophone
+            || desktopWakeListenerController.pendingRequest != nil
+            || lastStagedWakeTriggeredVoiceTurnRequestState != nil {
+            desktopWakeListenerController.haltCaptureSession()
+            if !wakeDispatchInFlight {
+                desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                lastStagedWakeTriggeredVoiceTurnRequestState = nil
+            }
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop voice capture paused reason=openai_tts_playback_self_echo_guard rearm_after_playback=true"
+        )
+    }
+
     private func beginDesktopOpenAITtsSelfEchoGate(reason: String) {
         desktopOpenAITtsSelfEchoGateGeneration &+= 1
         desktopOpenAITtsSelfEchoGateActive = true
@@ -21085,10 +21380,17 @@ struct DesktopSessionShellView: View {
 
         if desktopComposerVoiceModeAwaitingReplyPlaybackCompletion || desktopComposerVoiceModeEnabled {
             desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
-            desktopAppendRuntimeBridgeDebugLog(
-                "\(desktopTraceClockFields()) desktop voice composer rearm immediate reason=post_tts_echo_tail_guard_preview_only"
-            )
-            desktopAttemptResumeComposerVoiceMode()
+            desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
+            if desktopOpenAITtsSelfEchoGateActive {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop voice composer rearm pending reason=post_tts_echo_tail_guard"
+                )
+            } else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop voice composer rearm immediate reason=no_active_tts_echo_gate"
+                )
+                desktopAttemptResumeComposerVoiceMode()
+            }
         }
 
         DispatchQueue.main.asyncAfter(deadline: .now() + desktopOpenAITtsSelfEchoTailReleaseDelay) {
@@ -21102,6 +21404,9 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) desktop voice self echo gate active=false reason=\(boundedFailureLogToken(reason)) release=post_tts_echo_tail_guard"
             )
+            Task { @MainActor in
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
 
             guard desktopComposerVoiceModeEnabled,
                   !explicitVoiceController.isListening,
@@ -21928,7 +22233,6 @@ struct DesktopSessionShellView: View {
               !desktopRealtimeTranscriptionStartInFlight,
               !desktopOpenAITtsSelfEchoGateActive,
               desktopAuthoritativeReplyPlaybackState.phase != .speaking,
-              desktopAuthoritativeReplyPlaybackState.phase != .requesting,
               !explicitVoiceController.isListening,
               explicitVoiceController.pendingRequest == nil,
               desktopTypedTurnPendingRequest == nil else {
@@ -22342,12 +22646,14 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyRenderState = nil
             desktopAuthoritativeReplyProvenanceRenderState = nil
             cancelOpenAITtsPlaybackForNewTurn(reason: "explicit_voice_runtime_dispatch_started")
+            desktopBeginVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedExplicitVoiceRequest(ingressContext)
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) explicit voice dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") reason=\(outcomeState.reasonCode ?? "not_provided")"
             )
             guard explicitVoiceController.pendingRequest?.id == pendingRequest.id else {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 return
             }
 
@@ -22360,6 +22666,7 @@ struct DesktopSessionShellView: View {
                 transcript: pendingRequest.transcript,
                 source: "explicit_voice"
             ) {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 explicitVoiceController.clearPendingPreparedVoiceTurn()
                 await resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
                     screenLifecycleAction,
@@ -22386,78 +22693,35 @@ struct DesktopSessionShellView: View {
                 if runtimeIgnoredUnsafeVoiceTranscript {
                     desktopAuthoritativeReplyRenderState = nil
                     desktopAuthoritativeReplyProvenanceRenderState = nil
+                    desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                     explicitVoiceController.clearTransientTranscriptPreview()
                 } else {
-                    desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
-                        title: "Cloud-authored authoritative reply",
-                        summary: outcomeState.authoritativeResponseText == nil
-                                ? "The canonical runtime completed without reply text for this bounded explicit voice turn."
-                                : "Read-only canonical reply text from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                        authoritativeResponseText: outcomeState.authoritativeResponseText
-                    )
-                    desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
-                        title: "Cloud-authored authoritative reply provenance",
-                        summary: outcomeState.authoritativeResponseProvenance == nil
-                            ? "The canonical runtime completed without provenance for this bounded explicit voice turn."
-                            : "Read-only canonical provenance from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                        authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
-                        sources: outcomeState.authoritativeResponseProvenance?.sources.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.Source(
-                                title: $0.title,
-                                url: $0.url
-                            )
-                        } ?? [],
-                        sourceChips: outcomeState.sourceChips.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
-                                sourceID: $0.sourceID,
-                                label: $0.label,
-                                domain: $0.domain,
-                                clickableSourcePageURL: $0.clickableSourcePageURL,
-                                accessibilityLabel: $0.accessibilityLabel
-                            )
-                        },
-                        imageCards: outcomeState.imageCards.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
-                                imageID: $0.imageID,
-                                imageKind: $0.imageKind,
-                                approvedAssetRef: $0.approvedAssetRef,
-                                displayImageURL: $0.displayImageURL,
-                                caption: $0.caption,
-                                altText: $0.altText,
-                                sourceLabel: $0.sourceLabel,
-                                sourceDomain: $0.sourceDomain,
-                                clickableSourcePageURL: $0.clickableSourcePageURL,
-                                accessibilityOpenLabel: $0.accessibilityOpenLabel
-                            )
-                        },
-                        sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
-                                cardID: $0.cardID,
-                                provider: $0.provider,
-                                sourceTitle: $0.sourceTitle,
-                                sourceDomain: $0.sourceDomain,
-                                sourcePageURL: $0.sourcePageURL,
-                                clickableSourcePageURL: $0.clickableSourcePageURL,
-                                attributionText: $0.attributionText
-                            )
-                        },
-                        retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
-                            outcomeState.authoritativeResponseProvenance?.retrievedAt
-                        ),
-                        cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
-                    )
-                    desktopPersistAuthoritativeReplyIfNeeded(
-                        requestID: pendingRequest.id,
-                        text: outcomeState.authoritativeResponseText,
-                        conversationKey: conversationKey
-                    )
                     if outcomeState.authoritativeResponseText?
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
-                        _ = await playRuntimeAuthoritativeReply(outcomeState: outcomeState)
+                        let revealAuthoritativeReplyForVoicePlayback = {
+                            desktopRevealAuthoritativeReply(
+                                outcomeState: outcomeState,
+                                requestID: pendingRequest.id,
+                                conversationKey: conversationKey,
+                                missingReplySummary: "The canonical runtime completed without reply text for this bounded explicit voice turn.",
+                                presentReplySummary: "Read-only canonical reply text from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                                missingProvenanceSummary: "The canonical runtime completed without provenance for this bounded explicit voice turn.",
+                                presentProvenanceSummary: "Read-only canonical provenance from the completed runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                                completionTimingLabel: desktopVoiceAnswerThoughtDurationLabel(
+                                    requestID: pendingRequest.id
+                                )
+                            )
+                            desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
+                        }
+                        _ = await playRuntimeAuthoritativeReply(
+                            outcomeState: outcomeState,
+                            revealAuthoritativeReplyForVoicePlayback: revealAuthoritativeReplyForVoicePlayback
+                        )
                         shouldAwaitVoiceModeReplyPlaybackCompletion =
                             desktopComposerVoiceModeEnabled
                             && desktopAuthoritativeReplyPlaybackState.phase == .speaking
                     } else {
+                        desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                         desktopPersistMissingReplyMessageIfNeeded(
                             requestID: pendingRequest.id,
                             inputMode: .explicitVoice,
@@ -22468,6 +22732,7 @@ struct DesktopSessionShellView: View {
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 desktopPersistRuntimeFailureReplyIfNeeded(
                     requestID: pendingRequest.id,
                     summary: outcomeState.summary,
@@ -22503,7 +22768,8 @@ struct DesktopSessionShellView: View {
             )
             desktopAuthoritativeReplyRenderState = nil
             desktopAuthoritativeReplyProvenanceRenderState = nil
-            cancelOpenAITtsPlaybackForNewTurn(reason: "typed_runtime_dispatch_started")
+            desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
+            cancelOpenAITtsPlaybackForNewTurn(reason: "explicit_voice_runtime_dispatch_failed")
             desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
                 requestID: pendingRequest.id,
                 inputMode: .explicitVoice,
@@ -22574,6 +22840,10 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyProvenanceRenderState = nil
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
+            if let pendingVoiceAnswerRequestID = desktopVoiceAnswerPresentationPendingRequestID {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingVoiceAnswerRequestID)
+            }
+            desktopBeginVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
 
             let outcomeState = await desktopCanonicalRuntimeBridge
                 .dispatchPreparedWakeTriggeredVoiceRequest(ingressContext)
@@ -22581,6 +22851,7 @@ struct DesktopSessionShellView: View {
                 "\(desktopTraceClockFields()) wake dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") reason=\(outcomeState.reasonCode ?? "not_provided")"
             )
             guard desktopWakeListenerController.pendingRequest?.id == pendingRequest.id else {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 return
             }
 
@@ -22602,6 +22873,7 @@ struct DesktopSessionShellView: View {
                 transcript: pendingRequest.transcript,
                 source: "wake_triggered_voice"
             ) {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 desktopWakeListenerController.clearPendingPreparedWakeTurn()
                 lastStagedWakeTriggeredVoiceTurnRequestState = nil
                 await resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
@@ -22623,75 +22895,37 @@ struct DesktopSessionShellView: View {
                 if runtimeIgnoredUnsafeVoiceTranscript {
                     desktopAuthoritativeReplyRenderState = nil
                     desktopAuthoritativeReplyProvenanceRenderState = nil
+                    desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 } else {
-                    desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
-                        title: "Cloud-authored authoritative reply",
-                        summary: outcomeState.authoritativeResponseText == nil
-                            ? "The canonical runtime completed without reply text for this bounded wake-triggered voice turn."
-                            : "Read-only canonical reply text from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                        authoritativeResponseText: outcomeState.authoritativeResponseText
-                    )
-                    desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
-                        title: "Cloud-authored authoritative reply provenance",
-                        summary: outcomeState.authoritativeResponseProvenance == nil
-                            ? "The canonical runtime completed without provenance for this bounded wake-triggered voice turn."
-                            : "Read-only canonical provenance from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                        authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
-                        sources: outcomeState.authoritativeResponseProvenance?.sources.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.Source(
-                                title: $0.title,
-                                url: $0.url
+                    if outcomeState.authoritativeResponseText?
+                        .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+                        let revealAuthoritativeReplyForVoicePlayback = {
+                            desktopRevealAuthoritativeReply(
+                                outcomeState: outcomeState,
+                                requestID: pendingRequest.id,
+                                conversationKey: conversationKey,
+                                missingReplySummary: "The canonical runtime completed without reply text for this bounded wake-triggered voice turn.",
+                                presentReplySummary: "Read-only canonical reply text from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                                missingProvenanceSummary: "The canonical runtime completed without provenance for this bounded wake-triggered voice turn.",
+                                presentProvenanceSummary: "Read-only canonical provenance from the completed wake-triggered runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                                completionTimingLabel: desktopVoiceAnswerThoughtDurationLabel(
+                                    requestID: pendingRequest.id
+                                )
                             )
-                        } ?? [],
-                        sourceChips: outcomeState.sourceChips.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
-                                sourceID: $0.sourceID,
-                                label: $0.label,
-                                domain: $0.domain,
-                                clickableSourcePageURL: $0.clickableSourcePageURL,
-                                accessibilityLabel: $0.accessibilityLabel
-                            )
-                        },
-                        imageCards: outcomeState.imageCards.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
-                                imageID: $0.imageID,
-                                imageKind: $0.imageKind,
-                                approvedAssetRef: $0.approvedAssetRef,
-                                displayImageURL: $0.displayImageURL,
-                                caption: $0.caption,
-                                altText: $0.altText,
-                                sourceLabel: $0.sourceLabel,
-                                sourceDomain: $0.sourceDomain,
-                                clickableSourcePageURL: $0.clickableSourcePageURL,
-                                accessibilityOpenLabel: $0.accessibilityOpenLabel
-                            )
-                        },
-                        sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
-                            DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
-                                cardID: $0.cardID,
-                                provider: $0.provider,
-                                sourceTitle: $0.sourceTitle,
-                                sourceDomain: $0.sourceDomain,
-                                sourcePageURL: $0.sourcePageURL,
-                                clickableSourcePageURL: $0.clickableSourcePageURL,
-                                attributionText: $0.attributionText
-                            )
-                        },
-                        retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
-                            outcomeState.authoritativeResponseProvenance?.retrievedAt
-                        ),
-                        cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
-                    )
-                    desktopPersistAuthoritativeReplyIfNeeded(
-                        requestID: pendingRequest.id,
-                        text: outcomeState.authoritativeResponseText,
-                        conversationKey: conversationKey
-                    )
-                    _ = await playRuntimeAuthoritativeReply(outcomeState: outcomeState)
+                            desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
+                        }
+                        _ = await playRuntimeAuthoritativeReply(
+                            outcomeState: outcomeState,
+                            revealAuthoritativeReplyForVoicePlayback: revealAuthoritativeReplyForVoicePlayback
+                        )
+                    } else {
+                        desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
+                    }
                 }
             } else {
                 desktopAuthoritativeReplyRenderState = nil
                 desktopAuthoritativeReplyProvenanceRenderState = nil
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 desktopPersistRuntimeFailureReplyIfNeeded(
                     requestID: pendingRequest.id,
                     summary: outcomeState.summary,
@@ -22730,6 +22964,7 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyProvenanceRenderState = nil
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
+            desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
             desktopWakeListenerController.clearPendingPreparedWakeTurn()
             lastStagedWakeTriggeredVoiceTurnRequestState = nil
             desktopAppendRuntimeBridgeDebugLog(
@@ -22795,6 +23030,9 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyProvenanceRenderState = nil
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
+            if let pendingVoiceAnswerRequestID = desktopVoiceAnswerPresentationPendingRequestID {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingVoiceAnswerRequestID)
+            }
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedTypedTurnRequest(
                 ingressContext
@@ -22807,6 +23045,25 @@ struct DesktopSessionShellView: View {
             }
 
             desktopCanonicalRuntimeOutcomeState = outcomeState
+            if let lifecycleAction = executeApprovedScreenLifecycleActionIfPresent(
+                outcomeState,
+                requestID: pendingRequest.id,
+                transcript: pendingRequest.text,
+                source: "typed"
+            ) {
+                if desktopTypedTurnShouldResumeComposerVoiceModeAfterReply {
+                    desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
+                    await resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
+                        lifecycleAction,
+                        requestID: pendingRequest.id,
+                        source: "typed"
+                    )
+                } else {
+                    await synchronizeDesktopWakeListenerLifecycleState()
+                }
+                desktopTypedTurnPendingRequest = nil
+                return
+            }
             if pendingRequest.origin == .keyboardComposer {
                 desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
                     requestID: pendingRequest.id,
@@ -22821,68 +23078,14 @@ struct DesktopSessionShellView: View {
                 )
             }
             if outcomeState.phase == .completed {
-                desktopAuthoritativeReplyRenderState = DesktopAuthoritativeReplyRenderState(
-                    title: "Cloud-authored authoritative reply",
-                    summary: outcomeState.authoritativeResponseText == nil
-                        ? "The canonical runtime completed without reply text for this bounded typed turn."
-                        : "Read-only canonical reply text from the completed typed-turn runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                    authoritativeResponseText: outcomeState.authoritativeResponseText
-                )
-                desktopAuthoritativeReplyProvenanceRenderState = DesktopAuthoritativeReplyProvenanceRenderState(
-                    title: "Cloud-authored authoritative reply provenance",
-                    summary: outcomeState.authoritativeResponseProvenance == nil
-                        ? "The canonical runtime completed without provenance for this bounded typed turn."
-                        : "Read-only canonical provenance from the completed typed-turn runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
-                    authoritativeResponseProvenance: outcomeState.authoritativeResponseProvenance,
-                    sources: outcomeState.authoritativeResponseProvenance?.sources.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.Source(
-                            title: $0.title,
-                            url: $0.url
-                        )
-                    } ?? [],
-                    sourceChips: outcomeState.sourceChips.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.SourceChip(
-                            sourceID: $0.sourceID,
-                            label: $0.label,
-                            domain: $0.domain,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            accessibilityLabel: $0.accessibilityLabel
-                        )
-                    },
-                    imageCards: outcomeState.imageCards.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.ImageCard(
-                            imageID: $0.imageID,
-                            imageKind: $0.imageKind,
-                            approvedAssetRef: $0.approvedAssetRef,
-                            displayImageURL: $0.displayImageURL,
-                            caption: $0.caption,
-                            altText: $0.altText,
-                            sourceLabel: $0.sourceLabel,
-                            sourceDomain: $0.sourceDomain,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            accessibilityOpenLabel: $0.accessibilityOpenLabel
-                        )
-                    },
-                    sourceLinkCitationCards: outcomeState.sourceLinkCitationCards.map {
-                        DesktopAuthoritativeReplyProvenanceRenderState.SourceLinkCitationCard(
-                            cardID: $0.cardID,
-                            provider: $0.provider,
-                            sourceTitle: $0.sourceTitle,
-                            sourceDomain: $0.sourceDomain,
-                            sourcePageURL: $0.sourcePageURL,
-                            clickableSourcePageURL: $0.clickableSourcePageURL,
-                            attributionText: $0.attributionText
-                        )
-                    },
-                    retrievedAtLabel: formatAuthoritativeReplyRetrievedAt(
-                        outcomeState.authoritativeResponseProvenance?.retrievedAt
-                    ),
-                    cacheStatusLabel: outcomeState.authoritativeResponseProvenance?.cacheStatus
-                )
-                desktopPersistAuthoritativeReplyIfNeeded(
+                desktopRevealAuthoritativeReply(
+                    outcomeState: outcomeState,
                     requestID: pendingRequest.id,
-                    text: outcomeState.authoritativeResponseText,
-                    conversationKey: conversationKey
+                    conversationKey: conversationKey,
+                    missingReplySummary: "The canonical runtime completed without reply text for this bounded typed turn.",
+                    presentReplySummary: "Read-only canonical reply text from the completed typed-turn runtime dispatch is now visible here while the shell remains explicitly non-authoritative.",
+                    missingProvenanceSummary: "The canonical runtime completed without provenance for this bounded typed turn.",
+                    presentProvenanceSummary: "Read-only canonical provenance from the completed typed-turn runtime dispatch is now visible here while the shell remains explicitly non-authoritative."
                 )
                 if outcomeState.authoritativeResponseText?
                     .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
@@ -22892,7 +23095,19 @@ struct DesktopSessionShellView: View {
                         conversationKey: conversationKey
                     )
                 } else {
-                    _ = await playRuntimeAuthoritativeReply(outcomeState: outcomeState)
+                    let shouldResumeVoiceMode = desktopTypedTurnShouldResumeComposerVoiceModeAfterReply
+                    if shouldResumeVoiceMode {
+                        desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
+                        desktopComposerVoiceModeEnabled = true
+                        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+                        desktopAppendRuntimeBridgeDebugLog(
+                            "\(desktopTraceClockFields()) desktop typed turn voice_output_suppressed reason=keyboard_composer_text_only voice_rearm=immediate id=\(pendingRequest.id)"
+                        )
+                        prepareDesktopRealtimeTranscriptionSessionIfNeeded(
+                            reason: "typed_turn_text_only_after_voice_rearm"
+                        )
+                        desktopAttemptResumeComposerVoiceMode()
+                    }
                 }
             } else {
                 desktopAuthoritativeReplyRenderState = nil
@@ -22905,6 +23120,9 @@ struct DesktopSessionShellView: View {
                     detail: outcomeState.detail,
                     conversationKey: conversationKey
                 )
+            }
+            if !desktopComposerVoiceModeAwaitingReplyPlaybackCompletion {
+                desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
             }
             desktopTypedTurnPendingRequest = nil
         } catch {
@@ -22945,6 +23163,7 @@ struct DesktopSessionShellView: View {
                     conversationKey: conversationKey
                 )
             }
+            desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
             desktopTypedTurnPendingRequest = nil
         }
     }
@@ -23041,16 +23260,7 @@ struct DesktopSessionShellView: View {
 
     private func submitDesktopTypedTurn() {
         let preservedVisibleDraft = desktopPreparedTypedComposerSubmissionText
-        cancelOpenAITtsPlaybackForNewTurn(reason: "typed_turn_submitted")
-
-        if desktopComposerVoiceModeEnabled {
-            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
-        }
-
-        if explicitVoiceController.isListening {
-            explicitVoiceController.discardCurrentVoiceTurn()
-            desktopTypedTurnDraft = preservedVisibleDraft
-        }
+        prepareDesktopTypedTurnSubmission(preservedVisibleDraft: preservedVisibleDraft)
 
         let trimmedDraft = preservedVisibleDraft
 
@@ -23064,10 +23274,9 @@ struct DesktopSessionShellView: View {
             )
             desktopTypedTurnDraft = ""
             desktopComposerAttachmentSelections = []
-            requestDesktopTypedTurnComposerFocus()
+            desktopTypedTurnComposerFocused = false
             Task { @MainActor in
                 await dispatchPreparedTypedTurnRequestIfNeeded()
-                requestDesktopTypedTurnComposerFocus()
                 await synchronizeDesktopWakeListenerLifecycleState()
             }
         case .emptyDraft:
@@ -23093,6 +23302,37 @@ struct DesktopSessionShellView: View {
                 summary: "A bounded typed turn could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
                 detail: "This shell stays single-request only and does not merge typed and voice production locally, bypass canonical runtime sequencing, or invent local authority."
             )
+        }
+    }
+
+    private func prepareDesktopTypedTurnSubmission(preservedVisibleDraft: String) {
+        desktopTypedTurnShouldResumeComposerVoiceModeAfterReply =
+            desktopComposerVoiceModeEnabled
+            || desktopRealtimeTranscriptionStartInFlight
+            || explicitVoiceController.isListening
+            || desktopPostWakeInstructionListeningAuthorized
+
+        cancelOpenAITtsPlaybackForNewTurn(reason: "typed_turn_submitted")
+
+        if desktopComposerVoiceModeEnabled {
+            desktopDeactivateComposerVoiceMode(
+                preserveTranscriptPreview: false,
+                clearPostWakeAuthorization: false
+            )
+        } else {
+            cancelDesktopRealtimeTranscriptionStartIfNeeded()
+            cancelDesktopRealtimeTranscriptionPrepareIfNeeded(reason: "typed_turn_submitted")
+        }
+
+        if explicitVoiceController.isListening {
+            explicitVoiceController.discardCurrentVoiceTurn()
+            desktopTypedTurnDraft = preservedVisibleDraft
+        }
+
+        if desktopWakeListenerController.listenerState.isActiveForMicrophone {
+            desktopWakeListenerController.haltCaptureSession()
+            desktopWakeAutoStartAttemptedPromptID = nil
+            desktopWakeAutoStartSuppressedPromptID = nil
         }
     }
 

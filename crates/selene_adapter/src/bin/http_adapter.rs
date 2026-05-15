@@ -961,7 +961,16 @@ async fn run_desktop_openai_tts_speech(
         }
     };
 
-    match request_openai_tts_speech(&bounded_text, &model, &voice, &format) {
+    let tts_model = model.clone();
+    let tts_voice = voice.clone();
+    let tts_format = format.clone();
+    let tts_request = tokio::task::spawn_blocking(move || {
+        request_openai_tts_speech(&bounded_text, &tts_model, &tts_voice, &tts_format)
+    })
+    .await
+    .unwrap_or_else(|_| Err("openai_tts_request_worker_failed".to_string()));
+
+    match tts_request {
         Ok(audio) => {
             let audio_byte_len = audio.len() as u64;
             let max_audio_bytes = parse_u64_env(
@@ -2112,7 +2121,7 @@ fn speakable_openai_tts_text(text: &str) -> Result<(), String> {
 }
 
 fn desktop_openai_tts_timeout_secs() -> u64 {
-    parse_u64_env("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS", 6, 1, 60)
+    parse_u64_env("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS", 30, 1, 120)
 }
 
 fn request_openai_tts_speech(
@@ -2747,11 +2756,11 @@ mod tests {
     }
 
     #[test]
-    fn desktop_openai_tts_timeout_default_avoids_long_silent_thinking() {
+    fn desktop_openai_tts_timeout_default_preserves_openai_only_speech_generation() {
         let _guard = realtime_env_lock();
         let _timeout_scope = ScopedEnvVar::unset("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS");
 
-        assert_eq!(desktop_openai_tts_timeout_secs(), 6);
+        assert_eq!(desktop_openai_tts_timeout_secs(), 30);
     }
 
     #[test]
