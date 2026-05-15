@@ -359,10 +359,20 @@ pub struct VoiceTurnAdapterResponse {
     pub deep_research: Option<VoiceTurnDeepResearchMetadata>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub screen_lifecycle_action: Option<VoiceTurnScreenLifecycleActionPacket>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_lifecycle_action: Option<VoiceTurnSessionLifecycleActionPacket>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct VoiceTurnScreenLifecycleActionPacket {
+    pub canonical_intent: String,
+    pub action: String,
+    pub source: String,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct VoiceTurnSessionLifecycleActionPacket {
     pub canonical_intent: String,
     pub action: String,
     pub source: String,
@@ -2825,8 +2835,236 @@ fn stage4_lifecycle_negative_guard(normalized: &str) -> bool {
                 " close my laptop",
                 " not asking you to open",
                 " do not hide",
+                " close session",
+                " end session",
+                " current session",
+                " chat session",
+                " close this conversation",
+                " close the current conversation",
+                " finish this conversation",
+                " end conversation",
+                " close this thread",
+                " fresh chat",
+                " fresh session",
+                " new chat",
+                " new conversation",
+                " new session",
+                " start fresh",
+                " start new",
             ],
         )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage6SessionLifecycleIntent {
+    SessionCloseSeal,
+    SessionNew,
+}
+
+impl Stage6SessionLifecycleIntent {
+    const fn canonical_intent(self) -> &'static str {
+        match self {
+            Stage6SessionLifecycleIntent::SessionCloseSeal => "SESSION_CLOSE_SEAL",
+            Stage6SessionLifecycleIntent::SessionNew => "SESSION_NEW",
+        }
+    }
+
+    const fn action(self) -> &'static str {
+        match self {
+            Stage6SessionLifecycleIntent::SessionCloseSeal => "close_seal",
+            Stage6SessionLifecycleIntent::SessionNew => "new_session",
+        }
+    }
+
+    const fn reason_code(self) -> &'static str {
+        match self {
+            Stage6SessionLifecycleIntent::SessionCloseSeal => "STAGE6_SESSION_CLOSE_SEAL",
+            Stage6SessionLifecycleIntent::SessionNew => "STAGE6_SESSION_NEW",
+        }
+    }
+}
+
+fn stage6_classify_session_lifecycle_command(text: &str) -> Option<Stage6SessionLifecycleIntent> {
+    let normalized = stage4_normalize_screen_lifecycle_text(text);
+    if normalized.is_empty()
+        || stage6_session_lifecycle_negative_guard(&normalized)
+        || stage4_classify_screen_lifecycle_command(&normalized).is_some()
+    {
+        return None;
+    }
+
+    let close = stage6_session_close_command(&normalized);
+    let new_session = stage6_session_new_command(&normalized);
+    match (close, new_session) {
+        (true, false) => Some(Stage6SessionLifecycleIntent::SessionCloseSeal),
+        (false, true) => Some(Stage6SessionLifecycleIntent::SessionNew),
+        _ => None,
+    }
+}
+
+fn stage6_session_lifecycle_negative_guard(normalized: &str) -> bool {
+    let exact_no_match = matches!(normalized, "session" | "conversation" | "chat" | "new");
+    exact_no_match
+        || stage4_lifecycle_starts_with_any(
+            normalized,
+            &[
+                "do not ",
+                "dont ",
+                "don t ",
+                "i am not asking ",
+                "im not asking ",
+                "i m not asking ",
+                "what does ",
+                "what is ",
+                "explain ",
+                "write ",
+                "tell me how ",
+                "should i ",
+            ],
+        )
+        || stage4_lifecycle_contains_any(
+            normalized,
+            &[
+                " close the screen ",
+                " close screen ",
+                " hide the screen ",
+                " hide screen ",
+                " open the screen ",
+                " open screen ",
+                " show me the screen ",
+                " show the screen ",
+                " close desktop ",
+                " minimize selene ",
+                " minimize the app ",
+                " hide the window ",
+                " close the window ",
+                " keep this session open ",
+                " continue this session ",
+                " no need to end session ",
+                " not asking you to close the session ",
+                " not asking you to start a new session ",
+                " do not start a new session ",
+                " do not close the session ",
+                " finished dinner ",
+                " payroll discussion ",
+                " close reading ",
+                " end to end testing ",
+                " laptop ",
+                " story about ",
+                " movie ended ",
+                " session cookies ",
+                " open source sessions ",
+                " close the topic ",
+                " keep chatting ",
+                " hide the window only ",
+                " not the session ",
+            ],
+        )
+}
+
+fn stage6_session_close_command(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "we re finished"
+            | "we are finished"
+            | "close session"
+            | "end this session"
+            | "that s all"
+            | "thats all"
+            | "we re done"
+            | "we are done"
+            | "finish this conversation"
+            | "archive this session"
+            | "close this conversation"
+            | "end the current chat"
+            | "stop this session"
+            | "end session"
+            | "close current session"
+            | "finish session"
+            | "wrap this session"
+            | "seal this session"
+            | "archive conversation"
+            | "end conversation"
+            | "close the chat session"
+            | "i m done"
+            | "im done"
+            | "done for now"
+            | "stop the conversation"
+            | "finish this chat"
+            | "end this chat"
+            | "session done"
+            | "close the current conversation"
+            | "finish up"
+            | "wrap it up"
+            | "we are done here"
+            | "that is enough"
+            | "no more for this session"
+            | "stop this conversation"
+            | "close this thread"
+            | "end this thread"
+            | "seal the conversation"
+            | "archive this chat"
+            | "finish current chat"
+            | "stop current session"
+            | "session close please"
+            | "close session now"
+            | "end session now"
+            | "we done"
+            | "we done now"
+            | "finished now"
+            | "conversation done"
+            | "close this now"
+            | "stop now"
+            | "all done"
+            | "finish it"
+            | "end it"
+            | "close it"
+            | "session finish"
+            | "finish this talk"
+            | "conversation stop"
+            | "close this talk"
+    )
+}
+
+fn stage6_session_new_command(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "new conversation"
+            | "start a new conversation"
+            | "start new chat"
+            | "new chat"
+            | "start fresh"
+            | "reset conversation"
+            | "new session"
+            | "start new session"
+            | "open new session"
+            | "begin new session"
+            | "begin a new conversation"
+            | "fresh chat"
+            | "fresh session"
+            | "clear current context"
+            | "start again"
+            | "let s start over"
+            | "lets start over"
+            | "start over"
+            | "new topic"
+            | "make a new conversation"
+            | "create a new chat"
+            | "create new session"
+            | "reset this chat"
+            | "move to new session"
+            | "next conversation"
+            | "open fresh chat"
+            | "start clean"
+            | "clean slate"
+            | "new thread"
+            | "start new thread"
+            | "reset active context"
+            | "new chat please"
+            | "start again now"
+            | "make new talk"
+            | "start fresh please"
+    )
 }
 
 fn stage4_lifecycle_show_command(normalized: &str) -> bool {
@@ -8468,6 +8706,7 @@ impl AdapterRuntime {
                             trace_id: None,
                             deep_research: None,
                             screen_lifecycle_action: None,
+                            session_lifecycle_action: None,
                         };
                         if !ignored_unsafe_transcript {
                             if let Some(trace) = h410_build_public_brain_trace(
@@ -8758,6 +8997,59 @@ impl AdapterRuntime {
                     .map_err(post_session_error)?;
                     return Ok(response);
                 }
+                if let Some(session_lifecycle_intent) = user_text_final
+                    .as_deref()
+                    .and_then(stage6_classify_session_lifecycle_command)
+                {
+                    let session_lifecycle_evidence = if request.audio_capture_ref.is_some() {
+                        "post_ph1c_valid_desktop_voice_transcript"
+                    } else {
+                        "post_valid_desktop_typed_turn"
+                    };
+                    let closed_session_state = close_stage6_session_for_actor(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        &runtime_device_id,
+                        session_turn_state.session_id_for_commits,
+                        session_turn_state.device_turn_sequence,
+                        &runtime_execution_envelope.idempotency_key,
+                        &self.runtime_node_id,
+                        self.session_lease_ttl_ms,
+                    )
+                    .map_err(post_session_error)?;
+                    clear_stage6_session_scoped_contexts(
+                        &self.active_session_context_state,
+                        &self.weather_context_state,
+                        &self.public_discourse_state,
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        &thread_key,
+                        base_thread_state,
+                    )
+                    .map_err(post_session_error)?;
+                    let response = stage6_session_lifecycle_adapter_response(
+                        &runtime_execution_envelope,
+                        closed_session_state
+                            .unwrap_or(session_turn_state.session_snapshot.session_state),
+                        Some(session_turn_state.session_attach_outcome),
+                        session_lifecycle_intent,
+                        session_lifecycle_evidence,
+                    );
+                    cache_authoritative_turn_response(
+                        &self.session_retry_cache,
+                        &actor_user_id,
+                        &runtime_execution_envelope.idempotency_key,
+                        &response,
+                    )
+                    .map_err(post_session_error)?;
+                    return Ok(response);
+                }
             }
             let weather_context_place = latest_weather_context_place(
                 &self.weather_context_state,
@@ -8867,6 +9159,7 @@ impl AdapterRuntime {
                         trace_id: None,
                         deep_research: None,
                         screen_lifecycle_action: None,
+                        session_lifecycle_action: None,
                     };
                     cache_authoritative_turn_response(
                         &self.session_retry_cache,
@@ -8936,6 +9229,7 @@ impl AdapterRuntime {
                         trace_id: None,
                         deep_research: None,
                         screen_lifecycle_action: None,
+                        session_lifecycle_action: None,
                     };
                     cache_authoritative_turn_response(
                         &self.session_retry_cache,
@@ -8996,6 +9290,7 @@ impl AdapterRuntime {
                         trace_id: None,
                         deep_research: None,
                         screen_lifecycle_action: None,
+                        session_lifecycle_action: None,
                     };
                     let h411_discourse_frame_after = self
                         .record_public_discourse_turn(
@@ -9081,6 +9376,7 @@ impl AdapterRuntime {
                         trace_id: None,
                         deep_research: None,
                         screen_lifecycle_action: None,
+                        session_lifecycle_action: None,
                     };
                     if let Some(trace) = h410_build_public_brain_trace(
                         &request_for_journal,
@@ -13519,6 +13815,39 @@ fn clear_session_scoped_thread_context(mut thread_state: ThreadState) -> ThreadS
     thread_state
 }
 
+#[allow(clippy::too_many_arguments)]
+fn clear_stage6_session_scoped_contexts(
+    active_session_context_state: &Arc<Mutex<BTreeMap<String, String>>>,
+    weather_context_state: &Arc<Mutex<BTreeMap<String, String>>>,
+    public_discourse_state: &Arc<Mutex<AdapterPublicDiscourseState>>,
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    thread_key: &str,
+    thread_state: ThreadState,
+) -> Result<(), String> {
+    active_session_context_state
+        .lock()
+        .map_err(|_| "active_session_context_state_poisoned".to_string())?
+        .remove(&active_session_context_scope_key(actor_user_id, thread_key));
+    forget_latest_weather_place(weather_context_state, actor_user_id, thread_key)?;
+    forget_public_discourse_frame(public_discourse_state, actor_user_id, thread_key)?;
+    persist_ph1x_thread_state(
+        store,
+        now,
+        PersistPh1xThreadStateInput {
+            actor_user_id,
+            thread_key,
+            thread_state: clear_session_scoped_thread_context(thread_state),
+            reason_code: ReasonCodeId(0x4C00_0601),
+            correlation_id,
+            turn_id,
+        },
+    )
+}
+
 fn forget_public_discourse_frame(
     public_discourse_state: &Arc<Mutex<AdapterPublicDiscourseState>>,
     actor_user_id: &UserId,
@@ -16829,6 +17158,7 @@ fn execution_outcome_to_adapter_response(
             .as_ref()
             .and_then(deep_research_metadata_from_tool_response),
         screen_lifecycle_action: None,
+        session_lifecycle_action: None,
     }
 }
 
@@ -16867,6 +17197,48 @@ fn stage4_screen_lifecycle_adapter_response(
             canonical_intent: intent.canonical_intent().to_string(),
             action: intent.action().to_string(),
             source: "adapter_runtime_lifecycle_classifier".to_string(),
+            evidence: evidence.to_string(),
+        }),
+        session_lifecycle_action: None,
+    }
+}
+
+fn stage6_session_lifecycle_adapter_response(
+    runtime_execution_envelope: &RuntimeExecutionEnvelope,
+    session_state: SessionState,
+    session_attach_outcome: Option<SessionAttachOutcome>,
+    intent: Stage6SessionLifecycleIntent,
+    evidence: &'static str,
+) -> VoiceTurnAdapterResponse {
+    VoiceTurnAdapterResponse {
+        status: "ok".to_string(),
+        outcome: "SESSION_LIFECYCLE".to_string(),
+        session_id: runtime_execution_envelope
+            .session_id
+            .clone()
+            .map(session_id_to_string),
+        turn_id: Some(runtime_execution_envelope.turn_id.0),
+        session_state: Some(session_state_to_api_value(session_state)),
+        session_attach_outcome,
+        failure_class: None,
+        reason: Some("session lifecycle command accepted by PH1.L route".to_string()),
+        next_move: "session_lifecycle_action".to_string(),
+        response_text: String::new(),
+        reason_code: intent.reason_code().to_string(),
+        provenance: None,
+        tts_text: String::new(),
+        source_chips: Vec::new(),
+        source_cards: Vec::new(),
+        image_cards: Vec::new(),
+        answer_class: Some("runtime_session_lifecycle".to_string()),
+        metadata_safe_for_user: true,
+        trace_id: None,
+        deep_research: None,
+        screen_lifecycle_action: None,
+        session_lifecycle_action: Some(VoiceTurnSessionLifecycleActionPacket {
+            canonical_intent: intent.canonical_intent().to_string(),
+            action: intent.action().to_string(),
+            source: "ph1l_runtime_session_classifier".to_string(),
             evidence: evidence.to_string(),
         }),
     }
@@ -19081,6 +19453,7 @@ fn wake_guest_lane_response(
         trace_id: None,
         deep_research: None,
         screen_lifecycle_action: None,
+        session_lifecycle_action: None,
     }
 }
 
@@ -19435,6 +19808,7 @@ fn continuing_speech_identity_prompt_response(
         trace_id: None,
         deep_research: None,
         screen_lifecycle_action: None,
+        session_lifecycle_action: None,
     }))
 }
 
@@ -19478,6 +19852,7 @@ fn activation_greeting_handoff_response(
         trace_id: None,
         deep_research: None,
         screen_lifecycle_action: None,
+        session_lifecycle_action: None,
     }
 }
 
@@ -20345,6 +20720,96 @@ fn persist_session_snapshot(
         )
         .map_err(storage_error_to_string)?;
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn close_stage6_session_for_actor(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    session_id_for_commits: Option<SessionId>,
+    device_turn_sequence: u64,
+    idempotency_key: &str,
+    runtime_node_id: &str,
+    session_lease_ttl_ms: u64,
+) -> Result<Option<SessionState>, String> {
+    let selection = canonical_actor_session_selection(store, actor_user_id)?;
+    let target_session_id = session_id_for_commits.or_else(|| {
+        selection
+            .latest_recoverable
+            .as_ref()
+            .map(|record| record.session_id)
+    });
+    let Some(target_session_id) = target_session_id else {
+        return Ok(None);
+    };
+    let starting_state = store
+        .get_session(&target_session_id)
+        .map(|record| record.session_state)
+        .unwrap_or(SessionState::Closed);
+    let next_session_id_seed = store
+        .session_rows()
+        .keys()
+        .map(|session_id| session_id.0)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(target_session_id.0.saturating_add(1))
+        .max(1);
+    let mut lifecycle = Ph1lRuntime::from_persisted_state(
+        Ph1lConfig::mvp_desktop_v1(),
+        starting_state,
+        Some(target_session_id),
+        next_session_id_seed,
+    )
+    .map_err(|err| format!("invalid PH1.L persisted state for close: {err:?}"))?;
+    let previous_session_id = lifecycle.session_id();
+    let out = lifecycle.step(Ph1lInput::v1(
+        now,
+        None,
+        None,
+        TtsPlaybackState::Stopped,
+        UserActivitySignals {
+            speech_detected: false,
+            barge_in: false,
+            silence_ms: 0,
+        },
+        PolicyContextRef::v1(false, false, SafetyTier::Standard),
+        false,
+        true,
+        false,
+    ));
+    persist_session_snapshot(
+        store,
+        now,
+        correlation_id,
+        turn_id,
+        actor_user_id,
+        device_id,
+        previous_session_id,
+        &out,
+        "manual_close",
+        runtime_node_id,
+        session_lease_ttl_ms,
+        false,
+    )?;
+    finalize_session_turn_record(
+        store,
+        now,
+        correlation_id,
+        turn_id,
+        device_id,
+        previous_session_id,
+        None,
+        device_turn_sequence,
+        idempotency_key,
+        runtime_node_id,
+        session_lease_ttl_ms,
+    )?;
+    Ok(Some(out.snapshot.session_state))
 }
 
 fn tts_playback_state_from_bool(active: bool) -> TtsPlaybackState {
@@ -21515,6 +21980,12 @@ fn committed_voice_unsafe_transcript_reason(
             Ph1cRetryAdvice::Repeat,
         ));
     }
+    if committed_voice_single_ambient_artifact_token(trimmed) {
+        return Some((
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
+            Ph1cRetryAdvice::Repeat,
+        ));
+    }
     if committed_voice_single_wake_like_token(trimmed) {
         return Some((
             ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE,
@@ -21589,6 +22060,11 @@ fn committed_voice_reject_should_ignore_user_surface(
     }
     if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
         && committed_voice_single_wake_like_token(transcript_text)
+    {
+        return true;
+    }
+    if reason_code == ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+        && committed_voice_single_ambient_artifact_token(transcript_text)
     {
         return true;
     }
@@ -21944,8 +22420,40 @@ fn committed_voice_latin_filler_artifact_token(token: &str) -> bool {
     )
 }
 
+fn committed_voice_single_ambient_artifact_token(transcript_text: &str) -> bool {
+    if transcript_text.chars().any(is_cjk_char_for_build1c) {
+        return false;
+    }
+    let tokens: Vec<String> = transcript_text
+        .split(|ch: char| !ch.is_ascii_alphabetic() && ch != '\'')
+        .filter(|token| !token.is_empty())
+        .map(|token| token.to_ascii_lowercase())
+        .collect();
+    let [token] = tokens.as_slice() else {
+        return false;
+    };
+    matches!(
+        token.as_str(),
+        "coming"
+            | "going"
+            | "typing"
+            | "clicking"
+            | "cough"
+            | "coughing"
+            | "breathing"
+            | "noise"
+            | "background"
+            | "waiting"
+            | "listening"
+    )
+}
+
 fn committed_voice_single_character_artifact_token(token: &str) -> bool {
-    token.chars().filter(|ch| ch.is_ascii_alphanumeric()).count() == 1
+    token
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .count()
+        == 1
 }
 
 fn committed_voice_cjk_filler_char(ch: char) -> bool {
@@ -24054,6 +24562,7 @@ fn session_posture_evidence_response_returns_current_device_fields_for_session()
                 trace_id: None,
                 deep_research: None,
                 screen_lifecycle_action: None,
+                session_lifecycle_action: None,
             }),
         },
     );
@@ -24798,6 +25307,345 @@ mod tests {
         assert_eq!(hide_action.action, "hide");
         assert_eq!(hide_action.source, "adapter_runtime_lifecycle_classifier");
         assert_eq!(hide_action.evidence, "post_valid_desktop_typed_turn");
+    }
+
+    fn stage6_session_close_positive_variants() -> Vec<&'static str> {
+        vec![
+            "we're finished",
+            "close session",
+            "end this session",
+            "that's all",
+            "we're done",
+            "finish this conversation",
+            "archive this session",
+            "close this conversation",
+            "end the current chat",
+            "stop this session",
+            "end session",
+            "close current session",
+            "finish session",
+            "wrap this session",
+            "seal this session",
+            "archive conversation",
+            "end conversation",
+            "close the chat session",
+            "we are finished",
+            "I'm done",
+            "done for now",
+            "stop the conversation",
+            "finish this chat",
+            "end this chat",
+            "session done",
+            "close the current conversation",
+            "finish up",
+            "wrap it up",
+            "we are done here",
+            "that is enough",
+            "no more for this session",
+            "stop this conversation",
+            "close this thread",
+            "end this thread",
+            "seal the conversation",
+            "archive this chat",
+            "finish current chat",
+            "stop current session",
+            "session close please",
+            "close session now",
+            "end session now",
+            "we done",
+            "finished now",
+            "conversation done",
+            "close this now",
+            "stop now",
+            "all done",
+            "finish it",
+            "end it",
+            "close it",
+            "session finish",
+            "we done now",
+            "finish this talk",
+            "conversation stop",
+            "close this talk",
+        ]
+    }
+
+    fn stage6_session_new_positive_variants() -> Vec<&'static str> {
+        vec![
+            "new conversation",
+            "start a new conversation",
+            "start new chat",
+            "new chat",
+            "start fresh",
+            "reset conversation",
+            "new session",
+            "start new session",
+            "open new session",
+            "begin new session",
+            "begin a new conversation",
+            "fresh chat",
+            "fresh session",
+            "clear current context",
+            "start again",
+            "let's start over",
+            "start over",
+            "new topic",
+            "make a new conversation",
+            "create a new chat",
+            "create new session",
+            "reset this chat",
+            "move to new session",
+            "next conversation",
+            "open fresh chat",
+            "start clean",
+            "clean slate",
+            "new thread",
+            "start new thread",
+            "reset active context",
+            "new chat please",
+            "start again now",
+            "make new talk",
+            "start fresh please",
+        ]
+    }
+
+    fn stage6_session_lifecycle_negative_controls() -> Vec<&'static str> {
+        vec![
+            "close the screen",
+            "hide the screen",
+            "open the screen",
+            "show me the screen",
+            "close desktop",
+            "minimize Selene",
+            "write a story about ending a session",
+            "what does close session mean",
+            "explain session management",
+            "should I close my laptop",
+            "I finished dinner",
+            "we are done with payroll discussion, explain next steps",
+            "close reading is a study method",
+            "end-to-end testing is useful",
+            "I am not asking you to close the session",
+            "do not close the session",
+            "keep this session open",
+            "what is a new conversation",
+            "create a story about a new chat",
+            "the conversation in the movie ended",
+            "explain archive storage",
+            "open source sessions",
+            "session cookies in web browsers",
+            "tell me how sessions work",
+            "do not start a new session",
+            "I want to continue this session",
+            "this session is interesting",
+            "close the topic but keep chatting",
+            "no need to end session",
+            "hide the window only",
+            "close the screen, not the session",
+        ]
+    }
+
+    #[test]
+    fn stage6_session_lifecycle_phrase_pack_maps_to_canonical_intents() {
+        let close_variants = stage6_session_close_positive_variants();
+        let new_variants = stage6_session_new_positive_variants();
+        let negative_controls = stage6_session_lifecycle_negative_controls();
+        assert!(
+            close_variants.len() >= 50,
+            "Stage 6 requires at least 50 close-session positive variants"
+        );
+        assert!(
+            new_variants.len() >= 30,
+            "Stage 6 requires at least 30 new-session positive variants"
+        );
+        assert!(
+            negative_controls.len() >= 30,
+            "Stage 6 requires at least 30 negative controls"
+        );
+
+        for phrase in close_variants {
+            assert_eq!(
+                stage6_classify_session_lifecycle_command(phrase),
+                Some(Stage6SessionLifecycleIntent::SessionCloseSeal),
+                "{phrase}"
+            );
+        }
+        for phrase in new_variants {
+            assert_eq!(
+                stage6_classify_session_lifecycle_command(phrase),
+                Some(Stage6SessionLifecycleIntent::SessionNew),
+                "{phrase}"
+            );
+        }
+        for phrase in negative_controls {
+            assert_eq!(
+                stage6_classify_session_lifecycle_command(phrase),
+                None,
+                "{phrase}"
+            );
+        }
+    }
+
+    fn run_stage6_desktop_session_command(
+        runtime: &AdapterRuntime,
+        text: &str,
+        correlation_id: u64,
+        thread_key: &str,
+        voice: bool,
+    ) -> VoiceTurnAdapterResponse {
+        let mut req = base_request();
+        req.app_platform = "DESKTOP".to_string();
+        req.correlation_id = correlation_id;
+        req.turn_id = correlation_id;
+        req.device_turn_sequence = Some(correlation_id);
+        req.now_ns = Some(correlation_id.saturating_mul(1_000_000));
+        req.thread_key = Some(thread_key.to_string());
+        req.user_text_final = Some(text.to_string());
+        if voice {
+            mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        } else {
+            req.audio_capture_ref = None;
+        }
+        runtime
+            .run_voice_turn(req)
+            .expect("Stage 6 session command should route cleanly")
+    }
+
+    #[test]
+    fn stage6_session_lifecycle_commands_return_action_packets_without_chat_pollution() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "stage6-session-lifecycle-action-packets";
+
+        let close_out = run_stage6_desktop_session_command(
+            &runtime,
+            "we're finished",
+            6_006_001,
+            thread_key,
+            true,
+        );
+        assert_eq!(close_out.status, "ok", "{close_out:?}");
+        assert_eq!(close_out.outcome, "SESSION_LIFECYCLE");
+        assert_eq!(close_out.next_move, "session_lifecycle_action");
+        assert_eq!(close_out.response_text, "");
+        assert_eq!(close_out.tts_text, "");
+        assert_eq!(
+            close_out.answer_class.as_deref(),
+            Some("runtime_session_lifecycle")
+        );
+        assert_eq!(close_out.screen_lifecycle_action, None);
+        let close_action = close_out
+            .session_lifecycle_action
+            .as_ref()
+            .expect("close session action packet should be present");
+        assert_eq!(close_action.canonical_intent, "SESSION_CLOSE_SEAL");
+        assert_eq!(close_action.action, "close_seal");
+        assert_eq!(close_action.source, "ph1l_runtime_session_classifier");
+        assert_eq!(
+            close_action.evidence,
+            "post_ph1c_valid_desktop_voice_transcript"
+        );
+        assert_eq!(close_out.session_state.as_deref(), Some("CLOSED"));
+
+        let new_out = run_stage6_desktop_session_command(
+            &runtime,
+            "new conversation",
+            6_006_002,
+            thread_key,
+            false,
+        );
+        assert_eq!(new_out.status, "ok", "{new_out:?}");
+        assert_eq!(new_out.outcome, "SESSION_LIFECYCLE");
+        assert_eq!(new_out.next_move, "session_lifecycle_action");
+        assert_eq!(new_out.response_text, "");
+        assert_eq!(new_out.tts_text, "");
+        assert_eq!(new_out.screen_lifecycle_action, None);
+        let new_action = new_out
+            .session_lifecycle_action
+            .as_ref()
+            .expect("new session action packet should be present");
+        assert_eq!(new_action.canonical_intent, "SESSION_NEW");
+        assert_eq!(new_action.action, "new_session");
+        assert_eq!(new_action.evidence, "post_valid_desktop_typed_turn");
+        assert_eq!(new_out.session_state.as_deref(), Some("CLOSED"));
+    }
+
+    #[test]
+    fn stage6_close_screen_remains_screen_lifecycle_not_session_close() {
+        let runtime = AdapterRuntime::default();
+        let out = run_stage6_desktop_session_command(
+            &runtime,
+            "close the screen",
+            6_006_003,
+            "stage6-close-screen-stays-stage4",
+            true,
+        );
+        assert_eq!(out.outcome, "SCREEN_LIFECYCLE", "{out:?}");
+        assert_eq!(out.session_lifecycle_action, None);
+        let screen_action = out
+            .screen_lifecycle_action
+            .as_ref()
+            .expect("screen hide action packet should be present");
+        assert_eq!(screen_action.canonical_intent, "SCREEN_HIDE");
+        assert_eq!(screen_action.action, "hide");
+    }
+
+    #[test]
+    fn stage6_new_session_clears_ph1x_followup_context_without_erasing_history() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "stage6-new-session-no-leak";
+        let mut first = base_request();
+        first.app_platform = "DESKTOP".to_string();
+        first.audio_capture_ref = None;
+        first.correlation_id = 6_006_010;
+        first.turn_id = 6_006_010;
+        first.device_turn_sequence = Some(6_006_010);
+        first.now_ns = Some(6_006_010_000_000);
+        first.thread_key = Some(thread_key.to_string());
+        first.user_text_final = Some("what is the time in New York".to_string());
+        let first_out = runtime
+            .run_voice_turn(first)
+            .expect("time context seed should complete");
+        assert_eq!(first_out.outcome, "FINAL_TOOL", "{first_out:?}");
+
+        let actor_user_id = UserId::new("tenant_a:user_adapter_test").unwrap();
+        {
+            let store = runtime.store.lock().expect("store lock should succeed");
+            let current = store
+                .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+                .expect("thread state should exist before new session");
+            assert!(
+                current.thread_state.last_turn_context.is_some(),
+                "time turn should seed PH1.X active context"
+            );
+            assert!(
+                !store.conversation_ledger().is_empty(),
+                "visible/archive timeline rows should exist before new session"
+            );
+        }
+
+        let new_out = run_stage6_desktop_session_command(
+            &runtime,
+            "new conversation",
+            6_006_011,
+            thread_key,
+            false,
+        );
+        assert_eq!(new_out.outcome, "SESSION_LIFECYCLE", "{new_out:?}");
+        assert_eq!(new_out.session_state.as_deref(), Some("CLOSED"));
+
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let current = store
+            .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+            .expect("cleared thread state should be persisted");
+        assert!(
+            current.thread_state.last_turn_context.is_none(),
+            "new session must clear stale PH1.X last-turn context"
+        );
+        assert!(current.thread_state.pending.is_none());
+        assert!(current.thread_state.resume_buffer.is_none());
+        assert!(
+            !store.conversation_ledger().is_empty(),
+            "new session must preserve timeline/archive rows"
+        );
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {
@@ -40968,6 +41816,72 @@ mod tests {
         assert!(out.response_text.is_empty());
         assert!(out.tts_text.is_empty());
         assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_ambient_action_fragment_rejected() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_118_3;
+        req.turn_id = 420_118_3;
+        req.user_text_final = Some("coming".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_000);
+            capture.nearfield_confidence_bp = Some(8_500);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+            capture.aec_unstable = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("one-token ambient action artifact should be ignored");
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "IGNORED");
+        assert_eq!(out.next_move, "listening_window_open");
+        assert_eq!(
+            out.reason_code,
+            ph1c_reason_codes::STT_FAIL_LOW_SEMANTIC_CONFIDENCE
+                .0
+                .to_string()
+        );
+        assert!(out.response_text.is_empty());
+        assert!(out.tts_text.is_empty());
+        assert!(out.source_chips.is_empty());
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_none());
+    }
+
+    #[test]
+    fn adapter_false_transcript_single_place_followup_still_dispatches() {
+        let runtime = AdapterRuntime::default();
+        let mut req = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut req);
+        req.correlation_id = 420_118_4;
+        req.turn_id = 420_118_4;
+        req.user_text_final = Some("Sydney".to_string());
+        if let Some(capture) = req.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.echo_safe_confidence_bp = Some(9_000);
+            capture.nearfield_confidence_bp = Some(8_500);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+            capture.aec_unstable = Some(false);
+        }
+
+        let out = runtime
+            .run_voice_turn(req)
+            .expect("single place follow-up should still dispatch");
+        assert_eq!(out.status, "ok");
+        assert_ne!(out.outcome, "IGNORED");
+        assert!(runtime.ingress.debug_last_agent_input_packet().is_some());
     }
 
     #[test]

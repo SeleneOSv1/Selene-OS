@@ -46,7 +46,7 @@ pub struct Ph1lConfig {
 impl Ph1lConfig {
     pub fn mvp_desktop_v1() -> Self {
         Self {
-            active_silence_timeout_ms: 10_000,
+            active_silence_timeout_ms: 30_000,
             soft_close_timeout_ms: 120_000,
             clarify_timeout_ms: 30_000,
             confirm_timeout_ms: 30_000,
@@ -512,6 +512,24 @@ mod tests {
             false,
             false,
         )
+    }
+
+    #[test]
+    fn at_l_00_active_window_uses_stage6_thirty_seconds() {
+        let config = Ph1lConfig::mvp_desktop_v1();
+        assert_eq!(config.active_silence_timeout_ms, 30_000);
+        assert_eq!(config.soft_close_timeout_ms, 120_000);
+
+        let mut rt = Ph1lRuntime::new(config);
+        let mut i = input(0, 0);
+        i.wake_event = Some(accepted_wake(MonotonicTimeNs(0)));
+        let out = rt.step(i);
+        assert_eq!(out.snapshot.session_state, SessionState::Active);
+
+        let out = rt.step(input(1, config.active_silence_timeout_ms - 1));
+        assert_eq!(out.snapshot.session_state, SessionState::Active);
+        let out = rt.step(input(2, config.active_silence_timeout_ms));
+        assert_eq!(out.snapshot.session_state, SessionState::SoftClosed);
     }
 
     #[test]

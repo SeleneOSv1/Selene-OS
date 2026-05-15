@@ -940,9 +940,9 @@ async fn run_desktop_openai_tts_speech(
     if let Err(reason) = speakable_openai_tts_text(&bounded_text) {
         return desktop_openai_tts_error_response(StatusCode::FORBIDDEN, &request, &reason);
     }
-    let model = bounded_openai_tts_model(None);
-    let voice = bounded_openai_tts_voice(request.voice.as_deref());
-    let format = bounded_openai_tts_format(request.format.as_deref());
+    let model = desktop_openai_tts_policy_model();
+    let voice = desktop_openai_tts_policy_voice(request.voice.as_deref(), &model);
+    let format = desktop_openai_tts_policy_format(request.format.as_deref());
     let answer_text_sha256 = sha256_hex(bounded_text.as_bytes());
     let limiter_reservation = match enforce_openai_tts_request_bounds(
         &state.tts_request_limiter,
@@ -2042,37 +2042,84 @@ fn mint_openai_realtime_transcription_session(
     })
 }
 
+fn desktop_openai_tts_policy_model() -> String {
+    let configured = env::var("SELENE_DESKTOP_OPENAI_TTS_MODEL").ok();
+    bounded_openai_tts_model(configured.as_deref())
+}
+
 fn bounded_openai_tts_model(value: Option<&str>) -> String {
     let trimmed = value
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("gpt-4o-mini-tts");
+        .unwrap_or("tts-1");
     match trimmed {
-        "gpt-4o-mini-tts" => trimmed.to_string(),
-        _ => "gpt-4o-mini-tts".to_string(),
+        "tts-1" | "tts-1-hd" | "gpt-4o-mini-tts" => trimmed.to_string(),
+        _ => "tts-1".to_string(),
     }
 }
 
-fn bounded_openai_tts_voice(value: Option<&str>) -> String {
+fn desktop_openai_tts_policy_voice(value: Option<&str>, model: &str) -> String {
+    let configured = env::var("SELENE_DESKTOP_OPENAI_TTS_VOICE").ok();
+    bounded_openai_tts_voice(configured.as_deref().or(value), model)
+}
+
+fn bounded_openai_tts_voice(value: Option<&str>, model: &str) -> String {
     let trimmed = value
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("marin");
-    match trimmed {
-        "alloy" | "ash" | "ballad" | "coral" | "echo" | "fable" | "nova" | "onyx" | "sage"
-        | "shimmer" | "verse" | "marin" | "cedar" => trimmed.to_string(),
-        _ => "marin".to_string(),
+        .unwrap_or_else(|| default_openai_tts_voice_for_model(model));
+    if openai_tts_voice_allowed_for_model(trimmed, model) {
+        trimmed.to_string()
+    } else {
+        default_openai_tts_voice_for_model(model).to_string()
     }
+}
+
+fn default_openai_tts_voice_for_model(model: &str) -> &'static str {
+    match model {
+        "gpt-4o-mini-tts" => "marin",
+        _ => "nova",
+    }
+}
+
+fn openai_tts_voice_allowed_for_model(voice: &str, model: &str) -> bool {
+    match model {
+        "gpt-4o-mini-tts" => matches!(
+            voice,
+            "alloy"
+                | "ash"
+                | "ballad"
+                | "coral"
+                | "echo"
+                | "fable"
+                | "nova"
+                | "onyx"
+                | "sage"
+                | "shimmer"
+                | "verse"
+                | "marin"
+                | "cedar"
+        ),
+        _ => matches!(
+            voice,
+            "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"
+        ),
+    }
+}
+
+fn desktop_openai_tts_policy_format(value: Option<&str>) -> String {
+    let configured = env::var("SELENE_DESKTOP_OPENAI_TTS_FORMAT").ok();
+    bounded_openai_tts_format(configured.as_deref().or(value))
 }
 
 fn bounded_openai_tts_format(value: Option<&str>) -> String {
     let trimmed = value
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .unwrap_or("mp3");
+        .unwrap_or("wav");
     match trimmed {
         "mp3" | "opus" | "aac" | "flac" | "wav" | "pcm" => trimmed.to_string(),
-        _ => "mp3".to_string(),
+        _ => "wav".to_string(),
     }
 }
 
@@ -2245,6 +2292,7 @@ fn voice_turn_security_reject_response(reject: SecurityReject, turn_id: Option<u
         trace_id: None,
         deep_research: None,
         screen_lifecycle_action: None,
+        session_lifecycle_action: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
@@ -2323,6 +2371,8 @@ fn desktop_openai_tts_failure_response(
     outcome: &str,
     reason: String,
 ) -> DesktopOpenAiTtsSpeechResponse {
+    let model = desktop_openai_tts_policy_model();
+    let voice = desktop_openai_tts_policy_voice(request.voice.as_deref(), &model);
     DesktopOpenAiTtsSpeechResponse {
         status: "error".to_string(),
         outcome: outcome.to_string(),
@@ -2332,8 +2382,8 @@ fn desktop_openai_tts_failure_response(
         audio_mime_type: None,
         audio_byte_len: 0,
         audio_sha256: None,
-        model: "gpt-4o-mini-tts".to_string(),
-        voice: bounded_openai_tts_voice(request.voice.as_deref()),
+        model,
+        voice,
         answer_text_sha256: None,
         session_id: request.session_id.clone(),
         turn_id: request.turn_id.clone(),
@@ -2502,6 +2552,7 @@ fn voice_turn_ingress_error_response(status: StatusCode, error: VoiceTurnIngress
             trace_id: None,
             deep_research: None,
             screen_lifecycle_action: None,
+            session_lifecycle_action: None,
         }),
     )
         .into_response()
@@ -2769,6 +2820,30 @@ mod tests {
         let _timeout_scope = ScopedEnvVar::set("SELENE_DESKTOP_OPENAI_TTS_TIMEOUT_SECS", "11");
 
         assert_eq!(desktop_openai_tts_timeout_secs(), 11);
+    }
+
+    #[test]
+    fn desktop_openai_tts_policy_defaults_to_fast_openai_interactive_speech() {
+        let _guard = realtime_env_lock();
+        let _model_scope = ScopedEnvVar::unset("SELENE_DESKTOP_OPENAI_TTS_MODEL");
+        let _voice_scope = ScopedEnvVar::unset("SELENE_DESKTOP_OPENAI_TTS_VOICE");
+        let _format_scope = ScopedEnvVar::unset("SELENE_DESKTOP_OPENAI_TTS_FORMAT");
+
+        let model = desktop_openai_tts_policy_model();
+
+        assert_eq!(model, "tts-1");
+        assert_eq!(desktop_openai_tts_policy_voice(None, &model), "nova");
+        assert_eq!(desktop_openai_tts_policy_format(None), "wav");
+    }
+
+    #[test]
+    fn desktop_openai_tts_policy_keeps_voice_compatible_with_selected_model() {
+        assert_eq!(bounded_openai_tts_voice(Some("marin"), "tts-1"), "nova");
+        assert_eq!(
+            bounded_openai_tts_voice(Some("marin"), "gpt-4o-mini-tts"),
+            "marin"
+        );
+        assert_eq!(bounded_openai_tts_voice(Some("nova"), "tts-1"), "nova");
     }
 
     struct MockRealtimeSessionServer {
@@ -3875,8 +3950,8 @@ mod tests {
             request_id: Some("voice_turn_request_tts_test".to_string()),
             feature_flag_name: "SELENE_DESKTOP_OPENAI_TTS_ENABLED".to_string(),
             feature_flag_enabled: true,
-            voice: Some("marin".to_string()),
-            format: Some("mp3".to_string()),
+            voice: None,
+            format: None,
         }
     }
 
@@ -4378,9 +4453,9 @@ mod tests {
         let body: DesktopOpenAiTtsSpeechResponse = decode_json_response(response).await;
         assert!(body.ok);
         assert_eq!(body.outcome, "OPENAI_TTS_SPEECH_CREATED");
-        assert_eq!(body.model, "gpt-4o-mini-tts");
-        assert_eq!(body.voice, "marin");
-        assert_eq!(body.audio_mime_type.as_deref(), Some("audio/mpeg"));
+        assert_eq!(body.model, "tts-1");
+        assert_eq!(body.voice, "nova");
+        assert_eq!(body.audio_mime_type.as_deref(), Some("audio/wav"));
         assert_eq!(body.audio_byte_len, audio_bytes.len() as u64);
         assert_eq!(
             body.audio_sha256.as_deref(),
@@ -4404,9 +4479,9 @@ mod tests {
             .recv_timeout(Duration::from_secs(2))
             .expect("mock provider should receive request");
         assert!(request_text.contains("POST /v1/audio/speech"));
-        assert!(request_text.contains("\"model\":\"gpt-4o-mini-tts\""));
-        assert!(request_text.contains("\"voice\":\"marin\""));
-        assert!(request_text.contains("\"response_format\":\"mp3\""));
+        assert!(request_text.contains("\"model\":\"tts-1\""));
+        assert!(request_text.contains("\"voice\":\"nova\""));
+        assert!(request_text.contains("\"response_format\":\"wav\""));
         assert!(request_text.contains("\"input\":\"Selene runtime final answer.\""));
         mock.join.join().expect("mock provider thread should join");
         let _ = fs::remove_file(vault_path);

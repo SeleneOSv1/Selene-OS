@@ -2099,6 +2099,7 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
     case keyboardComposer = "KEYBOARD_TYPED_TURN"
     case searchRequestCard = "SEARCH_REQUEST"
     case toolRequestCard = "TOOL_REQUEST"
+    case newConversationControl = "NEW_CONVERSATION_CONTROL"
 
     var requestIDPrefix: String {
         switch self {
@@ -2108,6 +2109,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "desktop_search_request"
         case .toolRequestCard:
             return "desktop_tool_request"
+        case .newConversationControl:
+            return "desktop_new_conversation_request"
         }
     }
 
@@ -2119,6 +2122,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "SEARCH_REQUEST_PENDING"
         case .toolRequestCard:
             return "TOOL_REQUEST_PENDING"
+        case .newConversationControl:
+            return "NEW_CONVERSATION_PENDING"
         }
     }
 
@@ -2130,6 +2135,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "SEARCH_REQUEST_FAILED_REQUEST"
         case .toolRequestCard:
             return "TOOL_REQUEST_FAILED_REQUEST"
+        case .newConversationControl:
+            return "NEW_CONVERSATION_FAILED_REQUEST"
         }
     }
 
@@ -2141,6 +2148,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "search_request_pending_preview"
         case .toolRequestCard:
             return "tool_request_pending_preview"
+        case .newConversationControl:
+            return "new_conversation_pending_preview"
         }
     }
 
@@ -2152,6 +2161,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "search_request_failed_request_preview"
         case .toolRequestCard:
             return "tool_request_failed_request_preview"
+        case .newConversationControl:
+            return "new_conversation_failed_request_preview"
         }
     }
 
@@ -2163,6 +2174,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "Search Request"
         case .toolRequestCard:
             return "Tool Request"
+        case .newConversationControl:
+            return "New Conversation Request"
         }
     }
 
@@ -2174,6 +2187,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "This path preserves one bounded search-request preview only while canonical runtime dispatch resolves. Canonical runtime still retains search routing, provider choice, retrieval, and source authority, and the shell does not fabricate local search execution."
         case .toolRequestCard:
             return "This path preserves one bounded tool-request preview only while canonical runtime dispatch resolves. Canonical runtime still retains tool-routing authority, and the shell does not fabricate direct tool-name authority, local provider selection, or local search execution."
+        case .newConversationControl:
+            return "This path asks the canonical runtime to create a logical new-session boundary. The shell does not decide session meaning or create a new app or adapter."
         }
     }
 
@@ -2185,6 +2200,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "Bounded search-request pending preview only. Canonical runtime acceptance, search routing, and later cloud-visible response remain authoritative."
         case .toolRequestCard:
             return "Bounded tool-request pending preview only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative."
+        case .newConversationControl:
+            return "Bounded new-conversation control pending preview only. Canonical runtime session lifecycle acceptance remains authoritative."
         }
     }
 
@@ -2196,6 +2213,8 @@ enum DesktopTypedTurnRequestOrigin: String, Equatable {
             return "Bounded search-request failure visibility only. Canonical runtime acceptance, search routing, and later cloud-visible response remain authoritative."
         case .toolRequestCard:
             return "Bounded tool-request failure visibility only. Canonical runtime acceptance, tool routing, and later cloud-visible response remain authoritative."
+        case .newConversationControl:
+            return "Bounded new-conversation control failure visibility only. Canonical runtime session lifecycle acceptance remains authoritative."
         }
     }
 }
@@ -3739,7 +3758,9 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
     private static let committedVoiceTranscriptArtifactTokens: Set<String> = [
         "ah", "eh", "er", "hm", "hmm", "huh", "ok", "okay",
-        "so", "sure", "uh", "um", "umm", "yeah", "yep", "yup"
+        "so", "sure", "uh", "um", "umm", "yeah", "yep", "yup",
+        "coming", "going", "typing", "clicking", "cough", "coughing",
+        "breathing", "noise", "background", "waiting", "listening"
     ]
 
     private func shouldIgnoreCommittedVoiceTranscriptArtifact(_ transcript: String) -> Bool {
@@ -8130,7 +8151,7 @@ struct DesktopSessionShellView: View {
         }
     }
 
-    private func desktopStartNewChatFromSidebar() {
+    private func desktopResetLocalConversationForApprovedNewSession() {
         desktopTypedTurnDraft = ""
         desktopTypedTurnPendingRequest = nil
         desktopTypedTurnDispatchInFlightRequestID = nil
@@ -8148,6 +8169,42 @@ struct DesktopSessionShellView: View {
         desktopSidebarSearchQuery = ""
         desktopSidebarSearchIsVisible = false
         explicitVoiceController.discardCurrentVoiceTurn()
+    }
+
+    private func desktopStartNewChatFromSidebar() {
+        let command = "new conversation"
+
+        switch stageDesktopTypedTurnRequest(
+            trimmedDraft: command,
+            origin: .newConversationControl
+        ) {
+        case .none:
+            desktopAppendRuntimeBridgeDebugLog(
+                "new conversation control staged id=\(desktopTypedTurnPendingRequest?.id ?? "missing")"
+            )
+            Task { @MainActor in
+                await dispatchPreparedTypedTurnRequestIfNeeded()
+                await synchronizeDesktopWakeListenerLifecycleState()
+            }
+        case .emptyDraft:
+            return
+        case .byteLimit:
+            return
+        case .pendingRequestActive:
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_new_conversation_control_pending_request",
+                title: "Failed new conversation request",
+                summary: "The new conversation request could not be produced while another bounded request is already awaiting authoritative response.",
+                detail: "The shell does not create a local session boundary while canonical runtime transport is busy."
+            )
+        case .otherForegroundRequestActive:
+            desktopTypedTurnFailedRequest = InterruptContinuityResponseFailureState(
+                id: "failed_new_conversation_control_voice_request_active",
+                title: "Failed new conversation request",
+                summary: "The new conversation request could not be produced while another foreground voice capture or voice-turn dispatch posture was still active.",
+                detail: "The shell stays single-request only and does not merge a local session boundary with voice capture or bypass canonical runtime sequencing."
+            )
+        }
     }
 
     private func desktopChatShellLayout<MainContent: View>(
@@ -10408,6 +10465,51 @@ struct DesktopSessionShellView: View {
         }
 
         startDesktopExplicitVoiceTurn()
+    }
+
+    @MainActor
+    private func executeApprovedSessionLifecycleActionIfPresent(
+        _ outcomeState: DesktopCanonicalRuntimeOutcomeState,
+        requestID: String,
+        source: String
+    ) -> DesktopSessionLifecycleAction? {
+        guard let sessionAction = outcomeState.sessionLifecycleAction else {
+            return nil
+        }
+
+        let validCloseSeal =
+            sessionAction.canonicalIntent == "SESSION_CLOSE_SEAL"
+            && sessionAction.action == "close_seal"
+        let validNewSession =
+            sessionAction.canonicalIntent == "SESSION_NEW"
+            && sessionAction.action == "new_session"
+        guard validCloseSeal || validNewSession else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop session lifecycle action rejected reason=invalid_runtime_packet id=\(requestID) canonical_intent=\(boundedFailureLogToken(sessionAction.canonicalIntent)) action=\(boundedFailureLogToken(sessionAction.action))"
+            )
+            return nil
+        }
+
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop session lifecycle action executing id=\(requestID) source=\(boundedFailureLogToken(source)) canonical_intent=\(sessionAction.canonicalIntent) action=\(sessionAction.action) authority=\(boundedFailureLogToken(sessionAction.source)) evidence=\(boundedFailureLogToken(sessionAction.evidence))"
+        )
+        desktopAuthoritativeReplyRenderState = nil
+        desktopAuthoritativeReplyProvenanceRenderState = nil
+        desktopAuthoritativeReplyPlaybackController.reset()
+        desktopAuthoritativeReplyPlaybackState = .idle
+        desktopSubmittedUserContinuityPreviewState = nil
+        desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        desktopDeactivateComposerVoiceMode(
+            preserveTranscriptPreview: false,
+            clearPostWakeAuthorization: true
+        )
+
+        if validNewSession {
+            desktopResetLocalConversationForApprovedNewSession()
+        }
+
+        return sessionAction
     }
 
     private func startDesktopComposerVoiceTurn() {
@@ -22675,6 +22777,16 @@ struct DesktopSessionShellView: View {
                 )
                 return
             }
+            if executeApprovedSessionLifecycleActionIfPresent(
+                outcomeState,
+                requestID: pendingRequest.id,
+                source: "explicit_voice"
+            ) != nil {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
+                explicitVoiceController.clearPendingPreparedVoiceTurn()
+                await synchronizeDesktopWakeListenerLifecycleState()
+                return
+            }
             if !runtimeIgnoredUnsafeVoiceTranscript {
                 desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
                     requestID: pendingRequest.id,
@@ -22883,6 +22995,17 @@ struct DesktopSessionShellView: View {
                 )
                 return
             }
+            if executeApprovedSessionLifecycleActionIfPresent(
+                outcomeState,
+                requestID: pendingRequest.id,
+                source: "wake_triggered_voice"
+            ) != nil {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
+                desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                await synchronizeDesktopWakeListenerLifecycleState()
+                return
+            }
             if !runtimeIgnoredUnsafeVoiceTranscript {
                 desktopPersistSubmittedUserContinuityIfNeeded(
                     requestID: pendingRequest.id,
@@ -23062,6 +23185,15 @@ struct DesktopSessionShellView: View {
                     await synchronizeDesktopWakeListenerLifecycleState()
                 }
                 desktopTypedTurnPendingRequest = nil
+                return
+            }
+            if executeApprovedSessionLifecycleActionIfPresent(
+                outcomeState,
+                requestID: pendingRequest.id,
+                source: "typed"
+            ) != nil {
+                desktopTypedTurnPendingRequest = nil
+                await synchronizeDesktopWakeListenerLifecycleState()
                 return
             }
             if pendingRequest.origin == .keyboardComposer {

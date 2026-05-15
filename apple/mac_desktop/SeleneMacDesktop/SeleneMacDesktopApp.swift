@@ -44,6 +44,12 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
             object: nil
         )
         showMainWindow()
+        DispatchQueue.main.async { [weak self] in
+            self?.showMainWindowIfNeededAfterLaunch()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.showMainWindowIfNeededAfterLaunch()
+        }
     }
 
     func applicationShouldHandleReopen(
@@ -125,6 +131,8 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
             createdWindow.title = "Selene"
             createdWindow.contentViewController = hostingController
             createdWindow.delegate = mainWindowDelegate
+            createdWindow.collectionBehavior.insert(.fullScreenPrimary)
+            createdWindow.minSize = NSSize(width: 640, height: 520)
             createdWindow.setFrameAutosaveName("SeleneMainWindow")
             createdWindow.center()
             self.mainWindow = createdWindow
@@ -138,6 +146,17 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
         NSApplication.shared.unhide(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func showMainWindowIfNeededAfterLaunch() {
+        guard let window = mainWindow else {
+            showMainWindow()
+            return
+        }
+
+        if !window.isVisible || window.isMiniaturized {
+            showMainWindow()
+        }
     }
 
     private func hideMainWindow() {

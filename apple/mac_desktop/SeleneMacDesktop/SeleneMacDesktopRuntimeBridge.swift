@@ -114,6 +114,13 @@ struct DesktopScreenLifecycleAction: Equatable {
     let evidence: String
 }
 
+struct DesktopSessionLifecycleAction: Equatable {
+    let canonicalIntent: String
+    let action: String
+    let source: String
+    let evidence: String
+}
+
 struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     enum Phase: String, Equatable {
         case dispatching = "dispatching"
@@ -141,6 +148,7 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
     let imageCards: [AuthoritativeImageCard]
     let sourceLinkCitationCards: [AuthoritativeSourceLinkCitationCard]
     let screenLifecycleAction: DesktopScreenLifecycleAction?
+    let sessionLifecycleAction: DesktopSessionLifecycleAction?
 
     static func dispatching(
         preparedRequestID: String,
@@ -167,7 +175,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: [],
             imageCards: [],
             sourceLinkCitationCards: [],
-            screenLifecycleAction: nil
+            screenLifecycleAction: nil,
+            sessionLifecycleAction: nil
         )
     }
 
@@ -196,7 +205,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: [],
             imageCards: [],
             sourceLinkCitationCards: [],
-            screenLifecycleAction: nil
+            screenLifecycleAction: nil,
+            sessionLifecycleAction: nil
         )
     }
 
@@ -225,7 +235,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: [],
             imageCards: [],
             sourceLinkCitationCards: [],
-            screenLifecycleAction: nil
+            screenLifecycleAction: nil,
+            sessionLifecycleAction: nil
         )
     }
 
@@ -255,7 +266,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards),
-            screenLifecycleAction: response.screenLifecycleAction?.desktopAction
+            screenLifecycleAction: response.screenLifecycleAction?.desktopAction,
+            sessionLifecycleAction: response.sessionLifecycleAction?.desktopAction
         )
     }
 
@@ -285,7 +297,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards),
-            screenLifecycleAction: response.screenLifecycleAction?.desktopAction
+            screenLifecycleAction: response.screenLifecycleAction?.desktopAction,
+            sessionLifecycleAction: response.sessionLifecycleAction?.desktopAction
         )
     }
 
@@ -315,7 +328,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: boundedAuthoritativeSourceChips(response.sourceChips),
             imageCards: boundedAuthoritativeImageCards(response.imageCards),
             sourceLinkCitationCards: boundedSourceLinkCitationCards(response.deepResearch?.sourceLinkCitationCards),
-            screenLifecycleAction: response.screenLifecycleAction?.desktopAction
+            screenLifecycleAction: response.screenLifecycleAction?.desktopAction,
+            sessionLifecycleAction: response.sessionLifecycleAction?.desktopAction
         )
     }
 
@@ -350,7 +364,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: [],
             imageCards: [],
             sourceLinkCitationCards: [],
-            screenLifecycleAction: nil
+            screenLifecycleAction: nil,
+            sessionLifecycleAction: nil
         )
     }
 
@@ -385,7 +400,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: [],
             imageCards: [],
             sourceLinkCitationCards: [],
-            screenLifecycleAction: nil
+            screenLifecycleAction: nil,
+            sessionLifecycleAction: nil
         )
     }
 
@@ -420,7 +436,8 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
             sourceChips: [],
             imageCards: [],
             sourceLinkCitationCards: [],
-            screenLifecycleAction: nil
+            screenLifecycleAction: nil,
+            sessionLifecycleAction: nil
         )
     }
 }
@@ -4338,6 +4355,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let imageCards: [VoiceTurnSearchImageCardPayload]?
         let deepResearch: VoiceTurnDeepResearchPayload?
         let screenLifecycleAction: VoiceTurnScreenLifecycleActionPayload?
+        let sessionLifecycleAction: VoiceTurnSessionLifecycleActionPayload?
 
         private enum CodingKeys: String, CodingKey {
             case status
@@ -4357,6 +4375,41 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case imageCards = "image_cards"
             case deepResearch = "deep_research"
             case screenLifecycleAction = "screen_lifecycle_action"
+            case sessionLifecycleAction = "session_lifecycle_action"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            status = try container.decode(String.self, forKey: .status)
+            outcome = try container.decode(String.self, forKey: .outcome)
+            sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+            turnID = try container.decodeIfPresent(UInt64.self, forKey: .turnID)
+            sessionState = try container.decodeIfPresent(String.self, forKey: .sessionState)
+            sessionAttachOutcome = try container.decodeIfPresent(String.self, forKey: .sessionAttachOutcome)
+            failureClass = try container.decodeIfPresent(String.self, forKey: .failureClass)
+            reason = try container.decodeIfPresent(String.self, forKey: .reason)
+            nextMove = try container.decode(String.self, forKey: .nextMove)
+            reasonCode = try container.decode(String.self, forKey: .reasonCode)
+            provenance = try container.decodeIfPresent(VoiceTurnProvenancePayload.self, forKey: .provenance)
+            sourceChips = try container.decodeIfPresent([VoiceTurnWebSourceChipPayload].self, forKey: .sourceChips)
+            imageCards = try container.decodeIfPresent([VoiceTurnSearchImageCardPayload].self, forKey: .imageCards)
+            deepResearch = try container.decodeIfPresent(VoiceTurnDeepResearchPayload.self, forKey: .deepResearch)
+            screenLifecycleAction = try container.decodeIfPresent(
+                VoiceTurnScreenLifecycleActionPayload.self,
+                forKey: .screenLifecycleAction
+            )
+            sessionLifecycleAction = try container.decodeIfPresent(
+                VoiceTurnSessionLifecycleActionPayload.self,
+                forKey: .sessionLifecycleAction
+            )
+
+            let carriesLifecycleAction = screenLifecycleAction != nil || sessionLifecycleAction != nil
+            if carriesLifecycleAction {
+                responseText = try container.decodeIfPresent(String.self, forKey: .responseText) ?? ""
+            } else {
+                responseText = try container.decode(String.self, forKey: .responseText)
+            }
+            ttsText = try container.decodeIfPresent(String.self, forKey: .ttsText) ?? ""
         }
     }
 
@@ -4368,6 +4421,29 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
         var desktopAction: DesktopScreenLifecycleAction {
             DesktopScreenLifecycleAction(
+                canonicalIntent: canonicalIntent,
+                action: action,
+                source: source,
+                evidence: evidence
+            )
+        }
+
+        private enum CodingKeys: String, CodingKey {
+            case canonicalIntent = "canonical_intent"
+            case action
+            case source
+            case evidence
+        }
+    }
+
+    struct VoiceTurnSessionLifecycleActionPayload: Decodable {
+        let canonicalIntent: String
+        let action: String
+        let source: String
+        let evidence: String
+
+        var desktopAction: DesktopSessionLifecycleAction {
+            DesktopSessionLifecycleAction(
                 canonicalIntent: canonicalIntent,
                 action: action,
                 source: source,
@@ -5549,7 +5625,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         featureFlagName: String,
         featureFlagEnabled: Bool,
         voice: String? = nil,
-        format: String? = "mp3"
+        format: String? = nil
     ) async throws -> DesktopOpenAITtsSpeechState {
         try await ensureAdapterAvailable()
 
