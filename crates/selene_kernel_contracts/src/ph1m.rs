@@ -15,6 +15,72 @@ pub const MEMORY_CONTEXT_BUNDLE_MAX_EXCERPTS: u8 = 2;
 pub const MEMORY_RECENT_ARCHIVE_RECALL_MAX_MATCHES: u8 = 8;
 pub const MEMORY_SAFE_SUMMARY_MAX_BYTES: u16 = 1024;
 pub const MEMORY_SAFE_SUMMARY_MAX_ITEMS: u8 = 10;
+pub const MEMORY_CANONICAL_TEXT_MAX_CHARS: usize = 1024;
+pub const MEMORY_CANONICAL_LABEL_MAX_CHARS: usize = 128;
+pub const MEMORY_CANONICAL_MAX_REFS: usize = 32;
+
+fn validate_optional_memory_text(
+    field: &'static str,
+    value: &Option<String>,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if let Some(value) = value {
+        if value.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "must not be empty when provided",
+            });
+        }
+        if value.len() > max_len {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "exceeds max length",
+            });
+        }
+        if value.chars().any(char::is_control) {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "must not contain control chars",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_memory_text_list(
+    field: &'static str,
+    values: &[String],
+    max_items: usize,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if values.len() > max_items {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max items",
+        });
+    }
+    for value in values {
+        if value.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "must not contain empty entries",
+            });
+        }
+        if value.len() > max_len {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "entry exceeds max length",
+            });
+        }
+        if value.chars().any(char::is_control) {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "entries must not contain control chars",
+            });
+        }
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum MemoryLayer {
@@ -58,6 +124,535 @@ pub enum MemoryConfidence {
     High,
     Med,
     Low,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryEvidenceType {
+    Fresh,
+    Today,
+    Topic,
+    Deep,
+    Permanent,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryAgeLabel {
+    JustNow,
+    EarlierThisConversation,
+    BeforeSleep,
+    EarlierToday,
+    Yesterday,
+    PastFewDays,
+    RecentWeeks,
+    OlderTopic,
+    Permanent,
+}
+
+impl Default for MemoryAgeLabel {
+    fn default() -> Self {
+        Self::JustNow
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryRecallStyle {
+    IRemember,
+    WeSpokeAbout,
+    EarlierToday,
+    Yesterday,
+    AWhileBack,
+    NoRecord,
+}
+
+impl Default for MemoryRecallStyle {
+    fn default() -> Self {
+        Self::IRemember
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryTrustLevel {
+    VerbatimUserInstruction,
+    CodexReport,
+    InferredSummary,
+    AssistantSuggestion,
+    UnverifiedIdea,
+    OutdatedNote,
+}
+
+impl Default for MemoryTrustLevel {
+    fn default() -> Self {
+        Self::InferredSummary
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryPrivacyStatus {
+    Allowed,
+    Restricted,
+    Sensitive,
+    RequiresIdentity,
+    Unavailable,
+}
+
+impl Default for MemoryPrivacyStatus {
+    fn default() -> Self {
+        Self::Allowed
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryConflictStatus {
+    Current,
+    Superseded,
+    Conflicts,
+    Stale,
+    Unverified,
+}
+
+impl Default for MemoryConflictStatus {
+    fn default() -> Self {
+        Self::Current
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FreshMemoryHandoffReason {
+    SessionSleep,
+    SessionClose,
+    WakeReady,
+    TopicShift,
+    ManualBoundary,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum MemoryContinuationDecisionKind {
+    ContinueAutomatically,
+    AskClarification,
+    AnswerNormally,
+    NoMemoryMatch,
+    BlockedByPrivacy,
+    BlockedByStaleness,
+    BlockedByLowConfidence,
+}
+
+impl Default for MemoryContinuationDecisionKind {
+    fn default() -> Self {
+        Self::AnswerNormally
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryEvidencePacket {
+    pub schema_version: SchemaVersion,
+    pub memory_type: MemoryEvidenceType,
+    pub topic_label: Option<String>,
+    pub age_label: MemoryAgeLabel,
+    pub confidence: MemoryConfidence,
+    pub evidence_refs: Vec<String>,
+    pub continuation_allowed: bool,
+    pub clarification_needed: bool,
+    pub user_facing_summary: Option<String>,
+    pub active_context_allowed: bool,
+    pub user_facing_recall_style: MemoryRecallStyle,
+    pub trust_level: MemoryTrustLevel,
+    pub privacy_status: MemoryPrivacyStatus,
+    pub conflict_status: MemoryConflictStatus,
+}
+
+impl MemoryEvidencePacket {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        memory_type: MemoryEvidenceType,
+        topic_label: Option<String>,
+        age_label: MemoryAgeLabel,
+        confidence: MemoryConfidence,
+        evidence_refs: Vec<String>,
+        continuation_allowed: bool,
+        clarification_needed: bool,
+        user_facing_summary: Option<String>,
+        active_context_allowed: bool,
+        user_facing_recall_style: MemoryRecallStyle,
+        trust_level: MemoryTrustLevel,
+        privacy_status: MemoryPrivacyStatus,
+        conflict_status: MemoryConflictStatus,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            schema_version: PH1M_CONTRACT_VERSION,
+            memory_type,
+            topic_label,
+            age_label,
+            confidence,
+            evidence_refs,
+            continuation_allowed,
+            clarification_needed,
+            user_facing_summary,
+            active_context_allowed,
+            user_facing_recall_style,
+            trust_level,
+            privacy_status,
+            conflict_status,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for MemoryEvidencePacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1M_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_evidence_packet.schema_version",
+                reason: "must match PH1M_CONTRACT_VERSION",
+            });
+        }
+        validate_optional_memory_text(
+            "memory_evidence_packet.topic_label",
+            &self.topic_label,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_memory_text_list(
+            "memory_evidence_packet.evidence_refs",
+            &self.evidence_refs,
+            MEMORY_CANONICAL_MAX_REFS,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_evidence_packet.user_facing_summary",
+            &self.user_facing_summary,
+            MEMORY_CANONICAL_TEXT_MAX_CHARS,
+        )?;
+        if matches!(self.privacy_status, MemoryPrivacyStatus::Unavailable)
+            && self.active_context_allowed
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_evidence_packet.active_context_allowed",
+                reason: "must be false when privacy_status is Unavailable",
+            });
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryRecallRequest {
+    pub schema_version: SchemaVersion,
+    /// Compatibility wrapper around the existing PH1.M recall request owner.
+    pub base_request: Ph1mRecallRequest,
+    pub query_text: Option<String>,
+    pub current_ph1x_context_ref: Option<String>,
+    pub recall_scope: Option<String>,
+    pub freshness_preference: Option<MemoryAgeLabel>,
+    pub topic_hint: Option<String>,
+    pub identity_scope_ref: Option<String>,
+    pub privacy_status: MemoryPrivacyStatus,
+    pub request_reason: Option<String>,
+}
+
+impl MemoryRecallRequest {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        base_request: Ph1mRecallRequest,
+        query_text: Option<String>,
+        current_ph1x_context_ref: Option<String>,
+        recall_scope: Option<String>,
+        freshness_preference: Option<MemoryAgeLabel>,
+        topic_hint: Option<String>,
+        identity_scope_ref: Option<String>,
+        privacy_status: MemoryPrivacyStatus,
+        request_reason: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let request = Self {
+            schema_version: PH1M_CONTRACT_VERSION,
+            base_request,
+            query_text,
+            current_ph1x_context_ref,
+            recall_scope,
+            freshness_preference,
+            topic_hint,
+            identity_scope_ref,
+            privacy_status,
+            request_reason,
+        };
+        request.validate()?;
+        Ok(request)
+    }
+
+    pub fn from_ph1m_recall_request(
+        base_request: Ph1mRecallRequest,
+    ) -> Result<Self, ContractViolation> {
+        Self::v1(
+            base_request,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            MemoryPrivacyStatus::Allowed,
+            None,
+        )
+    }
+
+    pub fn as_ph1m_recall_request(&self) -> &Ph1mRecallRequest {
+        &self.base_request
+    }
+}
+
+impl Validate for MemoryRecallRequest {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1M_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_recall_request.schema_version",
+                reason: "must match PH1M_CONTRACT_VERSION",
+            });
+        }
+        self.base_request.validate()?;
+        validate_optional_memory_text(
+            "memory_recall_request.query_text",
+            &self.query_text,
+            MEMORY_CANONICAL_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_recall_request.current_ph1x_context_ref",
+            &self.current_ph1x_context_ref,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_recall_request.recall_scope",
+            &self.recall_scope,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_recall_request.topic_hint",
+            &self.topic_hint,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_recall_request.identity_scope_ref",
+            &self.identity_scope_ref,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_recall_request.request_reason",
+            &self.request_reason,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FreshMemoryHandoff {
+    pub schema_version: SchemaVersion,
+    pub handoff_id: String,
+    pub source_session_id: Option<SessionId>,
+    pub source_thread_key: Option<String>,
+    pub source_turn_ref: Option<String>,
+    pub last_topic: Option<String>,
+    pub last_intent: Option<String>,
+    pub last_tool_family: Option<String>,
+    pub last_entity_focus: Vec<String>,
+    pub last_answer_type: Option<String>,
+    pub freshness_label: MemoryAgeLabel,
+    pub confidence: MemoryConfidence,
+    pub evidence_refs: Vec<String>,
+    pub continuation_allowed: bool,
+    pub handoff_reason: FreshMemoryHandoffReason,
+    pub expires_at: Option<MonotonicTimeNs>,
+}
+
+impl FreshMemoryHandoff {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        handoff_id: String,
+        source_session_id: Option<SessionId>,
+        source_thread_key: Option<String>,
+        source_turn_ref: Option<String>,
+        last_topic: Option<String>,
+        last_intent: Option<String>,
+        last_tool_family: Option<String>,
+        last_entity_focus: Vec<String>,
+        last_answer_type: Option<String>,
+        freshness_label: MemoryAgeLabel,
+        confidence: MemoryConfidence,
+        evidence_refs: Vec<String>,
+        continuation_allowed: bool,
+        handoff_reason: FreshMemoryHandoffReason,
+        expires_at: Option<MonotonicTimeNs>,
+    ) -> Result<Self, ContractViolation> {
+        let handoff = Self {
+            schema_version: PH1M_CONTRACT_VERSION,
+            handoff_id,
+            source_session_id,
+            source_thread_key,
+            source_turn_ref,
+            last_topic,
+            last_intent,
+            last_tool_family,
+            last_entity_focus,
+            last_answer_type,
+            freshness_label,
+            confidence,
+            evidence_refs,
+            continuation_allowed,
+            handoff_reason,
+            expires_at,
+        };
+        handoff.validate()?;
+        Ok(handoff)
+    }
+}
+
+impl Validate for FreshMemoryHandoff {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1M_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "fresh_memory_handoff.schema_version",
+                reason: "must match PH1M_CONTRACT_VERSION",
+            });
+        }
+        if self.handoff_id.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field: "fresh_memory_handoff.handoff_id",
+                reason: "must not be empty",
+            });
+        }
+        if self.handoff_id.len() > MEMORY_CANONICAL_LABEL_MAX_CHARS {
+            return Err(ContractViolation::InvalidValue {
+                field: "fresh_memory_handoff.handoff_id",
+                reason: "exceeds max length",
+            });
+        }
+        validate_optional_memory_text(
+            "fresh_memory_handoff.source_thread_key",
+            &self.source_thread_key,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "fresh_memory_handoff.source_turn_ref",
+            &self.source_turn_ref,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "fresh_memory_handoff.last_topic",
+            &self.last_topic,
+            MEMORY_CANONICAL_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "fresh_memory_handoff.last_intent",
+            &self.last_intent,
+            MEMORY_CANONICAL_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "fresh_memory_handoff.last_tool_family",
+            &self.last_tool_family,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_memory_text_list(
+            "fresh_memory_handoff.last_entity_focus",
+            &self.last_entity_focus,
+            MEMORY_CANONICAL_MAX_REFS,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "fresh_memory_handoff.last_answer_type",
+            &self.last_answer_type,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_memory_text_list(
+            "fresh_memory_handoff.evidence_refs",
+            &self.evidence_refs,
+            MEMORY_CANONICAL_MAX_REFS,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        if let Some(expires_at) = self.expires_at {
+            if expires_at.0 == 0 {
+                return Err(ContractViolation::InvalidValue {
+                    field: "fresh_memory_handoff.expires_at",
+                    reason: "must be > 0 when provided",
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryContinuationDecision {
+    pub schema_version: SchemaVersion,
+    pub decision: MemoryContinuationDecisionKind,
+    pub confidence: MemoryConfidence,
+    pub reason_code: ReasonCodeId,
+    pub evidence_packet_ref: Option<String>,
+    pub user_facing_summary: Option<String>,
+    pub clarification_prompt: Option<String>,
+}
+
+impl MemoryContinuationDecision {
+    pub fn v1(
+        decision: MemoryContinuationDecisionKind,
+        confidence: MemoryConfidence,
+        reason_code: ReasonCodeId,
+        evidence_packet_ref: Option<String>,
+        user_facing_summary: Option<String>,
+        clarification_prompt: Option<String>,
+    ) -> Result<Self, ContractViolation> {
+        let out = Self {
+            schema_version: PH1M_CONTRACT_VERSION,
+            decision,
+            confidence,
+            reason_code,
+            evidence_packet_ref,
+            user_facing_summary,
+            clarification_prompt,
+        };
+        out.validate()?;
+        Ok(out)
+    }
+}
+
+impl Validate for MemoryContinuationDecision {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1M_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_continuation_decision.schema_version",
+                reason: "must match PH1M_CONTRACT_VERSION",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_continuation_decision.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        validate_optional_memory_text(
+            "memory_continuation_decision.evidence_packet_ref",
+            &self.evidence_packet_ref,
+            MEMORY_CANONICAL_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_continuation_decision.user_facing_summary",
+            &self.user_facing_summary,
+            MEMORY_CANONICAL_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_memory_text(
+            "memory_continuation_decision.clarification_prompt",
+            &self.clarification_prompt,
+            MEMORY_CANONICAL_TEXT_MAX_CHARS,
+        )?;
+        if matches!(
+            self.decision,
+            MemoryContinuationDecisionKind::AskClarification
+        ) && self.clarification_prompt.is_none()
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "memory_continuation_decision.clarification_prompt",
+                reason: "must be provided when decision is AskClarification",
+            });
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -3069,5 +3664,154 @@ mod tests {
             0,
         );
         assert!(r.is_err());
+    }
+
+    fn base_recall_request() -> Ph1mRecallRequest {
+        Ph1mRecallRequest::v1(
+            MonotonicTimeNs(10),
+            ok_speaker(),
+            policy_ok(),
+            vec![MemoryKey::new("synthetic_topic").unwrap()],
+            false,
+            4,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn ph1m_canonical_memory_evidence_packet_carries_memory_styles() {
+        for (memory_type, age_label) in [
+            (MemoryEvidenceType::Fresh, MemoryAgeLabel::JustNow),
+            (MemoryEvidenceType::Today, MemoryAgeLabel::EarlierToday),
+            (MemoryEvidenceType::Topic, MemoryAgeLabel::OlderTopic),
+            (MemoryEvidenceType::Deep, MemoryAgeLabel::RecentWeeks),
+            (MemoryEvidenceType::Permanent, MemoryAgeLabel::Permanent),
+        ] {
+            let packet = MemoryEvidencePacket::v1(
+                memory_type,
+                Some("synthetic_topic".to_string()),
+                age_label,
+                MemoryConfidence::High,
+                vec!["evidence_ref_1".to_string()],
+                true,
+                false,
+                Some("Synthetic user-facing summary.".to_string()),
+                true,
+                MemoryRecallStyle::IRemember,
+                MemoryTrustLevel::InferredSummary,
+                MemoryPrivacyStatus::Allowed,
+                MemoryConflictStatus::Current,
+            )
+            .unwrap();
+            assert_eq!(packet.topic_label.as_deref(), Some("synthetic_topic"));
+            assert!(packet.continuation_allowed);
+        }
+    }
+
+    #[test]
+    fn ph1m_canonical_memory_recall_request_wraps_existing_ph1m_recall_request() {
+        let base = base_recall_request();
+        let canonical = MemoryRecallRequest::v1(
+            base.clone(),
+            Some("continue synthetic topic".to_string()),
+            Some("active_context_ref_1".to_string()),
+            Some("fresh".to_string()),
+            Some(MemoryAgeLabel::BeforeSleep),
+            Some("synthetic_topic".to_string()),
+            Some("speaker_scope_1".to_string()),
+            MemoryPrivacyStatus::Allowed,
+            Some("fresh_memory_continuation".to_string()),
+        )
+        .unwrap();
+
+        assert_eq!(canonical.as_ph1m_recall_request(), &base);
+        assert_eq!(
+            canonical.current_ph1x_context_ref.as_deref(),
+            Some("active_context_ref_1")
+        );
+
+        MemoryRecallRequest::from_ph1m_recall_request(base).unwrap();
+    }
+
+    #[test]
+    fn ph1m_canonical_fresh_memory_handoff_represents_post_sleep_followup_evidence() {
+        let handoff = FreshMemoryHandoff::v1(
+            "handoff_1".to_string(),
+            Some(SessionId(42)),
+            Some("thread_alpha".to_string()),
+            Some("turn_7".to_string()),
+            Some("synthetic_time_lookup".to_string()),
+            Some("answer_current_value_for_place".to_string()),
+            Some("time_lookup".to_string()),
+            vec!["city_alpha".to_string()],
+            Some("direct_answer".to_string()),
+            MemoryAgeLabel::BeforeSleep,
+            MemoryConfidence::High,
+            vec!["turn_ref_7".to_string()],
+            true,
+            FreshMemoryHandoffReason::SessionSleep,
+            Some(MonotonicTimeNs(30_000_000_000)),
+        )
+        .unwrap();
+
+        assert_eq!(handoff.last_tool_family.as_deref(), Some("time_lookup"));
+        assert!(handoff.continuation_allowed);
+    }
+
+    #[test]
+    fn ph1m_canonical_memory_continuation_decision_variants_validate() {
+        let continue_decision = MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::ContinueAutomatically,
+            MemoryConfidence::High,
+            ReasonCodeId(1),
+            Some("memory_packet_ref_1".to_string()),
+            Some("Continue the synthetic topic.".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            continue_decision.decision,
+            MemoryContinuationDecisionKind::ContinueAutomatically
+        );
+
+        MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::AskClarification,
+            MemoryConfidence::Med,
+            ReasonCodeId(2),
+            Some("memory_packet_ref_2".to_string()),
+            None,
+            Some("Which synthetic topic do you mean?".to_string()),
+        )
+        .unwrap();
+
+        MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::AnswerNormally,
+            MemoryConfidence::Low,
+            ReasonCodeId(3),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::NoMemoryMatch,
+            MemoryConfidence::Low,
+            ReasonCodeId(4),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert!(MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::BlockedByLowConfidence,
+            MemoryConfidence::Low,
+            ReasonCodeId(5),
+            None,
+            None,
+            None,
+        )
+        .is_ok());
     }
 }

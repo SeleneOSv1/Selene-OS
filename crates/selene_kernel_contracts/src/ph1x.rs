@@ -19,6 +19,405 @@ pub const PH1X_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 pub const PH1X_UNKNOWN_ACTIVE_SPEAKER_USER_ID: &str = "unknown";
 pub const PH1X_CLARIFY_QUESTION_MAX_CHARS: usize = 240;
 pub const PH1X_MAX_INTERRUPT_SNAPSHOT_AGE_NS: u64 = 5_000_000_000;
+pub const PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS: usize = 512;
+pub const PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS: usize = 128;
+pub const PH1X_ACTIVE_CONTEXT_MAX_ITEMS: usize = 32;
+pub const PH1X_ACTIVE_CONTEXT_CONFIDENCE_MAX: u16 = 10_000;
+
+fn validate_optional_context_text(
+    field: &'static str,
+    value: &Option<String>,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if let Some(value) = value {
+        if value.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "must not be empty when provided",
+            });
+        }
+        if value.len() > max_len {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "exceeds max length",
+            });
+        }
+        if value.chars().any(char::is_control) {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "must not contain control chars",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_context_text_list(
+    field: &'static str,
+    values: &[String],
+    max_items: usize,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    if values.len() > max_items {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max items",
+        });
+    }
+    for value in values {
+        if value.trim().is_empty() {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "must not contain empty entries",
+            });
+        }
+        if value.len() > max_len {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "entry exceeds max length",
+            });
+        }
+        if value.chars().any(char::is_control) {
+            return Err(ContractViolation::InvalidValue {
+                field,
+                reason: "entries must not contain control chars",
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_context_confidence(
+    field: &'static str,
+    confidence: u16,
+) -> Result<(), ContractViolation> {
+    if confidence > PH1X_ACTIVE_CONTEXT_CONFIDENCE_MAX {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must be <= 10000 basis points",
+        });
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum InteractionPosture {
+    Question,
+    Instruction,
+    Correction,
+    ThinkingOutLoud,
+    Frustration,
+    Testing,
+    Joking,
+    Continuation,
+    TopicSwitch,
+    MemoryRequest,
+    ActionRequest,
+    CasualNoAction,
+}
+
+impl Default for InteractionPosture {
+    fn default() -> Self {
+        Self::Question
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ConversationRhythm {
+    DirectAnswer,
+    TinyAcknowledgement,
+    OneQuestionClarification,
+    StructuredAnswer,
+    MemoryRecall,
+    RewriteOrModification,
+    ActionConfirmation,
+    SafeRefusal,
+    ProtectedFailClosed,
+    WaitOrNoAction,
+}
+
+impl Default for ConversationRhythm {
+    fn default() -> Self {
+        Self::DirectAnswer
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ContinuationType {
+    ContinueCurrentTopic,
+    ModifyPreviousOutput,
+    CorrectPreviousOutput,
+    AnswerNewTopic,
+    AskClarification,
+    HandOffToMemory,
+    NoActionRequired,
+}
+
+impl Default for ContinuationType {
+    fn default() -> Self {
+        Self::AnswerNewTopic
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResponseShape {
+    TinyAcknowledgement,
+    DirectAnswer,
+    OneQuestionClarification,
+    StructuredAnswer,
+    MemoryRecall,
+    RewriteOrModification,
+    ActionConfirmation,
+    SafeRefusal,
+    Warning,
+    WaitOrNoAction,
+}
+
+impl Default for ResponseShape {
+    fn default() -> Self {
+        Self::DirectAnswer
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AmbiguityLevel {
+    Low,
+    Medium,
+    High,
+}
+
+impl Default for AmbiguityLevel {
+    fn default() -> Self {
+        Self::Low
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProtectedRisk {
+    None,
+    Possible,
+    Protected,
+}
+
+impl Default for ProtectedRisk {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SuggestedNextEngine {
+    None,
+    Ph1M,
+    Ph1E,
+    Ph1Write,
+    ProtectedBoundary,
+}
+
+impl Default for SuggestedNextEngine {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HumanConversationDirective {
+    ContinueCurrentTopic,
+    ModifyPreviousOutput,
+    CorrectPreviousOutput,
+    AnswerNewQuestion,
+    AskClarification,
+    HandOffToMemory,
+    RouteToTool,
+    RouteToWrite,
+    FailClosedProtected,
+    WaitOrNoAction,
+}
+
+impl Default for HumanConversationDirective {
+    fn default() -> Self {
+        Self::AnswerNewQuestion
+    }
+}
+
+impl Validate for HumanConversationDirective {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActiveContextPacket {
+    pub schema_version: SchemaVersion,
+    pub active_topic: Option<String>,
+    pub active_intent: Option<String>,
+    pub interaction_posture: InteractionPosture,
+    pub conversation_rhythm: ConversationRhythm,
+    pub continuation_type: ContinuationType,
+    pub reference_target: Option<String>,
+    pub entity_focus: Vec<String>,
+    pub tool_family: Option<String>,
+    pub writing_artifact: Option<String>,
+    pub pending_slots: Vec<String>,
+    pub correction_target: Option<String>,
+    pub topic_stack: Vec<String>,
+    pub response_shape: ResponseShape,
+    /// Confidence in basis points, where 10000 means 100%.
+    pub confidence: u16,
+    pub ambiguity_level: AmbiguityLevel,
+    pub protected_risk: ProtectedRisk,
+    pub memory_handoff_needed: bool,
+    pub suggested_next_engine: SuggestedNextEngine,
+    pub evidence_refs: Vec<String>,
+}
+
+impl Default for ActiveContextPacket {
+    fn default() -> Self {
+        Self::empty_v1()
+    }
+}
+
+impl ActiveContextPacket {
+    pub fn empty_v1() -> Self {
+        Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            active_topic: None,
+            active_intent: None,
+            interaction_posture: InteractionPosture::default(),
+            conversation_rhythm: ConversationRhythm::default(),
+            continuation_type: ContinuationType::default(),
+            reference_target: None,
+            entity_focus: Vec::new(),
+            tool_family: None,
+            writing_artifact: None,
+            pending_slots: Vec::new(),
+            correction_target: None,
+            topic_stack: Vec::new(),
+            response_shape: ResponseShape::default(),
+            confidence: 0,
+            ambiguity_level: AmbiguityLevel::default(),
+            protected_risk: ProtectedRisk::default(),
+            memory_handoff_needed: false,
+            suggested_next_engine: SuggestedNextEngine::default(),
+            evidence_refs: Vec::new(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        active_topic: Option<String>,
+        active_intent: Option<String>,
+        interaction_posture: InteractionPosture,
+        conversation_rhythm: ConversationRhythm,
+        continuation_type: ContinuationType,
+        reference_target: Option<String>,
+        entity_focus: Vec<String>,
+        tool_family: Option<String>,
+        writing_artifact: Option<String>,
+        pending_slots: Vec<String>,
+        correction_target: Option<String>,
+        topic_stack: Vec<String>,
+        response_shape: ResponseShape,
+        confidence: u16,
+        ambiguity_level: AmbiguityLevel,
+        protected_risk: ProtectedRisk,
+        memory_handoff_needed: bool,
+        suggested_next_engine: SuggestedNextEngine,
+        evidence_refs: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        let packet = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            active_topic,
+            active_intent,
+            interaction_posture,
+            conversation_rhythm,
+            continuation_type,
+            reference_target,
+            entity_focus,
+            tool_family,
+            writing_artifact,
+            pending_slots,
+            correction_target,
+            topic_stack,
+            response_shape,
+            confidence,
+            ambiguity_level,
+            protected_risk,
+            memory_handoff_needed,
+            suggested_next_engine,
+            evidence_refs,
+        };
+        packet.validate()?;
+        Ok(packet)
+    }
+}
+
+impl Validate for ActiveContextPacket {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "active_context_packet.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        validate_optional_context_text(
+            "active_context_packet.active_topic",
+            &self.active_topic,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.active_intent",
+            &self.active_intent,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.reference_target",
+            &self.reference_target,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "active_context_packet.entity_focus",
+            &self.entity_focus,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.tool_family",
+            &self.tool_family,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.writing_artifact",
+            &self.writing_artifact,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "active_context_packet.pending_slots",
+            &self.pending_slots,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.correction_target",
+            &self.correction_target,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "active_context_packet.topic_stack",
+            &self.topic_stack,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_confidence("active_context_packet.confidence", self.confidence)?;
+        validate_context_text_list(
+            "active_context_packet.evidence_refs",
+            &self.evidence_refs,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DeliveryHint {
@@ -2361,6 +2760,22 @@ impl Validate for Ph1xDirective {
     }
 }
 
+impl From<&Ph1xDirective> for HumanConversationDirective {
+    fn from(directive: &Ph1xDirective) -> Self {
+        match directive {
+            Ph1xDirective::Confirm(_) | Ph1xDirective::Clarify(_) => Self::AskClarification,
+            Ph1xDirective::Respond(_) => Self::AnswerNewQuestion,
+            Ph1xDirective::Dispatch(dispatch) => match &dispatch.dispatch_request {
+                DispatchRequest::Tool(_) => Self::RouteToTool,
+                DispatchRequest::SimulationCandidate(_) | DispatchRequest::AccessStepUp(_) => {
+                    Self::FailClosedProtected
+                }
+            },
+            Ph1xDirective::Wait(_) => Self::WaitOrNoAction,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ph1xResponse {
     pub schema_version: SchemaVersion,
@@ -2498,6 +2913,69 @@ mod tests {
 
     fn id_text() -> IdentityContext {
         IdentityContext::TextUserId("user-1".to_string())
+    }
+
+    #[test]
+    fn ph1x_canonical_active_context_packet_default_and_typical_values_validate() {
+        let default_packet = ActiveContextPacket::default();
+        default_packet.validate().unwrap();
+        assert_eq!(
+            default_packet.continuation_type,
+            ContinuationType::AnswerNewTopic
+        );
+
+        let packet = ActiveContextPacket::v1(
+            Some("synthetic_planning_topic".to_string()),
+            Some("compare_location_value".to_string()),
+            InteractionPosture::Continuation,
+            ConversationRhythm::DirectAnswer,
+            ContinuationType::ContinueCurrentTopic,
+            Some("previous_location_slot".to_string()),
+            vec!["city_alpha".to_string()],
+            Some("time_lookup".to_string()),
+            None,
+            vec!["location".to_string()],
+            None,
+            vec!["trip_plan".to_string(), "time_check".to_string()],
+            ResponseShape::DirectAnswer,
+            9_100,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1E,
+            vec!["turn_ref_1".to_string()],
+        )
+        .unwrap();
+
+        assert_eq!(
+            packet.active_topic.as_deref(),
+            Some("synthetic_planning_topic")
+        );
+        assert_eq!(packet.entity_focus, vec!["city_alpha".to_string()]);
+        assert_eq!(packet.suggested_next_engine, SuggestedNextEngine::Ph1E);
+    }
+
+    #[test]
+    fn ph1x_canonical_human_conversation_directive_maps_existing_ph1x_directive() {
+        let wait =
+            Ph1xDirective::Wait(WaitDirective::v1(Some("waiting_for_user".to_string())).unwrap());
+        assert_eq!(
+            HumanConversationDirective::from(&wait),
+            HumanConversationDirective::WaitOrNoAction
+        );
+
+        let clarify = Ph1xDirective::Clarify(
+            ClarifyDirective::v1(
+                "Which synthetic topic should I continue?".to_string(),
+                vec!["topic_a".to_string(), "topic_b".to_string()],
+                vec![FieldKey::Task],
+            )
+            .unwrap(),
+        );
+        assert_eq!(
+            HumanConversationDirective::from(&clarify),
+            HumanConversationDirective::AskClarification
+        );
     }
 
     #[test]
