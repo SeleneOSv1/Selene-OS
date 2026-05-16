@@ -3587,6 +3587,11 @@ mod tests {
         SpeakerId, SpeakerLabel, UserId,
     };
     use crate::ph1d::{PolicyContextRef, SafetyTier};
+    use crate::ph1x::{
+        ActiveContextPacket, AmbiguityLevel, ContinuationType, ConversationRhythm,
+        HumanConversationDirective, InteractionPosture, ProtectedRisk, ResponseShape,
+        SuggestedNextEngine,
+    };
 
     fn policy_ok() -> PolicyContextRef {
         PolicyContextRef::v1(false, false, SafetyTier::Standard)
@@ -3678,6 +3683,14 @@ mod tests {
         .unwrap()
     }
 
+    fn assert_no_desktop_or_adapter_refs(refs: &[String]) {
+        for reference in refs {
+            let lower = reference.to_ascii_lowercase();
+            assert!(!lower.contains("desktop"));
+            assert!(!lower.contains("adapter"));
+        }
+    }
+
     #[test]
     fn ph1m_canonical_memory_evidence_packet_carries_memory_styles() {
         for (memory_type, age_label) in [
@@ -3706,6 +3719,39 @@ mod tests {
             assert_eq!(packet.topic_label.as_deref(), Some("synthetic_topic"));
             assert!(packet.continuation_allowed);
         }
+    }
+
+    #[test]
+    fn ph1m_canonical_memory_evidence_packet_carries_required_metadata() {
+        let packet = MemoryEvidencePacket::v1(
+            MemoryEvidenceType::Topic,
+            Some("human memory design".to_string()),
+            MemoryAgeLabel::EarlierToday,
+            MemoryConfidence::High,
+            vec![
+                "turn:user:memory_design".to_string(),
+                "turn:assistant:memory_summary".to_string(),
+            ],
+            true,
+            false,
+            Some("We were shaping Selene's human memory design.".to_string()),
+            true,
+            MemoryRecallStyle::WeSpokeAbout,
+            MemoryTrustLevel::VerbatimUserInstruction,
+            MemoryPrivacyStatus::Allowed,
+            MemoryConflictStatus::Current,
+        )
+        .unwrap();
+
+        assert_eq!(packet.memory_type, MemoryEvidenceType::Topic);
+        assert_eq!(packet.confidence, MemoryConfidence::High);
+        assert_eq!(
+            packet.trust_level,
+            MemoryTrustLevel::VerbatimUserInstruction
+        );
+        assert_eq!(packet.privacy_status, MemoryPrivacyStatus::Allowed);
+        assert!(packet.active_context_allowed);
+        assert_eq!(packet.evidence_refs.len(), 2);
     }
 
     #[test]
@@ -3813,5 +3859,322 @@ mod tests {
             None,
         )
         .is_ok());
+
+        assert!(MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::BlockedByPrivacy,
+            MemoryConfidence::Low,
+            ReasonCodeId(6),
+            Some("memory_packet_ref_6".to_string()),
+            Some("Memory use is blocked by privacy policy.".to_string()),
+            None,
+        )
+        .is_ok());
+
+        assert!(MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::BlockedByStaleness,
+            MemoryConfidence::Low,
+            ReasonCodeId(7),
+            Some("memory_packet_ref_7".to_string()),
+            Some("Memory is too stale to continue automatically.".to_string()),
+            None,
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn ph1m_canonical_human_memory_dry_run_new_york_sleep_wake_sydney_chain() {
+        let prior_user_turn_ref = "turn:user:new_york_time".to_string();
+        let prior_answer_ref = "turn:assistant:new_york_time_answer".to_string();
+        let sleep_boundary_ref = "boundary:ph1l:sleep_after_idle".to_string();
+
+        let handoff = FreshMemoryHandoff::v1(
+            "handoff:new_york_time_before_sleep".to_string(),
+            Some(SessionId(64)),
+            Some("thread:stage6_6_contract_dry_run".to_string()),
+            Some(prior_user_turn_ref.clone()),
+            Some("New York time question".to_string()),
+            Some("answer current time for location".to_string()),
+            Some("time".to_string()),
+            vec!["New York".to_string()],
+            Some("time answer".to_string()),
+            MemoryAgeLabel::BeforeSleep,
+            MemoryConfidence::High,
+            vec![
+                prior_user_turn_ref.clone(),
+                prior_answer_ref.clone(),
+                sleep_boundary_ref.clone(),
+            ],
+            true,
+            FreshMemoryHandoffReason::SessionSleep,
+            Some(MonotonicTimeNs(30_000_000_000)),
+        )
+        .unwrap();
+        assert_eq!(handoff.last_tool_family.as_deref(), Some("time"));
+        assert_eq!(handoff.last_entity_focus, vec!["New York".to_string()]);
+        assert!(handoff.continuation_allowed);
+        assert_no_desktop_or_adapter_refs(&handoff.evidence_refs);
+
+        let memory_evidence = MemoryEvidencePacket::v1(
+            MemoryEvidenceType::Fresh,
+            Some("New York time question".to_string()),
+            MemoryAgeLabel::BeforeSleep,
+            MemoryConfidence::High,
+            vec![
+                "memory:fresh:new_york_time_before_sleep".to_string(),
+                sleep_boundary_ref,
+            ],
+            true,
+            false,
+            Some("We were just checking the time in New York.".to_string()),
+            true,
+            MemoryRecallStyle::IRemember,
+            MemoryTrustLevel::InferredSummary,
+            MemoryPrivacyStatus::Allowed,
+            MemoryConflictStatus::Current,
+        )
+        .unwrap();
+        assert_eq!(memory_evidence.memory_type, MemoryEvidenceType::Fresh);
+        assert!(memory_evidence.active_context_allowed);
+        assert_no_desktop_or_adapter_refs(&memory_evidence.evidence_refs);
+
+        let continuation = MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::ContinueAutomatically,
+            MemoryConfidence::High,
+            ReasonCodeId(101),
+            Some("memory:evidence:fresh_new_york_time".to_string()),
+            Some("Continue the fresh time question with the new location.".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            continuation.decision,
+            MemoryContinuationDecisionKind::ContinueAutomatically
+        );
+        assert!(continuation.evidence_packet_ref.is_some());
+
+        let active_context = ActiveContextPacket::v1(
+            Some("time lookup".to_string()),
+            Some("same question new location".to_string()),
+            InteractionPosture::Continuation,
+            ConversationRhythm::DirectAnswer,
+            ContinuationType::ContinueCurrentTopic,
+            Some("New York time question".to_string()),
+            vec!["Sydney".to_string()],
+            Some("time".to_string()),
+            None,
+            vec!["location".to_string()],
+            None,
+            vec!["time lookup".to_string()],
+            ResponseShape::DirectAnswer,
+            9_600,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1E,
+            vec!["memory:evidence:fresh_new_york_time".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            active_context.continuation_type,
+            ContinuationType::ContinueCurrentTopic
+        );
+        assert_eq!(active_context.entity_focus, vec!["Sydney".to_string()]);
+        assert_eq!(active_context.tool_family.as_deref(), Some("time"));
+        assert!(!active_context.memory_handoff_needed);
+        assert_no_desktop_or_adapter_refs(&active_context.evidence_refs);
+
+        let directives = [
+            HumanConversationDirective::ContinueCurrentTopic,
+            HumanConversationDirective::RouteToTool,
+        ];
+        assert_eq!(
+            directives[0],
+            HumanConversationDirective::ContinueCurrentTopic
+        );
+        assert_eq!(directives[1], HumanConversationDirective::RouteToTool);
+    }
+
+    #[test]
+    fn ph1m_canonical_negative_dry_runs_do_not_let_old_context_steal_new_turns() {
+        let name_context = ActiveContextPacket::v1(
+            Some("identity question".to_string()),
+            Some("ask Selene name".to_string()),
+            InteractionPosture::TopicSwitch,
+            ConversationRhythm::DirectAnswer,
+            ContinuationType::AnswerNewTopic,
+            None,
+            vec![],
+            None,
+            None,
+            vec![],
+            None,
+            vec!["time lookup".to_string(), "identity question".to_string()],
+            ResponseShape::DirectAnswer,
+            9_300,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1Write,
+            vec!["turn:user:what_is_your_name".to_string()],
+        )
+        .unwrap();
+        let normal_decision = MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::AnswerNormally,
+            MemoryConfidence::Low,
+            ReasonCodeId(201),
+            None,
+            Some("Answer as a new normal question.".to_string()),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            name_context.continuation_type,
+            ContinuationType::AnswerNewTopic
+        );
+        assert_eq!(
+            HumanConversationDirective::AnswerNewQuestion,
+            HumanConversationDirective::default()
+        );
+        assert_ne!(
+            normal_decision.decision,
+            MemoryContinuationDecisionKind::ContinueAutomatically
+        );
+
+        let vague_sydney = MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::AskClarification,
+            MemoryConfidence::Low,
+            ReasonCodeId(202),
+            Some("memory:evidence:prior_time_question".to_string()),
+            None,
+            Some("Do you mean the time question, or something else about Sydney?".to_string()),
+        )
+        .unwrap();
+        assert_eq!(
+            vague_sydney.decision,
+            MemoryContinuationDecisionKind::AskClarification
+        );
+        assert_ne!(
+            vague_sydney.decision,
+            MemoryContinuationDecisionKind::ContinueAutomatically
+        );
+
+        let protected_context = ActiveContextPacket::v1(
+            Some("protected salary change".to_string()),
+            Some("confirm protected execution".to_string()),
+            InteractionPosture::ActionRequest,
+            ConversationRhythm::ProtectedFailClosed,
+            ContinuationType::CorrectPreviousOutput,
+            Some("increase salary request".to_string()),
+            vec!["protected_subject_alpha".to_string()],
+            None,
+            None,
+            vec!["authority".to_string(), "simulation".to_string()],
+            Some("prior protected request".to_string()),
+            vec!["protected salary change".to_string()],
+            ResponseShape::SafeRefusal,
+            9_800,
+            AmbiguityLevel::Medium,
+            ProtectedRisk::Protected,
+            false,
+            SuggestedNextEngine::ProtectedBoundary,
+            vec!["turn:user:protected_salary_request".to_string()],
+        )
+        .unwrap();
+        assert_eq!(protected_context.protected_risk, ProtectedRisk::Protected);
+        assert_eq!(
+            HumanConversationDirective::FailClosedProtected,
+            HumanConversationDirective::FailClosedProtected
+        );
+    }
+
+    #[test]
+    fn ph1m_canonical_stage7_ref_shapes_are_available() {
+        let active_context = ActiveContextPacket::v1(
+            Some("time lookup".to_string()),
+            Some("same question new location".to_string()),
+            InteractionPosture::Continuation,
+            ConversationRhythm::DirectAnswer,
+            ContinuationType::ContinueCurrentTopic,
+            Some("previous time question".to_string()),
+            vec!["Sydney".to_string()],
+            Some("time".to_string()),
+            None,
+            vec!["location".to_string()],
+            None,
+            vec!["time lookup".to_string()],
+            ResponseShape::DirectAnswer,
+            9_100,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1E,
+            vec!["stage7:active_context_ref".to_string()],
+        )
+        .unwrap();
+        assert!(!active_context.evidence_refs.is_empty());
+
+        let memory_evidence = MemoryEvidencePacket::v1(
+            MemoryEvidenceType::Fresh,
+            Some("time lookup".to_string()),
+            MemoryAgeLabel::BeforeSleep,
+            MemoryConfidence::High,
+            vec!["stage7:memory_evidence_ref".to_string()],
+            true,
+            false,
+            Some("Fresh time lookup evidence.".to_string()),
+            true,
+            MemoryRecallStyle::IRemember,
+            MemoryTrustLevel::InferredSummary,
+            MemoryPrivacyStatus::Allowed,
+            MemoryConflictStatus::Current,
+        )
+        .unwrap();
+        assert!(!memory_evidence.evidence_refs.is_empty());
+
+        let handoff = FreshMemoryHandoff::v1(
+            "stage7_handoff_ref".to_string(),
+            Some(SessionId(7)),
+            Some("stage7:thread_ref".to_string()),
+            Some("stage7:turn_ref".to_string()),
+            Some("time lookup".to_string()),
+            Some("answer time".to_string()),
+            Some("time".to_string()),
+            vec!["Sydney".to_string()],
+            Some("time answer".to_string()),
+            MemoryAgeLabel::BeforeSleep,
+            MemoryConfidence::High,
+            vec!["stage7:boundary_ref".to_string()],
+            true,
+            FreshMemoryHandoffReason::SessionSleep,
+            Some(MonotonicTimeNs(30_000_000_000)),
+        )
+        .unwrap();
+        assert!(!handoff.evidence_refs.is_empty());
+        assert!(handoff.source_turn_ref.is_some());
+
+        let continuation = MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::ContinueAutomatically,
+            MemoryConfidence::High,
+            ReasonCodeId(301),
+            Some("stage7:memory_evidence_packet_ref".to_string()),
+            Some("Continue from fresh memory.".to_string()),
+            None,
+        )
+        .unwrap();
+        assert!(continuation.evidence_packet_ref.is_some());
+
+        let recall = MemoryRecallRequest::v1(
+            base_recall_request(),
+            Some("what about Sydney".to_string()),
+            Some("stage7:active_context_ref".to_string()),
+            Some("fresh".to_string()),
+            Some(MemoryAgeLabel::BeforeSleep),
+            Some("time lookup".to_string()),
+            Some("stage7:speaker_scope".to_string()),
+            MemoryPrivacyStatus::Allowed,
+            Some("fresh continuation dry run".to_string()),
+        )
+        .unwrap();
+        assert!(recall.current_ph1x_context_ref.is_some());
     }
 }

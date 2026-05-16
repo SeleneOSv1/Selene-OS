@@ -140,14 +140,27 @@ No conflicting canonical type names existed before this build.
 
 Retained active compatibility paths:
 
-- `Ph1xDirective` for current PH1.X execution.
-- `ThreadState` and `LastTurnContext` for current active-thread state.
-- `Ph1mRecallRequest` for current PH1.M recall.
-- Adapter deterministic active context and recent archive recall shortcuts.
+- RETAINED_COMPATIBILITY_PATH: `Ph1xDirective` for current PH1.X execution.
+- RETAINED_COMPATIBILITY_PATH: `ThreadState` and `LastTurnContext` for current active-thread state.
+- RETAINED_COMPATIBILITY_PATH: `Ph1mRecallRequest` for current PH1.M recall.
+- RETAINED_COMPATIBILITY_PATH: adapter deterministic active context and recent archive recall shortcuts.
 
 Future cleanup:
 
 After Stage 7 stores canonical refs and later PH1.X/PH1.M builds wire behavior through these contracts, retained shortcut paths should be retired under the Clean Replacement / No Dead Legacy Path Law.
+
+## Conflict / Duplication Gate
+
+| Target contract | Existing closest type | Action | Duplicate/conflict found | Obsolete path removed | Retained path and proof |
+| --- | --- | --- | --- | --- | --- |
+| `ActiveContextPacket` | `ThreadState`, `LastTurnContext` | Added canonical evidence packet; existing state remains behavior state | No duplicate canonical type | No | RETAINED_COMPATIBILITY_PATH: current thread state remains active until PH1.X emits canonical packets |
+| `HumanConversationDirective` | `Ph1xDirective` | Added canonical evidence directive plus `From<&Ph1xDirective>` mapping | No duplicate canonical type | No | RETAINED_COMPATIBILITY_PATH: `Ph1xDirective` remains current execution contract; mapping test proves compatibility |
+| `MemoryEvidencePacket` | `MemoryCandidate`, `MemoryProvenance`, `MemoryArchiveExcerpt`, `MemoryRecentArchiveMatch` | Added canonical remembered-context evidence packet | No duplicate canonical type | No | RETAINED_COMPATIBILITY_PATH: existing memory/archive result contracts remain active until PH1.M runtime emits evidence packets |
+| `MemoryRecallRequest` | `Ph1mRecallRequest` | Added wrapper around existing request | No duplicate recall engine | No | RETAINED_COMPATIBILITY_PATH: `Ph1mRecallRequest` remains active recall owner; wrapper conversion test proves compatibility |
+| `FreshMemoryHandoff` | recent archive recall / resume select concepts | Added canonical PH1.L/PH1.X/PH1.M boundary handoff packet | No duplicate canonical type | No | RETAINED_COMPATIBILITY_PATH: existing resume/session paths remain active until Stage 8 wires fresh memory behavior |
+| `MemoryContinuationDecision` | `MemoryResumeAction`, `Ph1mResumeSelectResponse` | Added canonical PH1.M continuation decision packet | No duplicate canonical type | No | RETAINED_COMPATIBILITY_PATH: existing resume selection remains active compatibility; decision variant tests prove canonical coverage |
+
+No Desktop code imports or creates these packets. Adapter can later transport refs, but it is not the canonical PH1.X or PH1.M owner.
 
 ## Storage And Schema
 
@@ -182,11 +195,44 @@ Stage 7 can preserve/store refs for:
 Added focused contract tests:
 
 - `ph1x_canonical_active_context_packet_default_and_typical_values_validate`
+- `ph1x_canonical_active_context_packet_represents_required_context_shapes`
 - `ph1x_canonical_human_conversation_directive_maps_existing_ph1x_directive`
+- `ph1x_canonical_human_conversation_directive_covers_all_variants`
 - `ph1m_canonical_memory_evidence_packet_carries_memory_styles`
+- `ph1m_canonical_memory_evidence_packet_carries_required_metadata`
 - `ph1m_canonical_memory_recall_request_wraps_existing_ph1m_recall_request`
 - `ph1m_canonical_fresh_memory_handoff_represents_post_sleep_followup_evidence`
 - `ph1m_canonical_memory_continuation_decision_variants_validate`
+- `ph1m_canonical_human_memory_dry_run_new_york_sleep_wake_sydney_chain`
+- `ph1m_canonical_negative_dry_runs_do_not_let_old_context_steal_new_turns`
+- `ph1m_canonical_stage7_ref_shapes_are_available`
+
+The current `ph1x.rs`/`ph1m.rs` contracts follow the existing owner-file derive style. They do not add serde derives in this pass because shared nested IDs and compatibility types in these owners are not uniformly serde contracts yet. Stage 7 can still reference the stable evidence/ref fields now present on the canonical packets.
+
+## Human-Memory Dry-Run Proof
+
+Contract-level dry-run added:
+
+1. Prior user turn ref represents: `What time is it in New York?`
+2. Prior assistant answer ref represents Selene's runtime answer.
+3. PH1.L sleep boundary ref is represented as `boundary:ph1l:sleep_after_idle`.
+4. `FreshMemoryHandoff` carries last topic, last intent, last tool family, last entity focus, last answer type, freshness label, confidence, evidence refs, continuation permission, and expiry metadata.
+5. User wakes and says: `What about Sydney?`
+6. `MemoryEvidencePacket` carries fresh memory evidence with human-facing summary and no session-search language.
+7. `MemoryContinuationDecision` is `ContinueAutomatically` with high confidence and evidence packet ref.
+8. `ActiveContextPacket` resolves the continuation as same time question / new location with entity focus `Sydney`.
+9. `HumanConversationDirective` can represent both `ContinueCurrentTopic` and `RouteToTool`.
+
+This proof does not execute PH1.E, does not alter runtime behavior, does not involve Desktop, and does not claim Stage 8 live memory behavior works yet.
+
+## Negative Dry-Run Proof
+
+Negative contract fixtures added:
+
+- Prior time context plus `What is your name?` becomes `AnswerNewTopic` / `AnswerNewQuestion`, not memory continuation.
+- Prior time context plus vague `Sydney` after sleep is represented as `AskClarification` with low confidence, not blind continuation.
+- Protected-risk follow-up context sets `ProtectedRisk::Protected` and can produce `FailClosedProtected` as a directive, without execution authority.
+- The dry-run refs are contract/PH1 evidence refs only; they intentionally do not contain Desktop or adapter-owned evidence.
 
 Validation completed:
 

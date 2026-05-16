@@ -2956,6 +2956,155 @@ mod tests {
     }
 
     #[test]
+    fn ph1x_canonical_active_context_packet_represents_required_context_shapes() {
+        let time_followup = ActiveContextPacket::v1(
+            Some("time lookup".to_string()),
+            Some("same question new location".to_string()),
+            InteractionPosture::Continuation,
+            ConversationRhythm::DirectAnswer,
+            ContinuationType::ContinueCurrentTopic,
+            Some("previous time question".to_string()),
+            vec!["Sydney".to_string()],
+            Some("time".to_string()),
+            None,
+            vec!["location".to_string()],
+            None,
+            vec!["time lookup".to_string()],
+            ResponseShape::DirectAnswer,
+            9_500,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1E,
+            vec!["turn:user:new_york_time".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            time_followup.continuation_type,
+            ContinuationType::ContinueCurrentTopic
+        );
+        assert_eq!(time_followup.tool_family.as_deref(), Some("time"));
+
+        let writing_modify = ActiveContextPacket::v1(
+            Some("draft rewrite".to_string()),
+            Some("make previous output shorter".to_string()),
+            InteractionPosture::Instruction,
+            ConversationRhythm::RewriteOrModification,
+            ContinuationType::ModifyPreviousOutput,
+            Some("previous draft".to_string()),
+            vec!["draft_alpha".to_string()],
+            None,
+            Some("short story draft".to_string()),
+            vec![],
+            None,
+            vec!["draft rewrite".to_string()],
+            ResponseShape::RewriteOrModification,
+            9_000,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1Write,
+            vec!["turn:assistant:draft_alpha".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            writing_modify.continuation_type,
+            ContinuationType::ModifyPreviousOutput
+        );
+        assert_eq!(
+            writing_modify.writing_artifact.as_deref(),
+            Some("short story draft")
+        );
+
+        let topic_switch = ActiveContextPacket::v1(
+            Some("identity question".to_string()),
+            Some("ask name".to_string()),
+            InteractionPosture::TopicSwitch,
+            ConversationRhythm::DirectAnswer,
+            ContinuationType::AnswerNewTopic,
+            None,
+            vec![],
+            None,
+            None,
+            vec![],
+            None,
+            vec!["time lookup".to_string(), "identity question".to_string()],
+            ResponseShape::DirectAnswer,
+            9_200,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1Write,
+            vec!["turn:user:identity_question".to_string()],
+        )
+        .unwrap();
+        assert_eq!(
+            topic_switch.interaction_posture,
+            InteractionPosture::TopicSwitch
+        );
+        assert_eq!(
+            topic_switch.continuation_type,
+            ContinuationType::AnswerNewTopic
+        );
+
+        let protected_risk = ActiveContextPacket::v1(
+            Some("protected action confirmation".to_string()),
+            Some("execute sensitive change".to_string()),
+            InteractionPosture::ActionRequest,
+            ConversationRhythm::ProtectedFailClosed,
+            ContinuationType::CorrectPreviousOutput,
+            Some("prior protected request".to_string()),
+            vec!["protected_subject_alpha".to_string()],
+            None,
+            None,
+            vec!["authority".to_string(), "simulation".to_string()],
+            Some("salary change request".to_string()),
+            vec!["protected action confirmation".to_string()],
+            ResponseShape::SafeRefusal,
+            9_700,
+            AmbiguityLevel::Medium,
+            ProtectedRisk::Protected,
+            false,
+            SuggestedNextEngine::ProtectedBoundary,
+            vec!["turn:user:protected_request".to_string()],
+        )
+        .unwrap();
+        assert_eq!(protected_risk.protected_risk, ProtectedRisk::Protected);
+        assert_eq!(
+            protected_risk.suggested_next_engine,
+            SuggestedNextEngine::ProtectedBoundary
+        );
+
+        let memory_handoff = ActiveContextPacket::v1(
+            Some("fresh memory continuation".to_string()),
+            Some("resolve after wake".to_string()),
+            InteractionPosture::MemoryRequest,
+            ConversationRhythm::MemoryRecall,
+            ContinuationType::HandOffToMemory,
+            Some("fresh pre-sleep topic".to_string()),
+            vec!["Sydney".to_string()],
+            Some("time".to_string()),
+            None,
+            vec!["fresh_memory".to_string()],
+            None,
+            vec!["time lookup".to_string()],
+            ResponseShape::MemoryRecall,
+            8_400,
+            AmbiguityLevel::Medium,
+            ProtectedRisk::None,
+            true,
+            SuggestedNextEngine::Ph1M,
+            vec!["boundary:ph1l:sleep".to_string()],
+        )
+        .unwrap();
+        assert!(memory_handoff.memory_handoff_needed);
+        assert_eq!(
+            memory_handoff.suggested_next_engine,
+            SuggestedNextEngine::Ph1M
+        );
+    }
+
+    #[test]
     fn ph1x_canonical_human_conversation_directive_maps_existing_ph1x_directive() {
         let wait =
             Ph1xDirective::Wait(WaitDirective::v1(Some("waiting_for_user".to_string())).unwrap());
@@ -2975,6 +3124,30 @@ mod tests {
         assert_eq!(
             HumanConversationDirective::from(&clarify),
             HumanConversationDirective::AskClarification
+        );
+    }
+
+    #[test]
+    fn ph1x_canonical_human_conversation_directive_covers_all_variants() {
+        let variants = [
+            HumanConversationDirective::ContinueCurrentTopic,
+            HumanConversationDirective::ModifyPreviousOutput,
+            HumanConversationDirective::CorrectPreviousOutput,
+            HumanConversationDirective::AnswerNewQuestion,
+            HumanConversationDirective::AskClarification,
+            HumanConversationDirective::HandOffToMemory,
+            HumanConversationDirective::RouteToTool,
+            HumanConversationDirective::RouteToWrite,
+            HumanConversationDirective::FailClosedProtected,
+            HumanConversationDirective::WaitOrNoAction,
+        ];
+
+        for directive in variants {
+            directive.validate().unwrap();
+        }
+        assert_eq!(
+            HumanConversationDirective::default(),
+            HumanConversationDirective::AnswerNewQuestion
         );
     }
 
