@@ -90,6 +90,23 @@ fn store_with_identity_device_session() -> Ph1fStore {
 }
 
 #[test]
+fn stage7_internal_history_migration_has_speaker_and_memory_evidence_columns() {
+    let sql = include_str!("../../migrations/0026_stage7_internal_history_evidence.sql");
+
+    assert!(sql.contains("CREATE TABLE IF NOT EXISTS internal_history_evidence_ledger"));
+    assert!(sql.contains("voice_identity_assertion_ref"));
+    assert!(sql.contains("typed_actor_identity_ref"));
+    assert!(sql.contains("input_evidence JSONB NOT NULL"));
+    assert!(sql.contains("response_evidence JSONB NOT NULL"));
+    assert!(sql.contains("ph1x_evidence JSONB NOT NULL"));
+    assert!(sql.contains("ph1m_evidence JSONB NOT NULL"));
+    assert!(sql.contains("source_refs JSONB NOT NULL"));
+    assert!(sql.contains("multimodal_refs JSONB NOT NULL"));
+    assert!(sql.contains("protected_execution_refs JSONB NOT NULL"));
+    assert!(sql.contains("replay_integrity_refs JSONB NOT NULL"));
+}
+
+#[test]
 fn stage3a_consent_state_registry_is_append_only_idempotent_and_revocation_aware() {
     let mut s = store_with_identity_device_session();
     let grant = ConsentStatePacket::v1(

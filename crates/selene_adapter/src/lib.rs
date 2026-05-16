@@ -9684,6 +9684,10 @@ impl AdapterRuntime {
                 user_text_final.as_deref(),
                 &execution_outcome,
             );
+            let has_committed_user_final = user_text_final
+                .as_deref()
+                .map(|text| !text.trim().is_empty())
+                .unwrap_or(false);
             self.record_transcript_updates(
                 &mut store,
                 now,
@@ -9697,7 +9701,20 @@ impl AdapterRuntime {
                 selene_text_partial,
                 selene_text_final
                     .or(typed_public_deterministic_answer_text)
-                    .or(ph1d_public_answer_text),
+                    .or(ph1d_public_answer_text)
+                    .or_else(|| {
+                        if has_committed_user_final {
+                            execution_outcome.response_text.as_ref().and_then(|text| {
+                                if text.trim().is_empty() {
+                                    None
+                                } else {
+                                    Some(text.clone())
+                                }
+                            })
+                        } else {
+                            None
+                        }
+                    }),
                 update_recent_archive_digest,
             )
             .map_err(post_session_error)?;
@@ -25065,6 +25082,9 @@ mod tests {
         VOICE_ID_ENROLL_COMPLETE_COMMIT, VOICE_ID_ENROLL_SAMPLE_COMMIT, VOICE_ID_ENROLL_START_DRAFT,
     };
     use selene_kernel_contracts::ph1emocore::EMO_SIM_001;
+    use selene_kernel_contracts::ph1f::{
+        InternalHistoryEventKind, InternalHistoryModality, TranscriptEvidenceStatus,
+    };
     use selene_kernel_contracts::ph1link::{
         InviteeType, LINK_INVITE_DRAFT_UPDATE_COMMIT, LINK_INVITE_OPEN_ACTIVATE_COMMIT,
     };
@@ -25914,6 +25934,48 @@ mod tests {
             !store.conversation_ledger().is_empty(),
             "new session must preserve timeline/archive rows"
         );
+    }
+
+    #[test]
+    fn stage7_adapter_committed_turn_bridge_files_internal_history_evidence() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_request();
+        request.app_platform = "DESKTOP".to_string();
+        request.correlation_id = 7_007_001;
+        request.turn_id = 7_007_001;
+        request.device_turn_sequence = Some(7_007_001);
+        request.now_ns = Some(7_007_001_000_000);
+        request.thread_key = Some("stage7-adapter-immutable-history".to_string());
+        request.user_text_final = Some("what is the time in New York".to_string());
+
+        let out = runtime
+            .run_voice_turn(request)
+            .expect("adapter voice turn should complete");
+        assert_eq!(out.status, "ok", "{out:?}");
+
+        let store = runtime.store.lock().expect("store lock should succeed");
+        let conversation_rows = store.conversation_ledger().iter().collect::<Vec<_>>();
+        assert!(
+            !conversation_rows.is_empty(),
+            "adapter committed turn bridge should append conversation rows"
+        );
+        let history_rows = store
+            .internal_history_evidence_ledger()
+            .iter()
+            .collect::<Vec<_>>();
+        assert!(
+            history_rows.len() >= conversation_rows.len(),
+            "each committed conversation row should have immutable history evidence"
+        );
+        assert!(history_rows.iter().any(|row| {
+            row.event_kind == InternalHistoryEventKind::CommittedTurn
+                && row.modality == InternalHistoryModality::Voice
+                && row.input.ph1c_status == TranscriptEvidenceStatus::Accepted
+        }));
+        assert!(history_rows.iter().any(|row| {
+            row.event_kind == InternalHistoryEventKind::CommittedTurn
+                && row.response.final_response_text_hash.is_some()
+        }));
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {

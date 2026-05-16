@@ -28,6 +28,7 @@ use selene_kernel_contracts::ph1ecm::{
 };
 use selene_kernel_contracts::ph1f::{
     ConversationSource, ConversationTurnId, ConversationTurnInput, ConversationTurnRecord,
+    InternalHistoryEventId, InternalHistoryEvidenceInput, InternalHistoryEvidenceRecord,
 };
 use selene_kernel_contracts::ph1j::{
     AuditEvent, AuditEventId, AuditEventInput, BenchmarkResultPacket, BenchmarkTargetPacket,
@@ -126,6 +127,11 @@ pub trait Ph1fFoundationRepo {
     fn memory_ledger_rows(&self) -> &[MemoryLedgerRow];
     fn memory_current_rows(&self) -> &BTreeMap<(UserId, MemoryKey), MemoryCurrentRecord>;
     fn conversation_rows(&self) -> &[ConversationTurnRecord];
+    fn append_internal_history_evidence_row(
+        &mut self,
+        input: InternalHistoryEvidenceInput,
+    ) -> Result<InternalHistoryEventId, StorageError>;
+    fn internal_history_evidence_rows(&self) -> &[InternalHistoryEvidenceRecord];
     fn rebuild_memory_current_rows(&mut self);
 }
 
@@ -2135,6 +2141,17 @@ impl Ph1fFoundationRepo for Ph1fStore {
 
     fn conversation_rows(&self) -> &[ConversationTurnRecord] {
         self.conversation_ledger()
+    }
+
+    fn append_internal_history_evidence_row(
+        &mut self,
+        input: InternalHistoryEvidenceInput,
+    ) -> Result<InternalHistoryEventId, StorageError> {
+        self.append_internal_history_evidence(input)
+    }
+
+    fn internal_history_evidence_rows(&self) -> &[InternalHistoryEvidenceRecord] {
+        self.internal_history_evidence_ledger()
     }
 
     fn rebuild_memory_current_rows(&mut self) {

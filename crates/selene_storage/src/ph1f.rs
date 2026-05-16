@@ -40,7 +40,8 @@ use selene_kernel_contracts::ph1ecm::{
 };
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnId, ConversationTurnInput,
-    ConversationTurnRecord, PrivacyScope,
+    ConversationTurnRecord, InternalHistoryEventId, InternalHistoryEvidenceInput,
+    InternalHistoryEvidenceRecord, PrivacyScope,
 };
 use selene_kernel_contracts::ph1feedback::{
     classify_feedback_path, FeedbackEventType, FeedbackPathType,
@@ -1514,6 +1515,7 @@ pub struct Ph1fStore {
     memory_retention_idempotency_index: BTreeMap<(UserId, String), MonotonicTimeNs>,
 
     conversation_ledger: Vec<ConversationTurnRecord>,
+    internal_history_evidence_ledger: Vec<InternalHistoryEvidenceRecord>,
     ph1x_thread_state_ledger: Vec<Ph1xThreadStateLedgerRow>,
     ph1x_thread_state_current: BTreeMap<(UserId, String), Ph1xThreadStateCurrentRecord>,
     // Idempotency: (user_id, thread_key, idempotency_key) -> ph1x_thread_state_event_id
@@ -2016,6 +2018,7 @@ pub struct Ph1fStore {
     next_builder_release_state_row_id: u64,
     next_builder_post_deploy_judge_result_row_id: u64,
     next_conversation_turn_id: u64,
+    next_internal_history_event_id: u64,
     next_audit_event_id: u64,
     next_proof_event_id: u64,
     next_position_lifecycle_event_id: u64,
@@ -2048,6 +2051,10 @@ pub struct Ph1fStore {
 
     // Idempotency detection for conversation writes: (correlation_id, key) -> conversation_turn_id.
     conversation_idempotency_index: BTreeMap<(CorrelationId, String), ConversationTurnId>,
+
+    // Idempotency detection for immutable internal-history evidence:
+    // (correlation_id, key) -> internal_history_event_id.
+    internal_history_idempotency_index: BTreeMap<(CorrelationId, String), InternalHistoryEventId>,
 
     // Idempotency detection for audit emissions (canonical scope):
     // (tenant_id, work_order_id, idempotency_key) -> event_id.
@@ -3752,6 +3759,7 @@ impl Ph1fStore {
             memory_retention_preferences: BTreeMap::new(),
             memory_retention_idempotency_index: BTreeMap::new(),
             conversation_ledger: Vec::new(),
+            internal_history_evidence_ledger: Vec::new(),
             ph1x_thread_state_ledger: Vec::new(),
             ph1x_thread_state_current: BTreeMap::new(),
             ph1x_thread_state_idempotency_index: BTreeMap::new(),
@@ -4003,6 +4011,7 @@ impl Ph1fStore {
             next_builder_release_state_row_id: 1,
             next_builder_post_deploy_judge_result_row_id: 1,
             next_conversation_turn_id: 1,
+            next_internal_history_event_id: 1,
             next_audit_event_id: 1,
             next_proof_event_id: 1,
             next_position_lifecycle_event_id: 1,
@@ -4031,6 +4040,7 @@ impl Ph1fStore {
             next_voice_artifact_revocation_event_id: 1,
             memory_idempotency_index: BTreeMap::new(),
             conversation_idempotency_index: BTreeMap::new(),
+            internal_history_idempotency_index: BTreeMap::new(),
             audit_idempotency_index_scoped: BTreeMap::new(),
             audit_idempotency_index_legacy: BTreeMap::new(),
             forgotten_memory: BTreeSet::new(),
@@ -6341,12 +6351,104 @@ impl Ph1fStore {
             self.conversation_idempotency_index
                 .insert((rec.correlation_id, k.clone()), rec.conversation_turn_id);
         }
-        self.conversation_ledger.push(rec);
+        self.conversation_ledger.push(rec.clone());
+        let evidence_input = InternalHistoryEvidenceInput::from_conversation_turn_record(&rec)?;
+        let _ = self.append_internal_history_evidence(evidence_input)?;
         Ok(conversation_turn_id)
     }
 
     pub fn conversation_ledger(&self) -> &[ConversationTurnRecord] {
         &self.conversation_ledger
+    }
+
+    pub fn append_internal_history_evidence(
+        &mut self,
+        input: InternalHistoryEvidenceInput,
+    ) -> Result<InternalHistoryEventId, StorageError> {
+        input.validate()?;
+
+        if let Some(user_id) = &input.speaker.user_id {
+            if !self.identities.contains_key(user_id) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "internal_history_evidence.user_id",
+                    key: user_id.as_str().to_string(),
+                });
+            }
+        }
+        if let Some(device_id) = &input.speaker.device_id {
+            if !self.devices.contains_key(device_id) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "internal_history_evidence.device_id",
+                    key: device_id.as_str().to_string(),
+                });
+            }
+        }
+        if let Some(session_id) = input.session_id {
+            if !self.sessions.contains_key(&session_id) {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "internal_history_evidence.session_id",
+                    key: session_id.0.to_string(),
+                });
+            }
+        }
+        if let Some(conversation_turn_id) = input.conversation_turn_id {
+            if !self
+                .conversation_ledger
+                .iter()
+                .any(|row| row.conversation_turn_id == conversation_turn_id)
+            {
+                return Err(StorageError::ForeignKeyViolation {
+                    table: "internal_history_evidence.conversation_turn_id",
+                    key: conversation_turn_id.0.to_string(),
+                });
+            }
+        }
+
+        if let Some(k) = &input.idempotency_key {
+            if let Some(existing) = self
+                .internal_history_idempotency_index
+                .get(&(input.correlation_id, k.clone()))
+            {
+                return Ok(*existing);
+            }
+        }
+
+        let internal_history_event_id = InternalHistoryEventId(self.next_internal_history_event_id);
+        self.next_internal_history_event_id = self.next_internal_history_event_id.saturating_add(1);
+        let record =
+            InternalHistoryEvidenceRecord::from_input_v1(internal_history_event_id, input)?;
+
+        if let Some(k) = &record.idempotency_key {
+            self.internal_history_idempotency_index.insert(
+                (record.correlation_id, k.clone()),
+                record.internal_history_event_id,
+            );
+        }
+        self.internal_history_evidence_ledger.push(record);
+        Ok(internal_history_event_id)
+    }
+
+    pub fn internal_history_evidence_ledger(&self) -> &[InternalHistoryEvidenceRecord] {
+        &self.internal_history_evidence_ledger
+    }
+
+    pub fn internal_history_evidence_by_conversation_turn(
+        &self,
+        conversation_turn_id: ConversationTurnId,
+    ) -> Vec<&InternalHistoryEvidenceRecord> {
+        self.internal_history_evidence_ledger
+            .iter()
+            .filter(|row| row.conversation_turn_id == Some(conversation_turn_id))
+            .collect()
+    }
+
+    pub fn attempt_overwrite_internal_history_evidence(
+        &mut self,
+        _internal_history_event_id: InternalHistoryEventId,
+    ) -> Result<(), StorageError> {
+        Err(StorageError::AppendOnlyViolation {
+            table: "internal_history_evidence",
+        })
     }
 
     pub fn attempt_overwrite_conversation_turn(
@@ -19605,8 +19707,11 @@ impl Ph1fStore {
         Self::validate_ph1c_tenant_id(&tenant_id)?;
         Self::validate_ph1c_idempotency("ph1c.idempotency_key", &idempotency_key)?;
         self.ph1c_validate_scope_and_bindings(&tenant_id, &user_id, &device_id, session_id)?;
+        let history_user_id = user_id.clone();
+        let history_device_id = device_id.clone();
 
         let mut reject_payload_entries = BTreeMap::new();
+        let transcript_hash_for_history = transcript_hash.clone();
         if let Some(hash) = transcript_hash {
             reject_payload_entries.insert(
                 PayloadKey::new("transcript_hash")?,
@@ -19670,6 +19775,23 @@ impl Ph1fStore {
 
         let transcript_reject_audit_event_id = self.append_audit_event(reject_audit_input)?;
         let candidate_eval_audit_event_id = self.append_audit_event(candidate_audit_input)?;
+        let _ = self.append_internal_history_evidence(
+            InternalHistoryEvidenceInput::transcript_reject_v1(
+                now,
+                correlation_id,
+                turn_id,
+                session_id,
+                history_user_id,
+                Some(history_device_id),
+                transcript_hash_for_history,
+                format!("reason_code:{}", reject_reason_code.0),
+                vec![
+                    format!("audit_event:{}", transcript_reject_audit_event_id.0),
+                    format!("audit_event:{}", candidate_eval_audit_event_id.0),
+                ],
+                format!("stage7_internal_history:ph1c_reject:{}", idempotency_key),
+            )?,
+        )?;
 
         Ok(Ph1cTranscriptRejectCommitResult {
             transcript_reject_audit_event_id,
@@ -25725,7 +25847,13 @@ mod tests {
         DeliveryChannel, DeliveryOutcome, DeliverySendResult, Ph1DeliveryOk, Ph1DeliveryRequest,
         Ph1DeliveryResponse,
     };
-    use selene_kernel_contracts::ph1f::{ConversationRole, ConversationSource, PrivacyScope};
+    use selene_kernel_contracts::ph1f::{
+        ConversationRole, ConversationSource, InputTranscriptEvidenceRefs,
+        InternalHistoryEventKind, InternalHistoryEvidenceInput, InternalHistoryEvidenceRefs,
+        InternalHistoryModality, LiveContextEvidenceRefs, MemoryCandidateStatus,
+        MemoryEvidenceRefs, PrivacyScope, ResponseSpokenEvidenceRefs, SpeakerEvidenceRefs,
+        SpeakerIdentityPosture, TranscriptEvidenceStatus,
+    };
     use selene_kernel_contracts::ph1feedback::{FeedbackEventType, FeedbackPathType};
     use selene_kernel_contracts::ph1j::{
         AuditEngine, AuditEventType, AuditPayloadMin, AuditSeverity, DeviceId, PayloadKey,
@@ -26341,6 +26469,230 @@ mod tests {
 
         assert!(matches!(
             s.attempt_overwrite_conversation_turn(id),
+            Err(StorageError::AppendOnlyViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn at_f_stage7_01_committed_turn_auto_files_internal_history_evidence() {
+        let mut s = store_with_user_device_and_session();
+        let corr = CorrelationId(7_001);
+        let turn = TurnId(1);
+
+        let conversation_turn_id = s
+            .append_conversation_turn(
+                ConversationTurnInput::v1(
+                    MonotonicTimeNs(20),
+                    corr,
+                    turn,
+                    Some(SessionId(1)),
+                    user(),
+                    Some(device()),
+                    ConversationRole::User,
+                    ConversationSource::VoiceTranscript,
+                    "what time is it in Sydney".to_string(),
+                    "hash_stage7_voice_sydney".to_string(),
+                    PrivacyScope::PublicChat,
+                    Some("stage7_voice_turn".to_string()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let rows = s.internal_history_evidence_by_conversation_turn(conversation_turn_id);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].event_kind, InternalHistoryEventKind::CommittedTurn);
+        assert_eq!(rows[0].modality, InternalHistoryModality::Voice);
+        assert_eq!(
+            rows[0].input.ph1c_status,
+            TranscriptEvidenceStatus::Accepted
+        );
+        assert_eq!(
+            rows[0].speaker.identity_posture,
+            SpeakerIdentityPosture::Unknown
+        );
+        assert!(rows[0].speaker.voice_identity_assertion_ref.is_none());
+        assert!(rows[0]
+            .refs
+            .replay_integrity_refs
+            .iter()
+            .any(|r| r.contains("text_hash:hash_stage7_voice_sydney")));
+        assert!(matches!(
+            s.attempt_overwrite_internal_history_evidence(rows[0].internal_history_event_id),
+            Err(StorageError::AppendOnlyViolation { .. })
+        ));
+    }
+
+    #[test]
+    fn at_f_stage7_02_typed_turn_has_no_voice_identity_fabrication() {
+        let mut s = store_with_user_device_and_session();
+        let conversation_turn_id = s
+            .append_conversation_turn(
+                ConversationTurnInput::v1(
+                    MonotonicTimeNs(21),
+                    CorrelationId(7_002),
+                    TurnId(2),
+                    Some(SessionId(1)),
+                    user(),
+                    Some(device()),
+                    ConversationRole::User,
+                    ConversationSource::TypedText,
+                    "what is your name".to_string(),
+                    "hash_stage7_typed_name".to_string(),
+                    PrivacyScope::PublicChat,
+                    Some("stage7_typed_turn".to_string()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let rows = s.internal_history_evidence_by_conversation_turn(conversation_turn_id);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].modality, InternalHistoryModality::Typed);
+        assert_eq!(
+            rows[0].input.ph1c_status,
+            TranscriptEvidenceStatus::TypedCommitted
+        );
+        assert!(rows[0].speaker.typed_actor_identity_ref.is_some());
+        assert!(rows[0].speaker.voice_identity_assertion_ref.is_none());
+    }
+
+    #[test]
+    fn at_f_stage7_03_rejected_transcript_is_evidence_but_not_memory_candidate() {
+        let mut s = store_with_user_device_and_session();
+
+        let result = s
+            .ph1c_transcript_reject_commit(
+                MonotonicTimeNs(22),
+                "tenant_stage7".to_string(),
+                CorrelationId(7_003),
+                TurnId(3),
+                Some(SessionId(1)),
+                user(),
+                device(),
+                ReasonCodeId(0x4300_0004),
+                Ph1cRetryAdvice::Repeat,
+                Some("hash_rejected_cough".to_string()),
+                "stage7_ph1c_reject".to_string(),
+            )
+            .unwrap();
+
+        assert!(s
+            .audit_events()
+            .iter()
+            .any(|row| row.event_id == result.transcript_reject_audit_event_id));
+        let row = s
+            .internal_history_evidence_ledger()
+            .iter()
+            .find(|row| row.event_kind == InternalHistoryEventKind::RejectedInput)
+            .unwrap();
+        assert_eq!(row.modality, InternalHistoryModality::Voice);
+        assert_eq!(row.input.ph1c_status, TranscriptEvidenceStatus::Rejected);
+        assert_eq!(
+            row.ph1m.memory_candidate_status,
+            MemoryCandidateStatus::BlockedRejectedTranscript
+        );
+        assert!(row
+            .refs
+            .audit_refs
+            .iter()
+            .any(|r| r == &format!("audit_event:{}", result.transcript_reject_audit_event_id.0)));
+    }
+
+    #[test]
+    fn at_f_stage7_04_protected_fail_closed_is_append_only_evidence_not_action_success() {
+        let mut s = store_with_user_device_and_session();
+        let mut refs = InternalHistoryEvidenceRefs::none();
+        refs.protected_execution_refs
+            .push("protected_fail_closed:payroll:authority_missing".to_string());
+        refs.audit_refs
+            .push("audit_event:protected_block_1".to_string());
+        refs.replay_integrity_refs
+            .push("no_execution_proof:payroll_tim".to_string());
+
+        let mut ph1m = MemoryEvidenceRefs::none();
+        ph1m.memory_candidate_status = MemoryCandidateStatus::BlockedProtected;
+
+        let id = s
+            .append_internal_history_evidence(
+                InternalHistoryEvidenceInput::v1(
+                    MonotonicTimeNs(23),
+                    InternalHistoryEventKind::ProtectedFailClosed,
+                    None,
+                    CorrelationId(7_004),
+                    TurnId(4),
+                    Some(SessionId(1)),
+                    Some("thread_stage7_protected".to_string()),
+                    Some(ConversationRole::User),
+                    Some(ConversationSource::TypedText),
+                    InternalHistoryModality::Typed,
+                    SpeakerEvidenceRefs::typed_actor(user(), Some(device())),
+                    InputTranscriptEvidenceRefs::typed_committed("hash_payroll".to_string()),
+                    ResponseSpokenEvidenceRefs::none(),
+                    LiveContextEvidenceRefs::none(),
+                    ph1m,
+                    refs,
+                    Some("stage7_protected_fail_closed".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let retry = s
+            .append_internal_history_evidence(
+                InternalHistoryEvidenceInput::v1(
+                    MonotonicTimeNs(24),
+                    InternalHistoryEventKind::ProtectedFailClosed,
+                    None,
+                    CorrelationId(7_004),
+                    TurnId(4),
+                    Some(SessionId(1)),
+                    Some("thread_stage7_protected".to_string()),
+                    Some(ConversationRole::User),
+                    Some(ConversationSource::TypedText),
+                    InternalHistoryModality::Typed,
+                    SpeakerEvidenceRefs::typed_actor(user(), Some(device())),
+                    InputTranscriptEvidenceRefs::typed_committed("hash_payroll".to_string()),
+                    ResponseSpokenEvidenceRefs::none(),
+                    LiveContextEvidenceRefs::none(),
+                    MemoryEvidenceRefs {
+                        memory_candidate_status: MemoryCandidateStatus::BlockedProtected,
+                        ..MemoryEvidenceRefs::none()
+                    },
+                    InternalHistoryEvidenceRefs {
+                        protected_execution_refs: vec![
+                            "protected_fail_closed:payroll:authority_missing".to_string(),
+                        ],
+                        audit_refs: vec!["audit_event:protected_block_1".to_string()],
+                        replay_integrity_refs: vec!["no_execution_proof:payroll_tim".to_string()],
+                        ..InternalHistoryEvidenceRefs::none()
+                    },
+                    Some("stage7_protected_fail_closed".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(id, retry);
+        let row = s
+            .internal_history_evidence_ledger()
+            .iter()
+            .find(|row| row.internal_history_event_id == id)
+            .unwrap();
+        assert_eq!(
+            row.event_kind,
+            InternalHistoryEventKind::ProtectedFailClosed
+        );
+        assert_eq!(
+            row.ph1m.memory_candidate_status,
+            MemoryCandidateStatus::BlockedProtected
+        );
+        assert!(matches!(
+            s.attempt_overwrite_internal_history_evidence(id),
             Err(StorageError::AppendOnlyViolation { .. })
         ));
     }
