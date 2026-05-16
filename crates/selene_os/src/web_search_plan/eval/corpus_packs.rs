@@ -187,7 +187,10 @@ fn validate_mode(case_id: &str, mode: &str) -> Result<(), String> {
     {
         Ok(())
     } else {
-        Err(format!("eval case {} has unsupported mode {}", case_id, mode))
+        Err(format!(
+            "eval case {} has unsupported mode {}",
+            case_id, mode
+        ))
     }
 }
 

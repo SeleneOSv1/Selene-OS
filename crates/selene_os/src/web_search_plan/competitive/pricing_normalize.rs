@@ -91,7 +91,9 @@ pub fn build_pricing_table(
         entry.tax_included = merge_tristate(entry.tax_included, tax_included);
         if let Some(parsed_amount) = amount {
             entry.amount = match entry.amount {
-                Some(existing) => Some(round_decimal((existing + parsed_amount) / Decimal::from(2))),
+                Some(existing) => {
+                    Some(round_decimal((existing + parsed_amount) / Decimal::from(2)))
+                }
                 None => Some(parsed_amount),
             };
         }

@@ -166,7 +166,9 @@ pub fn compute_finder_confidence_score_bp(
         + (5u32 * llm_assist_alignment_bp as u32)
         + (5u32 * gold_match_bonus_bp as u32))
         / 100;
-    raw_score_bp.saturating_sub(penalty_bp_total as u32).min(10_000) as u16
+    raw_score_bp
+        .saturating_sub(penalty_bp_total as u32)
+        .min(10_000) as u16
 }
 
 pub fn compare_finder_rank(
@@ -301,9 +303,22 @@ mod tests {
 
     #[test]
     fn at_comp_core_03_trust_score_bp_is_deterministic() {
-        let first = compute_trust_score_bp(6000, 1800, Some(1_707_613_600_000), 1_707_700_000_000, 2, 400);
-        let second =
-            compute_trust_score_bp(6000, 1800, Some(1_707_613_600_000), 1_707_700_000_000, 2, 400);
+        let first = compute_trust_score_bp(
+            6000,
+            1800,
+            Some(1_707_613_600_000),
+            1_707_700_000_000,
+            2,
+            400,
+        );
+        let second = compute_trust_score_bp(
+            6000,
+            1800,
+            Some(1_707_613_600_000),
+            1_707_700_000_000,
+            2,
+            400,
+        );
         assert_eq!(first, second);
         assert!(first.trust_score_bp <= 10_000);
     }
@@ -319,6 +334,9 @@ mod tests {
             "evidence".to_string(),
         )
         .unwrap();
-        assert_eq!(rll_candidate_score(&candidate), rll_candidate_score(&candidate));
+        assert_eq!(
+            rll_candidate_score(&candidate),
+            rll_candidate_score(&candidate)
+        );
     }
 }

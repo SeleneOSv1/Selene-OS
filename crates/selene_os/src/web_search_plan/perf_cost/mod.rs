@@ -35,7 +35,10 @@ impl PerfCostPolicySnapshot {
     }
 }
 
-pub fn enforce_url_open_cap(url_open_ordinal: usize, url_open_cap: Option<usize>) -> Result<(), &'static str> {
+pub fn enforce_url_open_cap(
+    url_open_ordinal: usize,
+    url_open_cap: Option<usize>,
+) -> Result<(), &'static str> {
     match url_open_cap {
         Some(cap) if url_open_ordinal >= cap => Err("budget_exhausted"),
         _ => Ok(()),

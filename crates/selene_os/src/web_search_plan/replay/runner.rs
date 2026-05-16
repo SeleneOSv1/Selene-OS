@@ -4,7 +4,9 @@ use crate::web_search_plan::packet_validator::{validate_packet, validate_packet_
 use crate::web_search_plan::reason_code_validator::{
     validate_reason_code_registry, validate_reason_codes_registered,
 };
-use crate::web_search_plan::registry_loader::{load_packet_schema_registry, load_reason_code_registry};
+use crate::web_search_plan::registry_loader::{
+    load_packet_schema_registry, load_reason_code_registry,
+};
 use crate::web_search_plan::replay::corpus::{
     load_replay_corpus, replay_fixture_path, validate_replay_corpus, ReplayCase,
 };

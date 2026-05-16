@@ -117,16 +117,19 @@ fn is_display_only_token(token: &str) -> bool {
 }
 
 fn is_citation_key_token(token: &str) -> bool {
-    let Some(inner) = token.strip_prefix('[').and_then(|value| value.strip_suffix(']')) else {
+    let Some(inner) = token
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+    else {
         return false;
     };
     if inner.is_empty() {
         return false;
     }
 
-    inner
-        .split(',')
-        .all(|item| item.trim().starts_with('C') && item.trim()[1..].chars().all(|ch| ch.is_ascii_digit()))
+    inner.split(',').all(|item| {
+        item.trim().starts_with('C') && item.trim()[1..].chars().all(|ch| ch.is_ascii_digit())
+    })
 }
 
 fn is_display_only_metadata_line(line: &str) -> bool {

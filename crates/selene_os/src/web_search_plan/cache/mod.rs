@@ -110,7 +110,8 @@ pub fn store_typed<T: Serialize>(
         return Err("cache ttl_ms must be > 0".to_string());
     }
 
-    let payload = serde_json::to_value(value).map_err(|e| format!("cache serialize failed: {}", e))?;
+    let payload =
+        serde_json::to_value(value).map_err(|e| format!("cache serialize failed: {}", e))?;
     let payload_hash = hash_payload(&payload)?;
 
     let entry = CacheEntry {

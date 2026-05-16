@@ -28,7 +28,9 @@ pub struct ConsistencyInputs<'a> {
     pub report_packet: Option<&'a Value>,
 }
 
-pub fn validate_cross_mode_consistency(inputs: ConsistencyInputs<'_>) -> Result<(), ConsistencyError> {
+pub fn validate_cross_mode_consistency(
+    inputs: ConsistencyInputs<'_>,
+) -> Result<(), ConsistencyError> {
     let evidence_refs = collect_evidence_refs(inputs.evidence_packet);
     if evidence_refs.is_empty() {
         return Err(ConsistencyError::new(
@@ -71,7 +73,10 @@ fn collect_evidence_refs(evidence_packet: &Value) -> BTreeSet<String> {
         }
     }
 
-    if let Some(chunks) = evidence_packet.get("content_chunks").and_then(Value::as_array) {
+    if let Some(chunks) = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+    {
         for chunk in chunks {
             for key in ["chunk_id", "source_url", "canonical_url"] {
                 if let Some(value) = chunk.get(key).and_then(Value::as_str) {
@@ -87,7 +92,10 @@ fn collect_evidence_refs(evidence_packet: &Value) -> BTreeSet<String> {
     refs
 }
 
-fn validate_competitive(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<(), ConsistencyError> {
+fn validate_competitive(
+    packet: &Value,
+    evidence_refs: &BTreeSet<String>,
+) -> Result<(), ConsistencyError> {
     for path in ["/source_refs"] {
         for reference in read_string_array(packet.pointer(path))? {
             ensure_ref(reference.as_str(), evidence_refs, "competitive source_refs")?;
@@ -96,7 +104,10 @@ fn validate_competitive(packet: &Value, evidence_refs: &BTreeSet<String>) -> Res
 
     if let Some(pricing) = packet.get("pricing_table").and_then(Value::as_array) {
         for (index, row) in pricing.iter().enumerate() {
-            let price_value = row.get("price_value").and_then(Value::as_str).unwrap_or("unknown");
+            let price_value = row
+                .get("price_value")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
             let refs = read_string_array(row.get("source_refs"))?;
             if !price_value.eq_ignore_ascii_case("unknown") && refs.is_empty() {
                 return Err(ConsistencyError::new(format!(
@@ -105,14 +116,21 @@ fn validate_competitive(packet: &Value, evidence_refs: &BTreeSet<String>) -> Res
                 )));
             }
             for reference in refs {
-                ensure_ref(reference.as_str(), evidence_refs, "competitive pricing source_ref")?;
+                ensure_ref(
+                    reference.as_str(),
+                    evidence_refs,
+                    "competitive pricing source_ref",
+                )?;
             }
         }
     }
 
     if let Some(features) = packet.get("feature_matrix").and_then(Value::as_array) {
         for (index, row) in features.iter().enumerate() {
-            let presence = row.get("presence").and_then(Value::as_str).unwrap_or("unknown");
+            let presence = row
+                .get("presence")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown");
             let refs = read_string_array(row.get("source_refs"))?;
             if !presence.eq_ignore_ascii_case("unknown") && refs.is_empty() {
                 return Err(ConsistencyError::new(format!(
@@ -121,7 +139,11 @@ fn validate_competitive(packet: &Value, evidence_refs: &BTreeSet<String>) -> Res
                 )));
             }
             for reference in refs {
-                ensure_ref(reference.as_str(), evidence_refs, "competitive feature source_ref")?;
+                ensure_ref(
+                    reference.as_str(),
+                    evidence_refs,
+                    "competitive feature source_ref",
+                )?;
             }
         }
     }
@@ -129,7 +151,10 @@ fn validate_competitive(packet: &Value, evidence_refs: &BTreeSet<String>) -> Res
     Ok(())
 }
 
-fn validate_temporal(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<(), ConsistencyError> {
+fn validate_temporal(
+    packet: &Value,
+    evidence_refs: &BTreeSet<String>,
+) -> Result<(), ConsistencyError> {
     let Some(changes) = packet.get("changes").and_then(Value::as_array) else {
         return Ok(());
     };
@@ -143,7 +168,8 @@ fn validate_temporal(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result
         let prior_refs = read_string_array(change.get("citations_prior"))?;
         let new_refs = read_string_array(change.get("citations_new"))?;
 
-        if matches!(change_type.as_str(), "added" | "modified" | "contradicted") && new_refs.is_empty()
+        if matches!(change_type.as_str(), "added" | "modified" | "contradicted")
+            && new_refs.is_empty()
         {
             return Err(ConsistencyError::new(format!(
                 "temporal change {} requires citations_new",
@@ -175,7 +201,11 @@ fn validate_risk(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<(),
                 )));
             }
             for reference in refs {
-                ensure_ref(reference.as_str(), evidence_refs, "risk factor evidence_ref")?;
+                ensure_ref(
+                    reference.as_str(),
+                    evidence_refs,
+                    "risk factor evidence_ref",
+                )?;
             }
         }
     }
@@ -186,7 +216,10 @@ fn validate_risk(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<(),
     Ok(())
 }
 
-fn validate_merge(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<(), ConsistencyError> {
+fn validate_merge(
+    packet: &Value,
+    evidence_refs: &BTreeSet<String>,
+) -> Result<(), ConsistencyError> {
     if let Some(changes) = packet
         .pointer("/delta/changes_since_last_time")
         .and_then(Value::as_array)
@@ -226,12 +259,19 @@ fn validate_merge(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<()
     Ok(())
 }
 
-fn validate_report(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<(), ConsistencyError> {
+fn validate_report(
+    packet: &Value,
+    evidence_refs: &BTreeSet<String>,
+) -> Result<(), ConsistencyError> {
     let Some(claims) = packet.get("claims").and_then(Value::as_array) else {
         return Ok(());
     };
     for (index, claim) in claims.iter().enumerate() {
-        let text = claim.get("text").and_then(Value::as_str).unwrap_or("").trim();
+        let text = claim
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim();
         let refs = read_string_array(claim.get("citations"))?;
         if !text.is_empty() && refs.is_empty() {
             return Err(ConsistencyError::new(format!(
@@ -246,7 +286,11 @@ fn validate_report(packet: &Value, evidence_refs: &BTreeSet<String>) -> Result<(
     Ok(())
 }
 
-fn ensure_ref(reference: &str, evidence_refs: &BTreeSet<String>, context: &str) -> Result<(), ConsistencyError> {
+fn ensure_ref(
+    reference: &str,
+    evidence_refs: &BTreeSet<String>,
+    context: &str,
+) -> Result<(), ConsistencyError> {
     if evidence_refs.contains(reference) {
         Ok(())
     } else {
@@ -261,14 +305,14 @@ fn read_string_array(raw: Option<&Value>) -> Result<Vec<String>, ConsistencyErro
     let Some(raw) = raw else {
         return Ok(Vec::new());
     };
-    let array = raw.as_array().ok_or_else(|| {
-        ConsistencyError::new("consistency expected array of strings")
-    })?;
+    let array = raw
+        .as_array()
+        .ok_or_else(|| ConsistencyError::new("consistency expected array of strings"))?;
     let mut out = Vec::with_capacity(array.len());
     for entry in array {
-        let value = entry.as_str().ok_or_else(|| {
-            ConsistencyError::new("consistency expected string array entry")
-        })?;
+        let value = entry
+            .as_str()
+            .ok_or_else(|| ConsistencyError::new("consistency expected string array entry"))?;
         let value = value.trim();
         if !value.is_empty() {
             out.push(value.to_string());

@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-use crate::web_search_plan::risk::calibration::{bps_to_decimal, CONFIDENCE_LOW_THRESHOLD_BPS, ROUNDING_SCALE};
+use crate::web_search_plan::risk::calibration::{
+    bps_to_decimal, CONFIDENCE_LOW_THRESHOLD_BPS, ROUNDING_SCALE,
+};
 use crate::web_search_plan::risk::factors::FactorScore;
 use rust_decimal::{Decimal, RoundingStrategy};
 use serde_json::Value;

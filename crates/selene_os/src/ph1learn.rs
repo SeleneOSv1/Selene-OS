@@ -549,10 +549,12 @@ fn govern_learning_completion_after_proof(
     match runtime_law.govern_completion(&envelope_for_law, law_action_class, law_context) {
         Ok(runtime_execution_envelope) => {
             if let Some(error) = proof_error {
-                Err(LearnGovernedRefusal::Proof(Box::new(LearnGovernedProofRefusal {
-                    error,
-                    runtime_execution_envelope: Box::new(runtime_execution_envelope),
-                })))
+                Err(LearnGovernedRefusal::Proof(Box::new(
+                    LearnGovernedProofRefusal {
+                        error,
+                        runtime_execution_envelope: Box::new(runtime_execution_envelope),
+                    },
+                )))
             } else {
                 Ok(runtime_execution_envelope)
             }
@@ -561,10 +563,12 @@ fn govern_learning_completion_after_proof(
             let runtime_execution_envelope = envelope_for_law
                 .with_law_state(Some(decision.law_state.as_ref().clone()))
                 .map_err(LearnGovernedRefusal::Contract)?;
-            Err(LearnGovernedRefusal::Law(Box::new(LearnGovernedLawRefusal {
-                decision,
-                runtime_execution_envelope: Box::new(runtime_execution_envelope),
-            })))
+            Err(LearnGovernedRefusal::Law(Box::new(
+                LearnGovernedLawRefusal {
+                    decision,
+                    runtime_execution_envelope: Box::new(runtime_execution_envelope),
+                },
+            )))
         }
     }
 }
@@ -590,7 +594,7 @@ pub fn govern_learn_bundle_promotion(
         .map_err(LearnGovernedRefusal::Contract)?;
     let learning_input =
         RuntimeLawLearningInput::v1(Some(input.bundle.artifact_package_build.clone()))
-        .map_err(LearnGovernedRefusal::Contract)?;
+            .map_err(LearnGovernedRefusal::Contract)?;
     let law_context = RuntimeLawEvaluationContext::v1(
         None,
         Some(learning_input),

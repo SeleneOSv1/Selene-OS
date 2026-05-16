@@ -1,13 +1,16 @@
 #![forbid(unsafe_code)]
 
-use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
-use crate::web_search_plan::packet_validator::{validate_packet, validate_packet_schema_registry};
-use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use super::adapters::{self, RealtimeAdapterOutput};
 use super::domains::{detect_domain, RealtimeDomain};
 use super::freshness::evaluate;
 use super::ttl_policy::ttl_ms;
-use super::{finalize_realtime_result, parse_tool_request_packet, ParsedRealtimeToolRequest, RealtimeRuntimeConfig};
+use super::{
+    finalize_realtime_result, parse_tool_request_packet, ParsedRealtimeToolRequest,
+    RealtimeRuntimeConfig,
+};
+use crate::web_search_plan::packet_validator::{validate_packet, validate_packet_schema_registry};
+use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
+use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
@@ -32,7 +35,11 @@ fn fixture_request_and_output(name: &str) -> (ParsedRealtimeToolRequest, Realtim
         now_ms,
     )
     .expect("tool request should parse");
-    let adapter_output = parse_adapter_output(fixture.get("adapter_output").expect("fixture adapter_output"));
+    let adapter_output = parse_adapter_output(
+        fixture
+            .get("adapter_output")
+            .expect("fixture adapter_output"),
+    );
     (request, adapter_output)
 }
 
@@ -89,13 +96,31 @@ fn test_t1_domain_routing_deterministic() {
 
 #[test]
 fn test_t2_ttl_policy_deterministic_by_tier() {
-    assert_eq!(ttl_ms(RealtimeDomain::Weather, ImportanceTier::Low), 3_600_000);
-    assert_eq!(ttl_ms(RealtimeDomain::Weather, ImportanceTier::Medium), 1_800_000);
-    assert_eq!(ttl_ms(RealtimeDomain::Weather, ImportanceTier::High), 900_000);
+    assert_eq!(
+        ttl_ms(RealtimeDomain::Weather, ImportanceTier::Low),
+        3_600_000
+    );
+    assert_eq!(
+        ttl_ms(RealtimeDomain::Weather, ImportanceTier::Medium),
+        1_800_000
+    );
+    assert_eq!(
+        ttl_ms(RealtimeDomain::Weather, ImportanceTier::High),
+        900_000
+    );
 
-    assert_eq!(ttl_ms(RealtimeDomain::Finance, ImportanceTier::Low), 1_800_000);
-    assert_eq!(ttl_ms(RealtimeDomain::Finance, ImportanceTier::Medium), 900_000);
-    assert_eq!(ttl_ms(RealtimeDomain::Finance, ImportanceTier::High), 300_000);
+    assert_eq!(
+        ttl_ms(RealtimeDomain::Finance, ImportanceTier::Low),
+        1_800_000
+    );
+    assert_eq!(
+        ttl_ms(RealtimeDomain::Finance, ImportanceTier::Medium),
+        900_000
+    );
+    assert_eq!(
+        ttl_ms(RealtimeDomain::Finance, ImportanceTier::High),
+        300_000
+    );
 }
 
 #[test]
@@ -128,14 +153,17 @@ fn test_t5_provider_unconfigured_path_deterministic() {
             "domain_hint": "generic_real_time"
         }
     });
-    let parsed = parse_tool_request_packet(&tool_request, 1_707_600_000_000).expect("request should parse");
+    let parsed =
+        parse_tool_request_packet(&tool_request, 1_707_600_000_000).expect("request should parse");
 
     let mut config = RealtimeRuntimeConfig::default();
     config.generic_api_key_override = Some(" ".to_string());
     config.generic_vault_secret_id_override = Some("unknown_secret_id".to_string());
 
-    let first = adapters::generic_json::execute(&parsed, &config).expect_err("first call must fail");
-    let second = adapters::generic_json::execute(&parsed, &config).expect_err("second call must fail");
+    let first =
+        adapters::generic_json::execute(&parsed, &config).expect_err("first call must fail");
+    let second =
+        adapters::generic_json::execute(&parsed, &config).expect_err("second call must fail");
     assert_eq!(first.reason_code(), "provider_unconfigured");
     assert_eq!(second.reason_code(), "provider_unconfigured");
 }
@@ -197,7 +225,7 @@ fn test_t8_weather_fixtures_cover_fresh_and_stale_paths() {
     );
 
     let (stale_request, stale_output) = fixture_request_and_output("weather_stale.json");
-    let stale_error =
-        finalize_realtime_result(&stale_request, stale_output).expect_err("weather_stale must fail");
+    let stale_error = finalize_realtime_result(&stale_request, stale_output)
+        .expect_err("weather_stale must fail");
     assert_eq!(stale_error.reason_code(), "stale_data");
 }

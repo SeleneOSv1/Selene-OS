@@ -3,8 +3,8 @@
 use crate::web_search_plan::cache::cache_key::{CacheKey, CacheMode};
 use crate::web_search_plan::cache::l1::L1Cache;
 use crate::web_search_plan::cache::l2;
-use crate::web_search_plan::cache::{clear_l1_end_of_turn, lookup_typed, store_typed, CacheLayer};
 use crate::web_search_plan::cache::ttl::ttl_ms_for;
+use crate::web_search_plan::cache::{clear_l1_end_of_turn, lookup_typed, store_typed, CacheLayer};
 use crate::web_search_plan::perf_cost::tiers::ImportanceTier;
 use serde::{Deserialize, Serialize};
 use std::sync::{Mutex, MutexGuard, OnceLock};
@@ -157,8 +157,9 @@ fn test_t4_cache_blocks_cross_tier_or_cross_policy_mismatch() {
         .expect("lookup should succeed");
     assert!(tier_miss.is_none(), "different tier key must not hit cache");
 
-    let policy_err = lookup_typed::<SamplePayload>(&mut l1, &key_medium, 1_010, "1.0.0", "policy-b")
-        .expect_err("policy mismatch must fail closed");
+    let policy_err =
+        lookup_typed::<SamplePayload>(&mut l1, &key_medium, 1_010, "1.0.0", "policy-b")
+            .expect_err("policy mismatch must fail closed");
     assert!(policy_err.contains("policy_snapshot_id mismatch"));
 }
 

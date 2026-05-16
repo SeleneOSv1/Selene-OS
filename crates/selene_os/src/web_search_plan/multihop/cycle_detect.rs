@@ -44,7 +44,10 @@ impl CycleDetector {
         Ok(())
     }
 
-    pub fn register_canonical_url(&mut self, canonical_url: &str) -> Result<(), CycleDetectionError> {
+    pub fn register_canonical_url(
+        &mut self,
+        canonical_url: &str,
+    ) -> Result<(), CycleDetectionError> {
         let normalized = canonical_url.trim().to_ascii_lowercase();
         if normalized.is_empty() {
             return Ok(());

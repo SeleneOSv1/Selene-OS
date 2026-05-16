@@ -122,7 +122,10 @@ pub fn build_risk_packet(request: &RiskRequest) -> Result<RiskPacket, RiskBuildE
         if !factor_result.known_refs.contains(evidence_ref) {
             return Err(RiskBuildError::new(
                 "policy_violation",
-                format!("evidence_ref {} is not present in evidence packet", evidence_ref),
+                format!(
+                    "evidence_ref {} is not present in evidence packet",
+                    evidence_ref
+                ),
             ));
         }
     }
@@ -173,7 +176,9 @@ pub fn build_risk_packet(request: &RiskRequest) -> Result<RiskPacket, RiskBuildE
     };
 
     validate_risk_packet(&packet)?;
-    packet.factor_breakdown.sort_by(|left, right| left.factor_id.cmp(&right.factor_id));
+    packet
+        .factor_breakdown
+        .sort_by(|left, right| left.factor_id.cmp(&right.factor_id));
     packet.evidence_refs.sort();
     Ok(packet)
 }

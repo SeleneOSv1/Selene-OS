@@ -152,7 +152,10 @@ fn parse_constraints(raw: Option<&Value>) -> EnterpriseConstraints {
     if let Some(total_ms) = value.get("max_total_time_ms").and_then(Value::as_u64) {
         constraints.max_total_time_ms = total_ms;
     }
-    if let Some(calls) = value.get("max_provider_calls_total").and_then(Value::as_u64) {
+    if let Some(calls) = value
+        .get("max_provider_calls_total")
+        .and_then(Value::as_u64)
+    {
         constraints.max_provider_calls_total = calls as usize;
     }
     if let Some(opens) = value.get("max_url_opens_total").and_then(Value::as_u64) {

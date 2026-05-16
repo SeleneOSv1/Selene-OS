@@ -18,7 +18,11 @@ pub fn decompose_query(query: &str, existing_sub_queries: &[String]) -> MultiQue
 
     let mut sub_queries = Vec::new();
     if !existing_sub_queries.is_empty() {
-        sub_queries.extend(existing_sub_queries.iter().map(|entry| normalize_query(entry)));
+        sub_queries.extend(
+            existing_sub_queries
+                .iter()
+                .map(|entry| normalize_query(entry)),
+        );
     } else {
         sub_queries.push(normalized_query.clone());
     }

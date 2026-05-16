@@ -139,15 +139,7 @@ pub fn classify_query_freshness_class(query: &str) -> QueryFreshnessClass {
     if contains_any(
         normalized.as_str(),
         &[
-            "today",
-            "latest",
-            "current",
-            "now",
-            "stock",
-            "price",
-            "weather",
-            "flight",
-            "breaking",
+            "today", "latest", "current", "now", "stock", "price", "weather", "flight", "breaking",
             "live",
         ],
     ) {

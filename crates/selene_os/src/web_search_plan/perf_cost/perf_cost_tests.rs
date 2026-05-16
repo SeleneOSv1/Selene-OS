@@ -51,8 +51,14 @@ fn test_t2_timeouts_derived_deterministically() {
     assert_eq!(clamp_provider_timeout(4_200, ImportanceTier::Medium), 2_000);
     assert_eq!(clamp_provider_timeout(900, ImportanceTier::Medium), 900);
 
-    assert_eq!(clamp_url_fetch_total_timeout(9_999, ImportanceTier::High), 7_000);
-    assert_eq!(clamp_url_fetch_total_timeout(1_500, ImportanceTier::High), 1_500);
+    assert_eq!(
+        clamp_url_fetch_total_timeout(9_999, ImportanceTier::High),
+        7_000
+    );
+    assert_eq!(
+        clamp_url_fetch_total_timeout(1_500, ImportanceTier::High),
+        1_500
+    );
 }
 
 #[test]
@@ -171,7 +177,10 @@ fn test_t7_audit_fields_populated_deterministically() {
     let perf = reparsed
         .pointer("/turn_state_transition/perf_cost_audit")
         .expect("perf cost block must exist");
-    assert_eq!(perf.get("importance_tier").and_then(Value::as_str), Some("medium"));
+    assert_eq!(
+        perf.get("importance_tier").and_then(Value::as_str),
+        Some("medium")
+    );
     assert_eq!(perf.get("degraded").and_then(Value::as_bool), Some(true));
     assert_eq!(
         perf.get("degrade_step").and_then(Value::as_str),

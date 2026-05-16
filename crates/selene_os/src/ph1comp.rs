@@ -11,8 +11,8 @@ use selene_kernel_contracts::ph1comp::{
     Aggregate, AggregateMethod, ComputationConfidenceBucket, ComputationConfidencePosture,
     ComputationConsensusResult, ComputationConsensusStatus, ComputationExecutionState,
     ComputationFailureClass, ComputationInputs, ComputationPacket, ComputationSelectedResult,
-    ConsensusCandidate, ConsensusGroup, ConsensusMethod, ConsensusOutlier, ConfidenceFactors,
-    ConfidenceItem, NormalizationKind, NormalizationTraceEntry, NumericValue, PH1COMP_ENGINE_ID,
+    ConfidenceFactors, ConfidenceItem, ConsensusCandidate, ConsensusGroup, ConsensusMethod,
+    ConsensusOutlier, NormalizationKind, NormalizationTraceEntry, NumericValue, PH1COMP_ENGINE_ID,
     PH1COMP_SCHEMA_VERSION,
 };
 use selene_kernel_contracts::ph1simfinder::MissingSimulationPacket;
@@ -192,7 +192,10 @@ impl Ph1CompRuntime {
             if candidate.components.is_empty() {
                 return Err(Ph1CompError::new(
                     ComputationFailureClass::InvalidInputSet,
-                    format!("candidate {} has no score components", candidate.candidate_id),
+                    format!(
+                        "candidate {} has no score components",
+                        candidate.candidate_id
+                    ),
                     vec!["invalid_candidate_component_set".to_string()],
                 ));
             }
@@ -203,7 +206,10 @@ impl Ph1CompRuntime {
             if total_weight == 0 {
                 return Err(Ph1CompError::new(
                     ComputationFailureClass::InvalidInputSet,
-                    format!("candidate {} total weight must be > 0", candidate.candidate_id),
+                    format!(
+                        "candidate {} total weight must be > 0",
+                        candidate.candidate_id
+                    ),
                     vec!["invalid_candidate_component_weight".to_string()],
                 ));
             }
@@ -286,28 +292,45 @@ impl Ph1CompRuntime {
         let packet = ComputationPacket {
             schema_version: PH1COMP_SCHEMA_VERSION.to_string(),
             produced_by: PH1COMP_ENGINE_ID.to_string(),
-            intended_consumers: vec!["PH1.LAW".to_string(), "PH1.GOV".to_string(), "PH1.J".to_string()],
+            intended_consumers: vec![
+                "PH1.LAW".to_string(),
+                "PH1.GOV".to_string(),
+                "PH1.J".to_string(),
+            ],
             created_at_ms,
             trace_id: trace_id.into(),
             inputs: ComputationInputs {
-                evidence_hash: stable_hash_ref(&json!({"kind": "ranking", "candidates": candidates.iter().map(|candidate| candidate.candidate_id.as_str()).collect::<Vec<_>>() }))?,
+                evidence_hash: stable_hash_ref(
+                    &json!({"kind": "ranking", "candidates": candidates.iter().map(|candidate| candidate.candidate_id.as_str()).collect::<Vec<_>>() }),
+                )?,
                 policy_snapshot_id: policy_snapshot_id.into(),
                 as_of_ms: None,
                 input_count: candidates.len() as u32,
-                input_labels: candidates.iter().map(|candidate| candidate.candidate_id.clone()).collect(),
+                input_labels: candidates
+                    .iter()
+                    .map(|candidate| candidate.candidate_id.clone())
+                    .collect(),
                 normalization_trace: candidates
                     .iter()
                     .flat_map(|candidate| {
-                        candidate.components.iter().map(|component| NormalizationTraceEntry {
-                            normalization_kind: NormalizationKind::Percentage,
-                            rule_id: "bp_to_ratio".to_string(),
-                            input_label: format!("{}:{}", candidate.candidate_id, component.component_id),
-                            source_value: component.normalized_score_bp.to_string(),
-                            normalized_value: decimal_to_string(bp_to_ratio_decimal(component.normalized_score_bp)),
-                            source_unit: Some("bp".to_string()),
-                            canonical_unit: Some(CANONICAL_PERCENT_UNIT.to_string()),
-                            applied: true,
-                        })
+                        candidate
+                            .components
+                            .iter()
+                            .map(|component| NormalizationTraceEntry {
+                                normalization_kind: NormalizationKind::Percentage,
+                                rule_id: "bp_to_ratio".to_string(),
+                                input_label: format!(
+                                    "{}:{}",
+                                    candidate.candidate_id, component.component_id
+                                ),
+                                source_value: component.normalized_score_bp.to_string(),
+                                normalized_value: decimal_to_string(bp_to_ratio_decimal(
+                                    component.normalized_score_bp,
+                                )),
+                                source_unit: Some("bp".to_string()),
+                                canonical_unit: Some(CANONICAL_PERCENT_UNIT.to_string()),
+                                applied: true,
+                            })
                     })
                     .collect(),
                 formula_version_refs: vec![FORMULA_RANKING_V1.to_string()],
@@ -317,9 +340,13 @@ impl Ph1CompRuntime {
             confidence,
             reason_codes,
         };
-        packet
-            .validate()
-            .map_err(|error| Ph1CompError::new(ComputationFailureClass::InvalidInputSet, format!("ranking packet invalid: {error:?}"), vec!["invalid_ranking_packet".to_string()]))?;
+        packet.validate().map_err(|error| {
+            Ph1CompError::new(
+                ComputationFailureClass::InvalidInputSet,
+                format!("ranking packet invalid: {error:?}"),
+                vec!["invalid_ranking_packet".to_string()],
+            )
+        })?;
         if let Some(selected) = selected {
             if !selected.threshold_met {
                 return Err(Ph1CompError::new(
@@ -361,7 +388,10 @@ impl Ph1CompRuntime {
             numeric_signals.push((signal.clone(), decimal_value));
         }
 
-        let mut ordered_values = numeric_signals.iter().map(|(_, value)| *value).collect::<Vec<_>>();
+        let mut ordered_values = numeric_signals
+            .iter()
+            .map(|(_, value)| *value)
+            .collect::<Vec<_>>();
         ordered_values.sort();
         let center = median(ordered_values.as_slice());
         let mad_value = mad(ordered_values.as_slice());
@@ -396,7 +426,8 @@ impl Ph1CompRuntime {
 
         let mut ranked = vote_map.into_values().collect::<Vec<_>>();
         ranked.sort_by(|left, right| {
-            right.weight_bp
+            right
+                .weight_bp
                 .cmp(&left.weight_bp)
                 .then(right.votes.cmp(&left.votes))
                 .then(left.candidate_id.cmp(&right.candidate_id))
@@ -427,7 +458,9 @@ impl Ph1CompRuntime {
         }
 
         let consensus = ConsensusGroup {
-            group_id: stable_hash_ref(&json!({"topic": topic, "winner": best.candidate_id, "weight_bp": best.weight_bp}))?,
+            group_id: stable_hash_ref(
+                &json!({"topic": topic, "winner": best.candidate_id, "weight_bp": best.weight_bp}),
+            )?,
             topic: topic.clone(),
             candidates: ranked
                 .iter()
@@ -452,11 +485,16 @@ impl Ph1CompRuntime {
             created_at_ms,
             trace_id: trace_id.into(),
             inputs: ComputationInputs {
-                evidence_hash: stable_hash_ref(&json!({"kind": "consensus", "topic": topic, "signals": signals.len()}))?,
+                evidence_hash: stable_hash_ref(
+                    &json!({"kind": "consensus", "topic": topic, "signals": signals.len()}),
+                )?,
                 policy_snapshot_id: policy_snapshot_id.into(),
                 as_of_ms: None,
                 input_count: signals.len() as u32,
-                input_labels: signals.iter().map(|signal| signal.candidate_id.clone()).collect(),
+                input_labels: signals
+                    .iter()
+                    .map(|signal| signal.candidate_id.clone())
+                    .collect(),
                 normalization_trace: vec![],
                 formula_version_refs: vec![FORMULA_CONSENSUS_V1.to_string()],
             },
@@ -485,7 +523,9 @@ impl Ph1CompRuntime {
                 confidence_score: decimal_to_string(bp_to_ratio_decimal(agreement_bp)),
                 factors: ConfidenceFactors {
                     sample_size: signals.len() as u32,
-                    trust_tier_mix: decimal_to_string(bp_to_ratio_decimal((total_weight.min(10_000)) as u16)),
+                    trust_tier_mix: decimal_to_string(bp_to_ratio_decimal(
+                        (total_weight.min(10_000)) as u16,
+                    )),
                     recency: decimal_to_string(Decimal::ONE),
                     conflict: decimal_to_string(bp_to_ratio_decimal(agreement_bp)),
                     outliers: decimal_to_string(bp_to_ratio_decimal(
@@ -499,9 +539,13 @@ impl Ph1CompRuntime {
             }],
             reason_codes: vec!["weighted_consensus_threshold_met".to_string()],
         };
-        packet
-            .validate()
-            .map_err(|error| Ph1CompError::new(ComputationFailureClass::InvalidInputSet, format!("consensus packet invalid: {error:?}"), vec!["invalid_consensus_packet".to_string()]))?;
+        packet.validate().map_err(|error| {
+            Ph1CompError::new(
+                ComputationFailureClass::InvalidInputSet,
+                format!("consensus packet invalid: {error:?}"),
+                vec!["invalid_consensus_packet".to_string()],
+            )
+        })?;
         Ok(packet)
     }
 
@@ -562,7 +606,10 @@ impl Ph1CompRuntime {
                         applied: true,
                     });
                 }
-                NormalizationInput::TimeMilliseconds { label, milliseconds } => {
+                NormalizationInput::TimeMilliseconds {
+                    label,
+                    milliseconds,
+                } => {
                     trace.push(NormalizationTraceEntry {
                         normalization_kind: NormalizationKind::Time,
                         rule_id: "time:ms_to_ms".to_string(),
@@ -574,7 +621,10 @@ impl Ph1CompRuntime {
                         applied: true,
                     });
                 }
-                NormalizationInput::PercentageBasisPoints { label, basis_points } => {
+                NormalizationInput::PercentageBasisPoints {
+                    label,
+                    basis_points,
+                } => {
                     trace.push(NormalizationTraceEntry {
                         normalization_kind: NormalizationKind::Percentage,
                         rule_id: "percent:bp_to_ratio".to_string(),
@@ -645,7 +695,9 @@ impl Ph1CompRuntime {
                     vec!["budget_projection_overflow".to_string()],
                 )
             })?;
-        let remaining = request.budget_limit_microunits.saturating_sub(projected_used);
+        let remaining = request
+            .budget_limit_microunits
+            .saturating_sub(projected_used);
         let budget_ratio_bp = divide_round(
             projected_used.saturating_mul(10_000),
             request.budget_limit_microunits,
@@ -654,16 +706,23 @@ impl Ph1CompRuntime {
             (request.quota_used as u64).saturating_mul(10_000),
             request.quota_limit as u64,
         ) as u16;
-        let threshold_crossed = budget_ratio_bp >= request.threshold_bp || quota_ratio_bp >= request.threshold_bp;
+        let threshold_crossed =
+            budget_ratio_bp >= request.threshold_bp || quota_ratio_bp >= request.threshold_bp;
 
         let packet = ComputationPacket {
             schema_version: PH1COMP_SCHEMA_VERSION.to_string(),
             produced_by: PH1COMP_ENGINE_ID.to_string(),
-            intended_consumers: vec!["PH1.COST".to_string(), "PH1.QUOTA".to_string(), "PH1.LAW".to_string()],
+            intended_consumers: vec![
+                "PH1.COST".to_string(),
+                "PH1.QUOTA".to_string(),
+                "PH1.LAW".to_string(),
+            ],
             created_at_ms,
             trace_id: trace_id.into(),
             inputs: ComputationInputs {
-                evidence_hash: stable_hash_ref(&json!({"kind": "budget_quota", "budget_limit": request.budget_limit_microunits, "quota_limit": request.quota_limit}))?,
+                evidence_hash: stable_hash_ref(
+                    &json!({"kind": "budget_quota", "budget_limit": request.budget_limit_microunits, "quota_limit": request.quota_limit}),
+                )?,
                 policy_snapshot_id: policy_snapshot_id.into(),
                 as_of_ms: None,
                 input_count: 4,
@@ -678,17 +737,33 @@ impl Ph1CompRuntime {
             },
             aggregates: vec![
                 budget_aggregate("budget_remaining", remaining, None, Some(false)),
-                budget_aggregate("budget_consumption_ratio", budget_ratio_bp as u64, Some(CANONICAL_PERCENT_UNIT), Some(threshold_crossed)),
-                budget_aggregate("quota_consumption_ratio", quota_ratio_bp as u64, Some(CANONICAL_PERCENT_UNIT), Some(threshold_crossed)),
+                budget_aggregate(
+                    "budget_consumption_ratio",
+                    budget_ratio_bp as u64,
+                    Some(CANONICAL_PERCENT_UNIT),
+                    Some(threshold_crossed),
+                ),
+                budget_aggregate(
+                    "quota_consumption_ratio",
+                    quota_ratio_bp as u64,
+                    Some(CANONICAL_PERCENT_UNIT),
+                    Some(threshold_crossed),
+                ),
             ],
             consensus: vec![ConsensusGroup {
-                group_id: stable_hash_ref(&json!({"kind": "budget_threshold", "crossed": threshold_crossed}))?,
+                group_id: stable_hash_ref(
+                    &json!({"kind": "budget_threshold", "crossed": threshold_crossed}),
+                )?,
                 topic: "budget_quota_threshold".to_string(),
                 candidates: vec![ConsensusCandidate {
-                    value: NumericValue::Int { value: if threshold_crossed { 1 } else { 0 } },
+                    value: NumericValue::Int {
+                        value: if threshold_crossed { 1 } else { 0 },
+                    },
                     sources: vec!["budget_ratio".to_string(), "quota_ratio".to_string()],
                 }],
-                chosen: Some(NumericValue::Int { value: if threshold_crossed { 1 } else { 0 } }),
+                chosen: Some(NumericValue::Int {
+                    value: if threshold_crossed { 1 } else { 0 },
+                }),
                 agreement_score: decimal_to_string(Decimal::ONE),
                 outliers: vec![],
                 consensus_method: Some(ConsensusMethod::Threshold),
@@ -719,9 +794,13 @@ impl Ph1CompRuntime {
                 vec!["budget_threshold_clear".to_string()]
             },
         };
-        packet
-            .validate()
-            .map_err(|error| Ph1CompError::new(ComputationFailureClass::BudgetComputationFailure, format!("budget packet invalid: {error:?}"), vec!["invalid_budget_packet".to_string()]))?;
+        packet.validate().map_err(|error| {
+            Ph1CompError::new(
+                ComputationFailureClass::BudgetComputationFailure,
+                format!("budget packet invalid: {error:?}"),
+                vec!["invalid_budget_packet".to_string()],
+            )
+        })?;
         Ok(packet)
     }
 
@@ -730,21 +809,31 @@ impl Ph1CompRuntime {
         packet: &ComputationPacket,
         failure_class: Option<ComputationFailureClass>,
     ) -> Result<ComputationExecutionState, ContractViolation> {
-        let packet_ref = Some(packet_ref(packet).map_err(|_| ContractViolation::InvalidValue {
-            field: "computation_packet",
-            reason: "canonical packet hash failed",
-        })?);
-        let consensus_result = packet.consensus.first().map(|group| {
-            ComputationConsensusResult::v1(
-                consensus_status_for_group(group),
-                Some(group.agreement_score.clone()),
-                group.outliers.len() as u16,
-                group.conflict_resolution_rationale.clone(),
-            )
-        }).transpose()?;
+        let packet_ref = Some(
+            packet_ref(packet).map_err(|_| ContractViolation::InvalidValue {
+                field: "computation_packet",
+                reason: "canonical packet hash failed",
+            })?,
+        );
+        let consensus_result = packet
+            .consensus
+            .first()
+            .map(|group| {
+                ComputationConsensusResult::v1(
+                    consensus_status_for_group(group),
+                    Some(group.agreement_score.clone()),
+                    group.outliers.len() as u16,
+                    group.conflict_resolution_rationale.clone(),
+                )
+            })
+            .transpose()?;
         let selected_result = if let Some(result) = selected_result_from_packet(packet)? {
             Some(result)
-        } else if let Some(aggregate) = packet.aggregates.iter().find(|aggregate| aggregate.rank == Some(1)) {
+        } else if let Some(aggregate) = packet
+            .aggregates
+            .iter()
+            .find(|aggregate| aggregate.rank == Some(1))
+        {
             Some(ComputationSelectedResult::v1(
                 aggregate.entity.clone(),
                 aggregate.value.clone(),
@@ -760,13 +849,17 @@ impl Ph1CompRuntime {
         } else {
             None
         };
-        let confidence_posture = packet.confidence.first().map(|item| {
-            ComputationConfidencePosture::v1(
-                Some(item.confidence_score.clone()),
-                item.bucket,
-                item.minimum_threshold_met.unwrap_or(true),
-            )
-        }).transpose()?;
+        let confidence_posture = packet
+            .confidence
+            .first()
+            .map(|item| {
+                ComputationConfidencePosture::v1(
+                    Some(item.confidence_score.clone()),
+                    item.bucket,
+                    item.minimum_threshold_met.unwrap_or(true),
+                )
+            })
+            .transpose()?;
         ComputationExecutionState::v1(
             packet_ref,
             packet.inputs.normalization_trace.clone(),
@@ -786,11 +879,20 @@ impl Ph1CompRuntime {
         created_at_ms: i64,
     ) -> Result<(ComputationPacket, ComputationExecutionState), Ph1CompError> {
         let metrics = [
-            ("estimated_frequency_score", packet.estimated_frequency_score_bp),
+            (
+                "estimated_frequency_score",
+                packet.estimated_frequency_score_bp,
+            ),
             ("estimated_value_score", packet.estimated_value_score_bp),
             ("estimated_roi_score", packet.estimated_roi_score_bp),
-            ("estimated_feasibility_score", packet.estimated_feasibility_score_bp),
-            ("estimated_risk_score", 10_000u16.saturating_sub(packet.estimated_risk_score_bp)),
+            (
+                "estimated_feasibility_score",
+                packet.estimated_feasibility_score_bp,
+            ),
+            (
+                "estimated_risk_score",
+                10_000u16.saturating_sub(packet.estimated_risk_score_bp),
+            ),
             ("worthiness_score", packet.worthiness_score_bp),
         ];
         let normalization_trace = metrics
@@ -809,7 +911,11 @@ impl Ph1CompRuntime {
         let packet_value = ComputationPacket {
             schema_version: PH1COMP_SCHEMA_VERSION.to_string(),
             produced_by: PH1COMP_ENGINE_ID.to_string(),
-            intended_consumers: vec!["PH1.LAW".to_string(), "PH1.J".to_string(), "PH1.GOV".to_string()],
+            intended_consumers: vec![
+                "PH1.LAW".to_string(),
+                "PH1.J".to_string(),
+                "PH1.GOV".to_string(),
+            ],
             created_at_ms,
             trace_id: runtime_execution_envelope.trace_id.clone(),
             inputs: ComputationInputs {
@@ -821,7 +927,10 @@ impl Ph1CompRuntime {
                 policy_snapshot_id: FORMULA_MISSING_SIM_V1.to_string(),
                 as_of_ms: None,
                 input_count: metrics.len() as u32,
-                input_labels: metrics.iter().map(|(metric_id, _)| (*metric_id).to_string()).collect(),
+                input_labels: metrics
+                    .iter()
+                    .map(|(metric_id, _)| (*metric_id).to_string())
+                    .collect(),
                 normalization_trace,
                 formula_version_refs: vec![FORMULA_MISSING_SIM_V1.to_string()],
             },
@@ -845,26 +954,41 @@ impl Ph1CompRuntime {
                 })
                 .collect(),
             consensus: vec![ConsensusGroup {
-                group_id: stable_hash_ref(&json!({"missing_simulation": packet.proposed_simulation_family, "worthiness": packet.worthiness_score_bp}))?,
+                group_id: stable_hash_ref(
+                    &json!({"missing_simulation": packet.proposed_simulation_family, "worthiness": packet.worthiness_score_bp}),
+                )?,
                 topic: "missing_simulation_worthiness".to_string(),
                 candidates: vec![ConsensusCandidate {
-                    value: decimal_to_numeric_value(bp_to_ratio_decimal(packet.worthiness_score_bp)),
+                    value: decimal_to_numeric_value(bp_to_ratio_decimal(
+                        packet.worthiness_score_bp,
+                    )),
                     sources: vec![packet.no_match_proof_ref.clone()],
                 }],
-                chosen: Some(decimal_to_numeric_value(bp_to_ratio_decimal(packet.worthiness_score_bp))),
+                chosen: Some(decimal_to_numeric_value(bp_to_ratio_decimal(
+                    packet.worthiness_score_bp,
+                ))),
                 agreement_score: decimal_to_string(Decimal::ONE),
                 outliers: vec![],
                 consensus_method: Some(ConsensusMethod::Threshold),
                 minimum_threshold_met: Some(packet.worthiness_score_bp >= 5_000),
                 selected_result_id: Some(packet.proposed_simulation_family.clone()),
-                conflict_resolution_rationale: Some("missing_simulation_worthiness_selected".to_string()),
+                conflict_resolution_rationale: Some(
+                    "missing_simulation_worthiness_selected".to_string(),
+                ),
             }],
             confidence: vec![ConfidenceItem {
-                claim_key: format!("missing_simulation:{}:worthiness", packet.proposed_simulation_family),
-                confidence_score: decimal_to_string(bp_to_ratio_decimal(packet.worthiness_score_bp)),
+                claim_key: format!(
+                    "missing_simulation:{}:worthiness",
+                    packet.proposed_simulation_family
+                ),
+                confidence_score: decimal_to_string(bp_to_ratio_decimal(
+                    packet.worthiness_score_bp,
+                )),
                 factors: ConfidenceFactors {
                     sample_size: metrics.len() as u32,
-                    trust_tier_mix: decimal_to_string(bp_to_ratio_decimal(packet.worthiness_score_bp)),
+                    trust_tier_mix: decimal_to_string(bp_to_ratio_decimal(
+                        packet.worthiness_score_bp,
+                    )),
                     recency: decimal_to_string(Decimal::ONE),
                     conflict: decimal_to_string(Decimal::ONE),
                     outliers: decimal_to_string(Decimal::ONE),
@@ -907,7 +1031,9 @@ fn selected_result_from_packet(
 fn consensus_status_for_group(group: &ConsensusGroup) -> ComputationConsensusStatus {
     match (group.consensus_method, group.chosen.is_some()) {
         (Some(ConsensusMethod::Majority), true) => ComputationConsensusStatus::MajorityReached,
-        (Some(ConsensusMethod::Weighted), true) => ComputationConsensusStatus::WeightedConsensusReached,
+        (Some(ConsensusMethod::Weighted), true) => {
+            ComputationConsensusStatus::WeightedConsensusReached
+        }
         (Some(ConsensusMethod::Threshold), true) => {
             ComputationConsensusStatus::ThresholdConsensusReached
         }
@@ -965,14 +1091,11 @@ fn divide_round(numerator: u64, denominator: u64) -> u32 {
     if denominator == 0 {
         return 0;
     }
-    ((numerator.saturating_mul(2).saturating_add(denominator)) / (denominator.saturating_mul(2))) as u32
+    ((numerator.saturating_mul(2).saturating_add(denominator)) / (denominator.saturating_mul(2)))
+        as u32
 }
 
-fn scale_decimal(
-    value: Decimal,
-    from_scale: u32,
-    to_scale: u32,
-) -> Result<Decimal, Ph1CompError> {
+fn scale_decimal(value: Decimal, from_scale: u32, to_scale: u32) -> Result<Decimal, Ph1CompError> {
     if from_scale == to_scale {
         return Ok(round_decimal(value));
     }
@@ -1006,7 +1129,9 @@ fn build_ranking_consensus_group(scored: &[ScoredCandidate]) -> ConsensusGroup {
                 sources: vec![candidate.candidate_id.clone()],
             })
             .collect(),
-        chosen: chosen.map(|candidate| decimal_to_numeric_value(bp_to_ratio_decimal(candidate.final_score_bp))),
+        chosen: chosen.map(|candidate| {
+            decimal_to_numeric_value(bp_to_ratio_decimal(candidate.final_score_bp))
+        }),
         agreement_score: chosen
             .map(|candidate| decimal_to_string(bp_to_ratio_decimal(candidate.final_score_bp)))
             .unwrap_or_else(|| "0".to_string()),
@@ -1014,7 +1139,9 @@ fn build_ranking_consensus_group(scored: &[ScoredCandidate]) -> ConsensusGroup {
         consensus_method: Some(ConsensusMethod::Threshold),
         minimum_threshold_met: chosen.map(|candidate| candidate.threshold_met),
         selected_result_id: chosen.map(|candidate| candidate.candidate_id.clone()),
-        conflict_resolution_rationale: Some("deterministic_ranking_selected_top_candidate".to_string()),
+        conflict_resolution_rationale: Some(
+            "deterministic_ranking_selected_top_candidate".to_string(),
+        ),
     }
 }
 
@@ -1027,13 +1154,17 @@ fn budget_aggregate(
     let numeric_value = if unit == Some(CANONICAL_PERCENT_UNIT) {
         decimal_to_numeric_value(bp_to_ratio_decimal(value as u16))
     } else {
-        NumericValue::Int { value: value as i64 }
+        NumericValue::Int {
+            value: value as i64,
+        }
     };
     Aggregate {
         metric_id: metric_id.to_string(),
         entity: "budget_quota".to_string(),
         attribute: metric_id.to_string(),
-        unit: unit.map(|value| value.to_string()).or_else(|| Some(CANONICAL_BUDGET_UNIT.to_string())),
+        unit: unit
+            .map(|value| value.to_string())
+            .or_else(|| Some(CANONICAL_BUDGET_UNIT.to_string())),
         currency: None,
         window: None,
         method: AggregateMethod::WeightedMean,
@@ -1413,8 +1544,12 @@ mod tests {
                 },
             )
             .unwrap();
-        let state = runtime.computation_state_from_packet(&packet, None).unwrap();
-        let envelope = sample_envelope().with_computation_state(Some(state)).unwrap();
+        let state = runtime
+            .computation_state_from_packet(&packet, None)
+            .unwrap();
+        let envelope = sample_envelope()
+            .with_computation_state(Some(state))
+            .unwrap();
         assert!(envelope.computation_state.is_some());
         assert_eq!(
             envelope

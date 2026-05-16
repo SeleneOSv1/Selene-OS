@@ -1072,7 +1072,11 @@ impl Validate for WakePackManifestV1 {
                 reason: "must match PH1LEARN_CONTRACT_VERSION",
             });
         }
-        validate_token("wake_pack_manifest_v1.model_version", &self.model_version, 64)?;
+        validate_token(
+            "wake_pack_manifest_v1.model_version",
+            &self.model_version,
+            64,
+        )?;
         validate_token("wake_pack_manifest_v1.model_abi", &self.model_abi, 64)?;
         validate_token(
             "wake_pack_manifest_v1.feature_config_id",
@@ -1085,10 +1089,7 @@ impl Validate for WakePackManifestV1 {
             96,
         )?;
         self.artifact_version.validate()?;
-        validate_lower_hex_sha256(
-            "wake_pack_manifest_v1.package_hash",
-            &self.package_hash,
-        )?;
+        validate_lower_hex_sha256("wake_pack_manifest_v1.package_hash", &self.package_hash)?;
         validate_token("wake_pack_manifest_v1.payload_ref", &self.payload_ref, 256)?;
         validate_token(
             "wake_pack_manifest_v1.provenance_ref",
@@ -1931,10 +1932,7 @@ fn validate_lower_hex_sha256(field: &'static str, value: &str) -> Result<(), Con
             reason: "must be a 64-char lowercase SHA-256 hex string",
         });
     }
-    if value
-        .chars()
-        .any(|c| !matches!(c, '0'..='9' | 'a'..='f'))
-    {
+    if value.chars().any(|c| !matches!(c, '0'..='9' | 'a'..='f')) {
         return Err(ContractViolation::InvalidValue {
             field,
             reason: "must contain lowercase hex chars only",

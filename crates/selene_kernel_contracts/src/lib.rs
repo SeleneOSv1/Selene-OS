@@ -10,8 +10,8 @@ pub mod ph1builder;
 pub mod ph1c;
 pub mod ph1cache;
 pub mod ph1capreq;
-pub mod ph1context;
 pub mod ph1comp;
+pub mod ph1context;
 pub mod ph1cost;
 pub mod ph1d;
 pub mod ph1delivery;
@@ -79,8 +79,8 @@ pub use common::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SchemaVersion, SessionState, Validate,
 };
 pub use ph1comp::{
-    Aggregate, AggregateMethod, ComputationConsensusResult, ComputationConsensusStatus,
-    ComputationConfidenceBucket, ComputationConfidencePosture, ComputationExecutionState,
+    Aggregate, AggregateMethod, ComputationConfidenceBucket, ComputationConfidencePosture,
+    ComputationConsensusResult, ComputationConsensusStatus, ComputationExecutionState,
     ComputationFailureClass, ComputationInputs, ComputationPacket, ComputationSelectedResult,
     ConsensusCandidate, ConsensusGroup, ConsensusMethod, ConsensusOutlier, NormalizationKind,
     NormalizationTraceEntry, NumericValue, PH1COMP_ENGINE_ID, PH1COMP_SCHEMA_VERSION,

@@ -64,7 +64,10 @@ fn test_t1_identical_synthesis_packet_produces_identical_formatted_text() {
     );
     assert_eq!(first.write_packet, second.write_packet);
     assert_eq!(first.voice_text, second.voice_text);
-    assert_eq!(first.audit_metrics.language_tag, second.audit_metrics.language_tag);
+    assert_eq!(
+        first.audit_metrics.language_tag,
+        second.audit_metrics.language_tag
+    );
     assert_eq!(first.audit_metrics.language_tag, "en");
 
     let packet_registry = load_packet_schema_registry().expect("packet schema should load");
@@ -217,7 +220,9 @@ fn test_stage_34d_write_display_tts_safe_split_blocks_display_only_citations() {
     )
     .expect("write render should pass");
 
-    assert!(rendered.voice_text.contains("Grounded response for question: What happened."));
+    assert!(rendered
+        .voice_text
+        .contains("Grounded response for question: What happened."));
     assert!(rendered.voice_text.contains("Claim from source A."));
     assert!(rendered.voice_text.contains("Claim from source B."));
     assert!(!rendered.voice_text.contains("Citations:"));
@@ -326,9 +331,7 @@ fn test_append_write_audit_fields_is_replay_stable() {
         Some(true)
     );
     assert_eq!(
-        write_audit
-            .get("language_tag")
-            .and_then(Value::as_str),
+        write_audit.get("language_tag").and_then(Value::as_str),
         Some("en")
     );
 }

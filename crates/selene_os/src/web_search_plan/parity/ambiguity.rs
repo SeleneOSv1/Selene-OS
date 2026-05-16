@@ -68,8 +68,20 @@ fn entity_is_ambiguous(query: &str) -> bool {
 
 fn timeframe_missing(query: &str) -> bool {
     const TIME_TOKENS: &[&str] = &[
-        "today", "latest", "current", "yesterday", "last", "this", "q1", "q2", "q3", "q4",
-        "202", "201", "month", "year",
+        "today",
+        "latest",
+        "current",
+        "yesterday",
+        "last",
+        "this",
+        "q1",
+        "q2",
+        "q3",
+        "q4",
+        "202",
+        "201",
+        "month",
+        "year",
     ];
     !TIME_TOKENS.iter().any(|token| query.contains(token))
 }

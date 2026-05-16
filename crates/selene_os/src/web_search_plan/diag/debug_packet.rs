@@ -2,7 +2,9 @@
 
 use crate::web_search_plan::diag::error_taxonomy::map_internal_failure;
 use crate::web_search_plan::diag::redaction::{redact_url, sanitize_debug_hint};
-use crate::web_search_plan::diag::state_trace::{validate_turn_state_transitions, TurnStateTransition};
+use crate::web_search_plan::diag::state_trace::{
+    validate_turn_state_transitions, TurnStateTransition,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,7 +111,9 @@ pub fn try_build_debug_packet(context: DebugPacketContext<'_>) -> Result<DebugPa
                 None
             } else {
                 if leaks_sensitive_material(&sanitized) {
-                    return Err("debug_hint still contains sensitive material after redaction".to_string());
+                    return Err(
+                        "debug_hint still contains sensitive material after redaction".to_string(),
+                    );
                 }
                 Some(sanitized)
             }

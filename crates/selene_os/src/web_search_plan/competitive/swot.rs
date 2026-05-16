@@ -15,13 +15,14 @@ pub fn build_swot(
 ) -> Option<CompetitiveSwot> {
     let strengths = build_strengths(target_entity_id, competitor_ids, feature_matrix);
     let weaknesses = build_weaknesses(target_entity_id, competitor_ids, feature_matrix);
-    let (opportunities, threats) = build_price_opportunities_threats(
-        target_entity_id,
-        competitor_ids,
-        pricing_table,
-    );
+    let (opportunities, threats) =
+        build_price_opportunities_threats(target_entity_id, competitor_ids, pricing_table);
 
-    if strengths.is_empty() && weaknesses.is_empty() && opportunities.is_empty() && threats.is_empty() {
+    if strengths.is_empty()
+        && weaknesses.is_empty()
+        && opportunities.is_empty()
+        && threats.is_empty()
+    {
         None
     } else {
         Some(CompetitiveSwot {
@@ -58,7 +59,10 @@ fn build_strengths(
         }
 
         bullets.push(SwotBullet {
-            text: format!("Target provides feature {} with stronger coverage", feature_key),
+            text: format!(
+                "Target provides feature {} with stronger coverage",
+                feature_key
+            ),
             source_refs: dedupe_refs(vec![target_feature.source_refs.clone()]),
         });
     }
@@ -133,7 +137,8 @@ fn build_price_opportunities_threats(
 
     if !higher_competitor_sources.is_empty() {
         opportunities.push(SwotBullet {
-            text: "Target price appears lower than at least one competitor in comparable currency".to_string(),
+            text: "Target price appears lower than at least one competitor in comparable currency"
+                .to_string(),
             source_refs: dedupe_refs(
                 std::iter::once(target_sources.clone())
                     .chain(higher_competitor_sources)
@@ -152,7 +157,10 @@ fn build_price_opportunities_threats(
         });
     }
 
-    (sort_and_cap_bullets(opportunities), sort_and_cap_bullets(threats))
+    (
+        sort_and_cap_bullets(opportunities),
+        sort_and_cap_bullets(threats),
+    )
 }
 
 fn representative_monthly_price(
@@ -183,7 +191,9 @@ fn representative_monthly_price(
 
 fn monthly_equivalent(entry: &CompetitivePrice) -> Option<Decimal> {
     match entry.billing_period {
-        BillingPeriod::Monthly | BillingPeriod::Unknown => Decimal::from_str(&entry.price_value).ok(),
+        BillingPeriod::Monthly | BillingPeriod::Unknown => {
+            Decimal::from_str(&entry.price_value).ok()
+        }
         BillingPeriod::Yearly => {
             if let Some(normalized) = &entry.normalized_to {
                 Decimal::from_str(normalized).ok()

@@ -170,7 +170,10 @@ fn test_t4_delta_only_computed_when_comparable() {
         .find(|change| change.key.starts_with("acme|price"))
         .expect("price change should exist");
     assert_eq!(price.change_type.as_str(), "modified");
-    assert!(price.delta_value.is_none(), "delta should be omitted on mismatch");
+    assert!(
+        price.delta_value.is_none(),
+        "delta should be omitted on mismatch"
+    );
 }
 
 #[test]
@@ -182,7 +185,10 @@ fn test_t5_mixed_units_handled_deterministically() {
     let second = build_changes(&baseline, &compare);
     assert_eq!(first, second, "mixed-unit diff must be deterministic");
     assert_eq!(first.unit_mismatch_count, 1);
-    assert!(first.reason_codes.iter().any(|code| code == "policy_violation"));
+    assert!(first
+        .reason_codes
+        .iter()
+        .any(|code| code == "policy_violation"));
 }
 
 #[test]
@@ -207,13 +213,11 @@ fn test_t6_missing_timestamps_handled_deterministically() {
         build_temporal_comparison_packet(&request, &fixture.evidence_packet, &fixture.rows)
             .expect("temporal build should pass");
     assert_eq!(first, second, "temporal build must be deterministic");
-    assert!(
-        first
-            .packet
-            .uncertainty_flags
-            .iter()
-            .any(|flag| flag == "missing_timestamps_excluded")
-    );
+    assert!(first
+        .packet
+        .uncertainty_flags
+        .iter()
+        .any(|flag| flag == "missing_timestamps_excluded"));
 }
 
 #[test]

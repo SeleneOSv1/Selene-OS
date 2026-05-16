@@ -1,8 +1,6 @@
 #![forbid(unsafe_code)]
 
-use crate::web_search_plan::competitive::schema::{
-    CompetitiveEntity, COMPETITIVE_NORM_VERSION,
-};
+use crate::web_search_plan::competitive::schema::{CompetitiveEntity, COMPETITIVE_NORM_VERSION};
 use crate::web_search_plan::contract_hash::sha256_hex;
 use crate::web_search_plan::structured::types::StructuredRow;
 use std::collections::{BTreeMap, BTreeSet};

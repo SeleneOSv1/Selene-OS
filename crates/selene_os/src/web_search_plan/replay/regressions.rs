@@ -52,8 +52,10 @@ pub fn evaluate_regressions(
 
     let reason_registry = load_reason_code_registry()?;
 
-    let actual_map: BTreeMap<&str, &ReplayCaseResult> =
-        results.iter().map(|result| (result.case_id.as_str(), result)).collect();
+    let actual_map: BTreeMap<&str, &ReplayCaseResult> = results
+        .iter()
+        .map(|result| (result.case_id.as_str(), result))
+        .collect();
 
     if expected.cases.len() != actual_map.len() {
         return Err(format!(

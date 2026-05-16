@@ -11342,7 +11342,8 @@ mod tests {
     }
 
     #[test]
-    fn at_sim_exec_16b_access_step_up_missing_access_context_refuses_and_emits_start_finish_audit() {
+    fn at_sim_exec_16b_access_step_up_missing_access_context_refuses_and_emits_start_finish_audit()
+    {
         let mut store = Ph1fStore::new_in_memory();
         let exec = SimulationExecutor::default();
         let actor = UserId::new("tenant_2:stepup_actor_missing").unwrap();
@@ -11382,7 +11383,11 @@ mod tests {
             .execute_ph1x_dispatch_simulation_candidate(&mut store, actor, MonotonicTimeNs(2), &x)
             .unwrap();
         match out {
-            SimulationDispatchOutcome::AccessStepUp { outcome, reason_code, .. } => {
+            SimulationDispatchOutcome::AccessStepUp {
+                outcome,
+                reason_code,
+                ..
+            } => {
                 assert_eq!(outcome, StepUpOutcome::Refuse);
                 assert_eq!(
                     reason_code,

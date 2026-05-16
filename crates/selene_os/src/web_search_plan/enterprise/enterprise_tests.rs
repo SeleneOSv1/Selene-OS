@@ -1,8 +1,12 @@
 #![forbid(unsafe_code)]
 
-use crate::web_search_plan::enterprise::consistency::{validate_cross_mode_consistency, ConsistencyInputs};
+use crate::web_search_plan::enterprise::consistency::{
+    validate_cross_mode_consistency, ConsistencyInputs,
+};
 use crate::web_search_plan::enterprise::enterprise_pipeline::run_enterprise_pipeline;
-use crate::web_search_plan::enterprise::enterprise_request::{EnterpriseConstraints, EnterpriseRequest};
+use crate::web_search_plan::enterprise::enterprise_request::{
+    EnterpriseConstraints, EnterpriseRequest,
+};
 use crate::web_search_plan::enterprise::mode_router::EnterpriseMode;
 use crate::web_search_plan::merge::{InternalContext, InternalSourceType};
 use crate::web_search_plan::replay::snapshot::hash_canonical_json;
@@ -103,8 +107,8 @@ fn test_t1_enterprise_request_routing_is_deterministic() {
         "created_at_ms": 1703000000000_i64,
         "importance_tier": "high"
     });
-    let first = EnterpriseRequest::parse_from_tool_request(&request_json)
-        .expect("first parse should pass");
+    let first =
+        EnterpriseRequest::parse_from_tool_request(&request_json).expect("first parse should pass");
     let second = EnterpriseRequest::parse_from_tool_request(&request_json)
         .expect("second parse should pass");
     assert_eq!(first.mode, EnterpriseMode::Competitive);
@@ -130,7 +134,9 @@ fn test_t2_pipeline_composes_in_deterministic_order() {
         "generate enterprise report for acme",
     );
     request.evidence_packet = Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
-    request.computation_packet = Some(load_enterprise_fixture("enterprise_computation_packet.json"));
+    request.computation_packet = Some(load_enterprise_fixture(
+        "enterprise_computation_packet.json",
+    ));
     request.internal_context = Some(merge_context());
 
     let output = run_enterprise_pipeline(&request, 1_703_000_000_000)
@@ -210,10 +216,10 @@ fn test_t5_same_evidence_produces_identical_outputs_and_hashes() {
     request.evidence_packet = Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
     request.internal_context = Some(merge_context());
 
-    let first = run_enterprise_pipeline(&request, 1_703_000_000_000)
-        .expect("first merge run should pass");
-    let second = run_enterprise_pipeline(&request, 1_703_000_000_000)
-        .expect("second merge run should pass");
+    let first =
+        run_enterprise_pipeline(&request, 1_703_000_000_000).expect("first merge run should pass");
+    let second =
+        run_enterprise_pipeline(&request, 1_703_000_000_000).expect("second merge run should pass");
     assert_eq!(first, second);
 
     let first_merge_hash = hash_canonical_json(
@@ -241,21 +247,26 @@ fn test_t6_provenance_record_stable_and_complete() {
         "generate enterprise report for acme",
     );
     request.evidence_packet = Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
-    request.computation_packet = Some(load_enterprise_fixture("enterprise_computation_packet.json"));
+    request.computation_packet = Some(load_enterprise_fixture(
+        "enterprise_computation_packet.json",
+    ));
     request.internal_context = Some(merge_context());
 
-    let output = run_enterprise_pipeline(&request, 1_703_000_000_000)
-        .expect("report run should succeed");
+    let output =
+        run_enterprise_pipeline(&request, 1_703_000_000_000).expect("report run should succeed");
     assert_eq!(output.provenance.mode_selected, "report".to_string());
     assert_eq!(output.provenance.evidence_hash.len(), 64);
     assert!(output.provenance.output_packet_hashes.contains_key("risk"));
     assert!(output.provenance.output_packet_hashes.contains_key("merge"));
-    assert!(output.provenance.output_packet_hashes.contains_key("report"));
+    assert!(output
+        .provenance
+        .output_packet_hashes
+        .contains_key("report"));
 
-    let provenance_value = serde_json::to_value(&output.provenance)
-        .expect("provenance should serialize");
-    let provenance_hash = hash_canonical_json(&provenance_value)
-        .expect("provenance hash should compute");
+    let provenance_value =
+        serde_json::to_value(&output.provenance).expect("provenance should serialize");
+    let provenance_hash =
+        hash_canonical_json(&provenance_value).expect("provenance hash should compute");
     let expected_hash = hash_from_expected_fixture("expected_provenance.json", "provenance_hash");
     assert_eq!(provenance_hash, expected_hash);
 }
@@ -357,7 +368,9 @@ fn test_snapshot_hashes_match_expected_packets() {
         "assess acme risk",
     );
     risk_request.evidence_packet = Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
-    risk_request.computation_packet = Some(load_enterprise_fixture("enterprise_computation_packet.json"));
+    risk_request.computation_packet = Some(load_enterprise_fixture(
+        "enterprise_computation_packet.json",
+    ));
     let risk_output = run_enterprise_pipeline(&risk_request, 1_703_000_000_000)
         .expect("risk pipeline should succeed");
     let risk_hash = hash_canonical_json(
@@ -374,7 +387,8 @@ fn test_snapshot_hashes_match_expected_packets() {
         "trace-enterprise-merge",
         "what changed since last report for acme",
     );
-    merge_request.evidence_packet = Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
+    merge_request.evidence_packet =
+        Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
     merge_request.internal_context = Some(merge_context());
     let merge_output = run_enterprise_pipeline(&merge_request, 1_703_000_000_000)
         .expect("merge pipeline should succeed");
@@ -392,8 +406,11 @@ fn test_snapshot_hashes_match_expected_packets() {
         "trace-enterprise-report",
         "generate enterprise report for acme",
     );
-    report_request.evidence_packet = Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
-    report_request.computation_packet = Some(load_enterprise_fixture("enterprise_computation_packet.json"));
+    report_request.evidence_packet =
+        Some(load_enterprise_fixture("enterprise_evidence_packet.json"));
+    report_request.computation_packet = Some(load_enterprise_fixture(
+        "enterprise_computation_packet.json",
+    ));
     report_request.internal_context = Some(merge_context());
     let report_output = run_enterprise_pipeline(&report_request, 1_703_000_000_000)
         .expect("report pipeline should succeed");
@@ -410,11 +427,11 @@ fn test_snapshot_hashes_match_expected_packets() {
         competitive_hash, expected_competitive,
         "competitive packet hash mismatch"
     );
-    assert_eq!(temporal_hash, expected_temporal, "temporal packet hash mismatch");
+    assert_eq!(
+        temporal_hash, expected_temporal,
+        "temporal packet hash mismatch"
+    );
     assert_eq!(risk_hash, expected_risk, "risk packet hash mismatch");
     assert_eq!(merge_hash, expected_merge, "merge packet hash mismatch");
-    assert_eq!(
-        report_hash, expected_report,
-        "report packet hash mismatch"
-    );
+    assert_eq!(report_hash, expected_report, "report packet hash mismatch");
 }

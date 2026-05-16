@@ -1178,8 +1178,8 @@ fn at_vid_db_13_emo_artifact_manifest_changes_enqueue_sync_rows() {
 }
 
 #[test]
-fn at_vid_db_14_voice_artifact_revocation_commit_blocks_revoked_version_and_enqueues_manifest_sync(
-) {
+fn at_vid_db_14_voice_artifact_revocation_commit_blocks_revoked_version_and_enqueues_manifest_sync()
+{
     let mut s = Ph1fStore::new_in_memory();
     let tenant_id = "tenant_a".to_string();
 
@@ -1272,7 +1272,10 @@ fn at_vid_db_14_voice_artifact_revocation_commit_blocks_revoked_version_and_enqu
             "idem_voice_revoke_missing".to_string(),
         )
         .expect_err("unknown artifact version must fail closed");
-    assert!(matches!(unknown_err, StorageError::ForeignKeyViolation { .. }));
+    assert!(matches!(
+        unknown_err,
+        StorageError::ForeignKeyViolation { .. }
+    ));
 
     let non_voice_err = s
         .ph1builder_voice_artifact_revocation_commit(
@@ -1284,8 +1287,5 @@ fn at_vid_db_14_voice_artifact_revocation_commit_blocks_revoked_version_and_enqu
             "idem_non_voice_revoke".to_string(),
         )
         .expect_err("non-voice artifact revocation must fail closed");
-    assert!(matches!(
-        non_voice_err,
-        StorageError::ContractViolation(_)
-    ));
+    assert!(matches!(non_voice_err, StorageError::ContractViolation(_)));
 }

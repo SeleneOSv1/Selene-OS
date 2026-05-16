@@ -76,7 +76,14 @@ pub fn route_mode(query: &str, explicit_mode: Option<&str>) -> Result<Enterprise
     }
     if contains_any(
         normalized.as_str(),
-        &["latest", "today", "live", "current price", "weather", "flight"],
+        &[
+            "latest",
+            "today",
+            "live",
+            "current price",
+            "weather",
+            "flight",
+        ],
     ) {
         return Ok(EnterpriseMode::Realtime);
     }
@@ -86,7 +93,10 @@ pub fn route_mode(query: &str, explicit_mode: Option<&str>) -> Result<Enterprise
     ) {
         return Ok(EnterpriseMode::Regulatory);
     }
-    if contains_any(normalized.as_str(), &["merge", "what changed since last report"]) {
+    if contains_any(
+        normalized.as_str(),
+        &["merge", "what changed since last report"],
+    ) {
         return Ok(EnterpriseMode::Merge);
     }
     Ok(EnterpriseMode::Report)

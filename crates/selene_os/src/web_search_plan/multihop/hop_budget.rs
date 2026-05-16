@@ -32,7 +32,9 @@ impl HopBudget {
             max_total_time_ms,
             max_time_per_hop_ms,
             max_provider_calls_total: caps.max_total_provider_calls_per_turn,
-            max_url_opens_total: caps.max_queries.saturating_mul(caps.max_urls_opened_per_query),
+            max_url_opens_total: caps
+                .max_queries
+                .saturating_mul(caps.max_urls_opened_per_query),
         }
     }
 

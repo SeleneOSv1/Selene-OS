@@ -61,8 +61,10 @@ pub fn build_trace_report(
     let known_refs = collect_known_evidence_refs(evidence_packet);
     let ordered_citations = ordered_valid_citations(synthesis_citations, &known_refs);
 
-    let supports_computed_context =
-        computation_packet.is_some() || comparison_packet.is_some() || temporal_packet.is_some() || risk_packet.is_some();
+    let supports_computed_context = computation_packet.is_some()
+        || comparison_packet.is_some()
+        || temporal_packet.is_some()
+        || risk_packet.is_some();
 
     let has_conflict = reason_codes
         .iter()
@@ -90,7 +92,10 @@ pub fn build_trace_report(
             if ordered_citations.len() > 1 {
                 tags.push(ReasoningTag::MultiSourceAgree);
             }
-            if ordered_citations.iter().any(|citation| is_official_citation(citation)) {
+            if ordered_citations
+                .iter()
+                .any(|citation| is_official_citation(citation))
+            {
                 tags.push(ReasoningTag::OfficialSource);
             }
             if supports_computed_context && claim_contains_numeric_signal(claim_text.as_str()) {
@@ -150,7 +155,10 @@ fn collect_known_evidence_refs(evidence_packet: &Value) -> BTreeSet<String> {
         }
     }
 
-    if let Some(chunks) = evidence_packet.get("content_chunks").and_then(Value::as_array) {
+    if let Some(chunks) = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+    {
         for chunk in chunks {
             if let Some(chunk_id) = chunk.get("chunk_id").and_then(Value::as_str) {
                 refs.insert(chunk_id.to_string());

@@ -68,7 +68,10 @@ pub fn validate_replay_corpus(corpus: &ReplayCorpus) -> Result<(), String> {
             return Err(format!("duplicate replay case_id {}", case.case_id));
         }
         if case.query.trim().is_empty() {
-            return Err(format!("replay case {} query must not be empty", case.case_id));
+            return Err(format!(
+                "replay case {} query must not be empty",
+                case.case_id
+            ));
         }
 
         validate_mode(case.case_id.as_str(), case.mode.as_str())?;
@@ -96,7 +99,10 @@ fn validate_mode(case_id: &str, mode: &str) -> Result<(), String> {
     if ["web", "news", "url_fetch", "images", "video"].contains(&mode) {
         Ok(())
     } else {
-        Err(format!("replay case {} has unsupported mode {}", case_id, mode))
+        Err(format!(
+            "replay case {} has unsupported mode {}",
+            case_id, mode
+        ))
     }
 }
 

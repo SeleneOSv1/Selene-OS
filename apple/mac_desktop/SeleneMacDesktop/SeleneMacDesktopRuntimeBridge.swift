@@ -333,6 +333,37 @@ struct DesktopCanonicalRuntimeOutcomeState: Identifiable, Equatable {
         )
     }
 
+    static func completedSessionIdleCloseCheck(
+        preparedRequestID: String,
+        endpoint: String,
+        requestID: String,
+        response: DesktopCanonicalRuntimeBridge.SessionIdleCloseCheckAdapterResponsePayload
+    ) -> DesktopCanonicalRuntimeOutcomeState {
+        DesktopCanonicalRuntimeOutcomeState(
+            id: preparedRequestID,
+            phase: .completed,
+            title: "Canonical session idle close check completed",
+            summary: "The bounded Desktop idle timer reached the canonical PH1.L session lifecycle bridge.",
+            detail: response.reason ?? "PH1.L remains authoritative for whether the session closes. Desktop only schedules this check and executes the returned lifecycle packet.",
+            endpoint: endpoint,
+            requestID: requestID,
+            outcome: response.outcome,
+            nextMove: response.sessionLifecycleAction == nil ? "session_idle_noop" : "session_lifecycle_action",
+            reasonCode: nil,
+            sessionID: response.sessionID,
+            turnID: nil,
+            failureClass: nil,
+            authoritativeResponseText: nil,
+            authoritativeTTSOutputText: nil,
+            authoritativeResponseProvenance: nil,
+            sourceChips: [],
+            imageCards: [],
+            sourceLinkCitationCards: [],
+            screenLifecycleAction: nil,
+            sessionLifecycleAction: response.sessionLifecycleAction?.desktopAction
+        )
+    }
+
     static func failed(
         preparedRequestID: String,
         endpoint: String,
@@ -3868,6 +3899,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         case invalidWakeEnrollDeferCommitRequest(String)
         case invalidSessionAttachRequest(String)
         case invalidSessionRecentListRequest(String)
+        case invalidSessionIdleCloseCheckRequest(String)
         case invalidSessionPostureEvidenceRequest(String)
         case invalidSessionMultiPostureEntryRequest(String)
         case invalidSessionMultiPostureResumeRequest(String)
@@ -3901,6 +3933,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                  .invalidWakeEnrollDeferCommitRequest(let detail),
                  .invalidSessionAttachRequest(let detail),
                  .invalidSessionRecentListRequest(let detail),
+                 .invalidSessionIdleCloseCheckRequest(let detail),
                  .invalidSessionPostureEvidenceRequest(let detail),
                  .invalidSessionMultiPostureEntryRequest(let detail),
                  .invalidSessionMultiPostureResumeRequest(let detail),
@@ -4119,6 +4152,15 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     }
 
     struct DesktopSessionRecentListIngressContext {
+        let deviceID: String
+        let requestID: String
+        let endpoint: String
+        let urlRequest: URLRequest
+    }
+
+    struct DesktopSessionIdleCloseCheckIngressContext {
+        let preparedRequestID: String
+        let actorUserID: String
         let deviceID: String
         let requestID: String
         let endpoint: String
@@ -4533,6 +4575,37 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let sessions: [SessionRecentListItemPayload]
     }
 
+    struct SessionIdleCloseCheckAdapterResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let reason: String?
+        let sessionID: String?
+        let sessionState: String?
+        let sessionLifecycleAction: VoiceTurnSessionLifecycleActionPayload?
+
+        private enum CodingKeys: String, CodingKey {
+            case status
+            case outcome
+            case reason
+            case sessionID = "session_id"
+            case sessionState = "session_state"
+            case sessionLifecycleAction = "session_lifecycle_action"
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            status = try container.decode(String.self, forKey: .status)
+            outcome = try container.decode(String.self, forKey: .outcome)
+            reason = try container.decodeIfPresent(String.self, forKey: .reason)
+            sessionID = try container.decodeIfPresent(String.self, forKey: .sessionID)
+            sessionState = try container.decodeIfPresent(String.self, forKey: .sessionState)
+            sessionLifecycleAction = try container.decodeIfPresent(
+                VoiceTurnSessionLifecycleActionPayload.self,
+                forKey: .sessionLifecycleAction
+            )
+        }
+    }
+
     struct SessionPostureEvidenceAdapterResponsePayload: Decodable, Equatable {
         let status: String
         let outcome: String
@@ -4910,6 +4983,14 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let correlationID: UInt64
         let idempotencyKey: String
         let deviceID: String
+    }
+
+    private struct SessionIdleCloseCheckAdapterRequestPayload: Encodable {
+        let correlationID: UInt64
+        let idempotencyKey: String
+        let actorUserID: String
+        let deviceID: String
+        let ttsPlaybackActive: Bool
     }
 
     private struct SessionPostureEvidenceAdapterRequestPayload: Encodable {
@@ -5491,7 +5572,6 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
             let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
             let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.statusCode ?? 0
 
@@ -5737,7 +5817,6 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
             let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
             let decoder = JSONDecoder()
-            decoder.keyDecodingStrategy = .convertFromSnakeCase
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.statusCode ?? 0
 
@@ -6796,6 +6875,50 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                 endpoint: ingressContext.endpoint,
                 requestID: ingressContext.requestID,
                 summary: "The canonical recent-session visibility bridge could not deliver this bounded desktop current-device recent-session visibility request.",
+                detail: error.localizedDescription
+            )
+        }
+    }
+
+    func submitDesktopSessionIdleCloseCheck(
+        _ ingressContext: DesktopSessionIdleCloseCheckIngressContext
+    ) async -> DesktopCanonicalRuntimeOutcomeState {
+        do {
+            try await ensureAdapterAvailable()
+
+            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let decoder = JSONDecoder()
+            // This response defines explicit snake_case CodingKeys for the
+            // PH1.L-approved lifecycle packet. A global snake-case conversion
+            // prevents `session_lifecycle_action` from decoding, leaving
+            // Desktop with a closed outcome but no approved action to execute.
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payload = try decoder.decode(SessionIdleCloseCheckAdapterResponsePayload.self, from: data)
+
+            if statusCode == 200,
+               payload.status.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "ok" {
+                return .completedSessionIdleCloseCheck(
+                    preparedRequestID: ingressContext.preparedRequestID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    response: payload
+                )
+            }
+
+            return .failed(
+                preparedRequestID: ingressContext.preparedRequestID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical PH1.L session idle close bridge rejected or failed this bounded Desktop idle check.",
+                detail: "Canonical `/v1/session/idle-close-check` failed closed with outcome `\(payload.outcome)` and reason `\(boundedOnboardingContinueField(payload.reason) ?? "not_provided")`."
+            )
+        } catch {
+            return .failed(
+                preparedRequestID: ingressContext.preparedRequestID,
+                endpoint: ingressContext.endpoint,
+                requestID: ingressContext.requestID,
+                summary: "The canonical PH1.L session idle close bridge could not deliver this bounded Desktop idle check.",
                 detail: error.localizedDescription
             )
         }
@@ -8400,6 +8523,63 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         )
     }
 
+    func desktopSessionIdleCloseCheckRequestBuilder(
+        ttsPlaybackActive: Bool
+    ) throws -> DesktopSessionIdleCloseCheckIngressContext {
+        guard let managedDeviceID = boundedOnboardingContinueField(deviceID) else {
+            throw BridgeError.invalidSessionIdleCloseCheckRequest(
+                "bounded desktop idle-close check must preserve the exact managed bridge `deviceID` only"
+            )
+        }
+
+        guard let managedActorUserID = boundedOnboardingContinueField(actorUserID) else {
+            throw BridgeError.invalidSessionIdleCloseCheckRequest(
+                "bounded desktop idle-close check must preserve the exact managed bridge `actorUserID` only"
+            )
+        }
+
+        let preparedRequestID = "desktop_session_idle_close_check_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let requestID = "desktop_session_idle_close_check_request_\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
+        let idempotencyKey = "\(preparedRequestID)_\(managedDeviceID)"
+        let nonce = UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        let timestampMS = Self.systemTimeNowMS()
+        let correlationID = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+
+        let payload = SessionIdleCloseCheckAdapterRequestPayload(
+            correlationID: correlationID,
+            idempotencyKey: idempotencyKey,
+            actorUserID: managedActorUserID,
+            deviceID: managedDeviceID,
+            ttsPlaybackActive: ttsPlaybackActive
+        )
+
+        let encoder = JSONEncoder()
+        encoder.keyEncodingStrategy = .convertToSnakeCase
+        let body = try encoder.encode(payload)
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/session/idle-close-check")
+        var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.httpMethod = "POST"
+        urlRequest.httpBody = body
+        urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        urlRequest.setValue(requestID, forHTTPHeaderField: "x-request-id")
+        urlRequest.setValue(idempotencyKey, forHTTPHeaderField: "idempotency-key")
+        urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+        urlRequest.setValue(nonce, forHTTPHeaderField: "x-selene-nonce")
+        urlRequest.setValue(
+            Self.bearerToken(subject: managedActorUserID, device: managedDeviceID),
+            forHTTPHeaderField: "Authorization"
+        )
+
+        return DesktopSessionIdleCloseCheckIngressContext(
+            preparedRequestID: preparedRequestID,
+            actorUserID: managedActorUserID,
+            deviceID: managedDeviceID,
+            requestID: requestID,
+            endpoint: endpointURL.absoluteString,
+            urlRequest: urlRequest
+        )
+    }
+
     func desktopSessionPostureEvidenceRequestBuilder(
         sessionID: String
     ) throws -> DesktopSessionPostureEvidenceIngressContext {
@@ -9333,6 +9513,10 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var sessionRecentEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/session/recent").absoluteString
+    }
+
+    var sessionIdleCloseCheckEndpoint: String {
+        adapterBaseURL.appendingPathComponent("v1/session/idle-close-check").absoluteString
     }
 
     var sessionPostureEndpoint: String {

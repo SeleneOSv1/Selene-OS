@@ -172,6 +172,7 @@ private enum DesktopAvailabilityStatusKind: String, Equatable {
     case thinkingProcessing = "thinking_processing"
     case ttsPreparing = "tts_preparing"
     case speaking = "speaking"
+    case sessionSleeping = "session_sleeping"
     case mutedNotListening = "muted_not_listening"
     case errorDegraded = "error_degraded"
     case hiddenAvailable = "hidden_available"
@@ -183,6 +184,7 @@ private enum DesktopDockIconWord: String, Equatable {
     case live = "Live"
     case open = "Open"
     case hidden = "Hidden"
+    case sleep = "Sleep"
 
     var accentColor: NSColor {
         switch self {
@@ -194,6 +196,8 @@ private enum DesktopDockIconWord: String, Equatable {
             return NSColor(calibratedRed: 0.11, green: 0.42, blue: 0.96, alpha: 1.0)
         case .hidden:
             return NSColor(calibratedRed: 0.05, green: 0.70, blue: 0.60, alpha: 1.0)
+        case .sleep:
+            return NSColor(calibratedRed: 0.43, green: 0.32, blue: 0.95, alpha: 1.0)
         }
     }
 }
@@ -221,6 +225,8 @@ private struct DesktopAvailabilityStatusSnapshot: Equatable {
         switch kind {
         case .activeListening, .thinkingProcessing, .ttsPreparing, .speaking:
             return .live
+        case .sessionSleeping:
+            return .sleep
         case .hiddenAvailable:
             return .hidden
         case .idleAvailable, .wakeListening, .mutedNotListening, .errorDegraded, .unavailableFailClosed:
@@ -3063,8 +3069,27 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         realtimeTransportReady = false
         realtimeQueuedOutboundMessages.removeAll(keepingCapacity: true)
         transcriptPreview = ""
+
+        guard let websocketURL = URL(string: session.websocketURL) else {
+            teardownRealtimeTranscriptionSession()
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) openai realtime transcription prewarm websocket_preconnect_unavailable=true reason=invalid_url request=\(session.requestID)"
+            )
+            return
+        }
+
+        let websocketTask = realtimeURLSession.webSocketTask(
+            with: websocketURL,
+            protocols: [
+                "realtime",
+                "openai-insecure-api-key.\(session.clientSecret)",
+            ]
+        )
+        realtimeWebSocketTask = websocketTask
+        websocketTask.resume()
+        receiveRealtimeTranscriptionEvents()
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) openai realtime transcription prewarm token_ready=true websocket_preconnect=false request=\(session.requestID)"
+            "\(desktopTraceClockFields()) openai realtime transcription prewarm token_ready=true websocket_preconnect=true request=\(session.requestID)"
         )
     }
 
@@ -3507,6 +3532,14 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 DispatchQueue.main.async {
                     guard self.realtimeWebSocketTask === websocketTask,
                           self.pendingRequest == nil else {
+                        return
+                    }
+
+                    guard self.isListening || self.activeCaptureContext != nil else {
+                        desktopAppendRuntimeBridgeDebugLog(
+                            "\(desktopTraceClockFields()) openai realtime transcription prewarm websocket_closed_before_capture redacted=true"
+                        )
+                        self.teardownRealtimeTranscriptionSession()
                         return
                     }
 
@@ -7661,7 +7694,11 @@ struct DesktopSessionShellView: View {
     @State private var desktopComposerVoiceModeEnabled: Bool = false
     @State private var desktopComposerVoiceModeAwaitingReplyPlaybackCompletion: Bool = false
     @State private var desktopTypedTurnShouldResumeComposerVoiceModeAfterReply: Bool = false
+    @State private var desktopScreenLifecycleVoiceRearmTransitionInFlight: Bool = false
     @State private var desktopPostWakeInstructionListeningAuthorized: Bool = false
+    @State private var desktopSessionSleepModeActive: Bool = false
+    @State private var desktopStage6IdleCloseGeneration: UInt64 = 0
+    @State private var desktopStage6IdleCloseDeadlineNS: UInt64?
     @State private var desktopVoiceAnswerPresentationPendingRequestID: String?
     @State private var desktopVoiceAnswerPresentationStartedNS: UInt64?
     @State private var desktopMeetingRecordingUnavailableAlertIsPresented: Bool = false
@@ -7677,7 +7714,10 @@ struct DesktopSessionShellView: View {
     @AppStorage("selene.desktop.controlledWake.enabled")
     private var desktopControlledWakeEnabled: Bool = false
     private let maxDesktopTypedTurnBytes = 16_384
-    private let desktopOpenAITtsSelfEchoTailReleaseDelay: TimeInterval = 0.45
+    // Match the audio-evidence echo-risk window so post-wake capture can arm promptly
+    // without bypassing the committed transcript self-echo gate.
+    private let desktopOpenAITtsSelfEchoTailReleaseDelay: TimeInterval = 0.15
+    private let desktopStage6IdleCloseDelayNS: UInt64 = 30_000_000_000
     private let desktopConversationBottomAnchorID = "desktop_conversation_bottom_anchor"
 
     var body: some View {
@@ -10147,11 +10187,170 @@ struct DesktopSessionShellView: View {
 
     private func desktopHandleScreenVisibilityChangedWhilePreservingVoicePosture(reason: String) {
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop screen visibility changed reason=\(boundedFailureLogToken(reason)) preserve_active_voice=\(desktopComposerVoiceModeEnabled || explicitVoiceController.isListening || desktopRealtimeTranscriptionStartInFlight || desktopRealtimeTranscriptionPrepareInFlight)"
+            "\(desktopTraceClockFields()) desktop screen visibility changed reason=\(boundedFailureLogToken(reason)) preserve_active_voice=\(desktopComposerVoiceModeEnabled || explicitVoiceController.isListening || desktopRealtimeTranscriptionStartInFlight || desktopRealtimeTranscriptionPrepareInFlight) lifecycle_voice_rearm_transition=\(desktopScreenLifecycleVoiceRearmTransitionInFlight)"
         )
     }
 
-    private func desktopAttemptResumeComposerVoiceMode() {
+    private func scheduleDesktopStage6IdleCloseCheckAfterValidEngagement(reason: String) {
+        clearDesktopSessionSleepModeIfNeeded(reason: "valid_engagement_\(reason)")
+        let deadlineNS = DispatchTime.now().uptimeNanoseconds &+ desktopStage6IdleCloseDelayNS
+        scheduleDesktopStage6IdleCloseCheck(deadlineNS: deadlineNS, reason: reason)
+    }
+
+    private func clearDesktopSessionSleepModeIfNeeded(reason: String) {
+        guard desktopSessionSleepModeActive else {
+            return
+        }
+
+        desktopSessionSleepModeActive = false
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop session sleep mode cleared reason=\(boundedFailureLogToken(reason)) authority=valid_committed_engagement"
+        )
+    }
+
+    private func markDesktopSessionSleepModeActive(
+        requestID: String,
+        action: DesktopSessionLifecycleAction,
+        reason: String
+    ) {
+        desktopSessionSleepModeActive = true
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop session sleep mode active id=\(requestID) reason=\(boundedFailureLogToken(reason)) canonical_intent=\(boundedFailureLogToken(action.canonicalIntent)) action=\(boundedFailureLogToken(action.action)) authority=\(boundedFailureLogToken(action.source)) local_wake_ready_required=true"
+        )
+    }
+
+    private func scheduleDesktopStage6IdleCloseCheck(deadlineNS: UInt64, reason: String) {
+        desktopStage6IdleCloseGeneration &+= 1
+        desktopStage6IdleCloseDeadlineNS = deadlineNS
+        let generation = desktopStage6IdleCloseGeneration
+        let boundedReason = boundedFailureLogToken(reason)
+        let nowNS = DispatchTime.now().uptimeNanoseconds
+        let delayNS = deadlineNS > nowNS ? deadlineNS - nowNS : 0
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop stage6 idle close check scheduled reason=\(boundedReason) generation=\(generation) delay_ms=\(delayNS / 1_000_000) desktop_decides_session=false ph1l_authority=true"
+        )
+
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: delayNS)
+            guard desktopStage6IdleCloseGeneration == generation,
+                  desktopStage6IdleCloseDeadlineNS == deadlineNS else {
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop stage6 idle close check skipped reason=stale_generation generation=\(generation)"
+                )
+                return
+            }
+
+            await runDesktopStage6IdleCloseCheck(generation: generation, reason: boundedReason)
+        }
+    }
+
+    private func scheduleDesktopStage6IdleCloseRetryCheck(
+        generation: UInt64,
+        reason: String
+    ) {
+        let boundedReason = boundedFailureLogToken(reason)
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard desktopStage6IdleCloseGeneration == generation else {
+                return
+            }
+
+            await runDesktopStage6IdleCloseCheck(generation: generation, reason: boundedReason)
+        }
+    }
+
+    @discardableResult
+    private func suspendDesktopStage6IdleCloseCheck(reason: String) -> UInt64? {
+        let existingDeadlineNS = desktopStage6IdleCloseDeadlineNS
+        guard existingDeadlineNS != nil else {
+            return nil
+        }
+
+        desktopStage6IdleCloseGeneration &+= 1
+        desktopStage6IdleCloseDeadlineNS = nil
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop stage6 idle close check suspended reason=\(boundedFailureLogToken(reason)) generation=\(desktopStage6IdleCloseGeneration)"
+        )
+        return existingDeadlineNS
+    }
+
+    private func restoreDesktopStage6IdleCloseCheck(
+        deadlineNS: UInt64?,
+        reason: String
+    ) {
+        guard let deadlineNS else {
+            return
+        }
+
+        scheduleDesktopStage6IdleCloseCheck(deadlineNS: deadlineNS, reason: reason)
+    }
+
+    private func cancelDesktopStage6IdleCloseCheck(reason: String) {
+        guard desktopStage6IdleCloseDeadlineNS != nil else {
+            return
+        }
+
+        desktopStage6IdleCloseGeneration &+= 1
+        desktopStage6IdleCloseDeadlineNS = nil
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop stage6 idle close check cancelled reason=\(boundedFailureLogToken(reason)) generation=\(desktopStage6IdleCloseGeneration)"
+        )
+    }
+
+    @MainActor
+    private func runDesktopStage6IdleCloseCheck(generation: UInt64, reason: String) async {
+        guard desktopStage6IdleCloseGeneration == generation else {
+            return
+        }
+
+        do {
+            let ingressContext = try desktopCanonicalRuntimeBridge
+                .desktopSessionIdleCloseCheckRequestBuilder(
+                    ttsPlaybackActive: desktopAuthoritativeReplyPlaybackState.phase == .speaking
+                        || desktopAuthoritativeReplyPlaybackState.phase == .requesting
+                )
+            let outcomeState = await desktopCanonicalRuntimeBridge
+                .submitDesktopSessionIdleCloseCheck(ingressContext)
+            guard desktopStage6IdleCloseGeneration == generation else {
+                return
+            }
+
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop stage6 idle close check outcome=\(outcomeState.outcome ?? "not_provided") reason=\(outcomeState.detail) generation=\(generation) source=\(boundedFailureLogToken(reason))"
+            )
+
+            if executeApprovedSessionLifecycleActionIfPresent(
+                outcomeState,
+                requestID: ingressContext.requestID,
+                source: "stage6_idle_close_check"
+            ) != nil {
+                desktopStage6IdleCloseDeadlineNS = nil
+                await synchronizeDesktopWakeListenerLifecycleState()
+                return
+            }
+
+            if outcomeState.outcome == "SESSION_IDLE_STILL_ACTIVE" {
+                scheduleDesktopStage6IdleCloseRetryCheck(
+                    generation: generation,
+                    reason: "stage6_idle_close_check_retry"
+                )
+            } else {
+                desktopStage6IdleCloseDeadlineNS = nil
+            }
+        } catch {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop stage6 idle close check failed reason=\(boundedFailureLogToken(error.localizedDescription)) source=\(boundedFailureLogToken(reason))"
+            )
+        }
+    }
+
+    private func desktopAttemptResumeComposerVoiceMode(
+        stage6IdleCloseReason: String? = nil
+    ) {
+        if let stage6IdleCloseReason {
+            scheduleDesktopStage6IdleCloseCheckAfterValidEngagement(reason: stage6IdleCloseReason)
+        }
+
         guard desktopComposerVoiceModeEnabled,
               !explicitVoiceController.isListening,
               explicitVoiceController.pendingRequest == nil,
@@ -10166,6 +10365,7 @@ struct DesktopSessionShellView: View {
             return
         }
 
+        requestDesktopTypedTurnComposerFocus(reason: "composer_voice_mode_resume")
         startDesktopExplicitVoiceTurn()
     }
 
@@ -10363,9 +10563,12 @@ struct DesktopSessionShellView: View {
         desktopMeetingRecordingUnavailableAlertIsPresented = true
     }
 
-    private func requestDesktopTypedTurnComposerFocus() {
+    private func requestDesktopTypedTurnComposerFocus(reason: String) {
         desktopTypedTurnComposerFocused = true
         desktopTypedTurnComposerFocusRequestID &+= 1
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop composer focus requested reason=\(boundedFailureLogToken(reason))"
+        )
     }
 
     private func startDesktopManualWakeActivationFromWaveButton() {
@@ -10377,6 +10580,7 @@ struct DesktopSessionShellView: View {
     private func startPostWakeInstructionListeningAfterGreeting() {
         desktopPostWakeInstructionListeningAuthorized = true
         desktopComposerVoiceModeEnabled = true
+        requestDesktopTypedTurnComposerFocus(reason: "post_wake_instruction_listening")
         if desktopAuthoritativeReplyPlaybackState.phase == .speaking
             || desktopOpenAITtsSelfEchoGateActive {
             desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
@@ -10394,6 +10598,9 @@ struct DesktopSessionShellView: View {
             "\(desktopTraceClockFields()) desktop post-wake instruction listening starting reason=tts_idle_evidence_gated"
         )
         startDesktopExplicitVoiceTurn()
+        scheduleDesktopStage6IdleCloseCheckAfterValidEngagement(
+            reason: "post_wake_instruction_listening_rearm"
+        )
     }
 
     @MainActor
@@ -10425,6 +10632,11 @@ struct DesktopSessionShellView: View {
         desktopSubmittedUserContinuityPreviewState = nil
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         clearComposerDraftIfItOnlyMirrorsVoiceTranscript(transcript)
+        let voiceRearmExpected =
+            source != "typed" || desktopTypedTurnShouldResumeComposerVoiceModeAfterReply
+        if voiceRearmExpected {
+            desktopScreenLifecycleVoiceRearmTransitionInFlight = true
+        }
         NotificationCenter.default.post(
             name: .seleneDesktopScreenLifecycleAction,
             object: nil,
@@ -10447,11 +10659,21 @@ struct DesktopSessionShellView: View {
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) desktop lifecycle post-action rearm mode=active_instruction_listening id=\(requestID) source=\(boundedFailureLogToken(source)) canonical_intent=\(boundedFailureLogToken(lifecycleAction.canonicalIntent))"
         )
+        defer {
+            desktopScreenLifecycleVoiceRearmTransitionInFlight = false
+        }
         desktopPostWakeInstructionListeningAuthorized = true
         desktopComposerVoiceModeEnabled = true
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         desktopWakeAutoStartAttemptedPromptID = nil
         desktopWakeAutoStartSuppressedPromptID = nil
+        if lifecycleAction.canonicalIntent == "SCREEN_SHOW" {
+            requestDesktopTypedTurnComposerFocus(reason: "screen_lifecycle_show_voice_rearm")
+        } else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop composer focus skipped reason=screen_lifecycle_hide_voice_rearm"
+            )
+        }
 
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
         if desktopWakeListenerController.listenerState.isActiveForMicrophone
@@ -10493,6 +10715,7 @@ struct DesktopSessionShellView: View {
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) desktop session lifecycle action executing id=\(requestID) source=\(boundedFailureLogToken(source)) canonical_intent=\(sessionAction.canonicalIntent) action=\(sessionAction.action) authority=\(boundedFailureLogToken(sessionAction.source)) evidence=\(boundedFailureLogToken(sessionAction.evidence))"
         )
+        cancelDesktopStage6IdleCloseCheck(reason: "session_lifecycle_action")
         desktopAuthoritativeReplyRenderState = nil
         desktopAuthoritativeReplyProvenanceRenderState = nil
         desktopAuthoritativeReplyPlaybackController.reset()
@@ -10505,7 +10728,26 @@ struct DesktopSessionShellView: View {
             clearPostWakeAuthorization: true
         )
 
+        if validCloseSeal {
+            markDesktopSessionSleepModeActive(
+                requestID: requestID,
+                action: sessionAction,
+                reason: source
+            )
+            NotificationCenter.default.post(
+                name: .seleneDesktopScreenLifecycleAction,
+                object: nil,
+                userInfo: [
+                    "action": "hide",
+                    "canonical_intent": sessionAction.canonicalIntent,
+                    "source": sessionAction.source,
+                    "evidence": sessionAction.evidence,
+                ]
+            )
+        }
+
         if validNewSession {
+            clearDesktopSessionSleepModeIfNeeded(reason: "approved_new_session")
             desktopResetLocalConversationForApprovedNewSession()
         }
 
@@ -11764,6 +12006,15 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        if desktopSessionSleepModeActive,
+           desktopWakeListenerMayRunForCurrentAppLifecycle,
+           desktopWakeListenerPromptState != nil {
+            return snapshot(
+                .sessionSleeping,
+                detail: "PH1.L closed and sealed the logical session. Desktop is asleep at the screen layer while local wake remains ready."
+            )
+        }
+
         if desktopAvailabilityWindowHiddenOrMinimized,
            desktopWakeListenerMayRunForCurrentAppLifecycle,
            desktopWakeListenerPromptState != nil {
@@ -11807,6 +12058,7 @@ struct DesktopSessionShellView: View {
     private var desktopWakeAutoStartEligiblePromptState: DesktopWakeListenerPromptState? {
         guard desktopWakeListenerMayRunForCurrentAppLifecycle,
               let promptState = desktopWakeListenerPromptState,
+              !desktopScreenLifecycleVoiceRearmTransitionInFlight,
               !desktopComposerVoiceModeEnabled,
               !desktopComposerVoiceModeAwaitingReplyPlaybackCompletion,
               !desktopRealtimeTranscriptionStartInFlight,
@@ -21411,14 +21663,13 @@ struct DesktopSessionShellView: View {
         }
 
         desktopComposerVoiceModeEnabled = true
-        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop voice rearm during_openai_tts_request reason=answer_text_ready_audio_pending"
+            "\(desktopTraceClockFields()) desktop voice rearm prewarm_only reason=answer_text_ready_audio_pending active_capture_waits_for_playback_end"
         )
         prepareDesktopRealtimeTranscriptionSessionIfNeeded(
             reason: "openai_tts_request_pending_voice_rearm"
         )
-        desktopAttemptResumeComposerVoiceMode()
     }
 
     private func pauseDesktopVoiceCaptureForOpenAITtsPlaybackIfNeeded() {
@@ -21436,10 +21687,14 @@ struct DesktopSessionShellView: View {
 
         desktopComposerVoiceModeEnabled = true
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
-        cancelDesktopRealtimeTranscriptionStartIfNeeded()
-        cancelDesktopRealtimeTranscriptionPrepareIfNeeded(
-            reason: "openai_tts_playback_self_echo_guard"
-        )
+        if desktopRealtimeTranscriptionStartInFlight || explicitVoiceController.isListening {
+            cancelDesktopRealtimeTranscriptionStartIfNeeded()
+        } else if desktopRealtimeTranscriptionPrepareInFlight
+                    || desktopPreparedRealtimeTranscriptionSession != nil {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop voice prewarm preserved reason=openai_tts_playback_self_echo_guard active_audio_stream=false"
+            )
+        }
         if explicitVoiceController.isListening {
             explicitVoiceController.discardCurrentVoiceTurn()
         }
@@ -21477,8 +21732,11 @@ struct DesktopSessionShellView: View {
         }
 
         desktopAppendRuntimeBridgeDebugLog(
-            "\(desktopTraceClockFields()) desktop voice self echo gate release scheduled reason=\(boundedFailureLogToken(reason)) release=post_tts_echo_tail_guard delay_ms=450"
+            "\(desktopTraceClockFields()) desktop voice self echo gate release scheduled reason=\(boundedFailureLogToken(reason)) release=post_tts_echo_tail_guard delay_ms=\(Int(desktopOpenAITtsSelfEchoTailReleaseDelay * 1_000))"
         )
+
+        let shouldScheduleIdleCloseAfterPlaybackRearm =
+            desktopComposerVoiceModeAwaitingReplyPlaybackCompletion
 
         if desktopComposerVoiceModeAwaitingReplyPlaybackCompletion || desktopComposerVoiceModeEnabled {
             desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
@@ -21491,7 +21749,11 @@ struct DesktopSessionShellView: View {
                 desktopAppendRuntimeBridgeDebugLog(
                     "\(desktopTraceClockFields()) desktop voice composer rearm immediate reason=no_active_tts_echo_gate"
                 )
-                desktopAttemptResumeComposerVoiceMode()
+                desktopAttemptResumeComposerVoiceMode(
+                    stage6IdleCloseReason: shouldScheduleIdleCloseAfterPlaybackRearm
+                        ? "post_tts_playback_rearm"
+                        : nil
+                )
             }
         }
 
@@ -21521,7 +21783,11 @@ struct DesktopSessionShellView: View {
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) desktop voice composer rearm after_echo_gate_release reason=\(boundedFailureLogToken(reason))"
             )
-            desktopAttemptResumeComposerVoiceMode()
+            desktopAttemptResumeComposerVoiceMode(
+                stage6IdleCloseReason: shouldScheduleIdleCloseAfterPlaybackRearm
+                    ? "post_tts_echo_gate_rearm"
+                    : nil
+            )
         }
     }
 
@@ -22704,6 +22970,7 @@ struct DesktopSessionShellView: View {
 
         let conversationKey = desktopForegroundConversationHistoryKey
         var shouldAwaitVoiceModeReplyPlaybackCompletion = false
+        var suspendedStage6IdleCloseDeadlineNS: UInt64?
 
         do {
             if let wakePrefixMatch = boundedWakePrefixMatch(
@@ -22740,6 +23007,9 @@ struct DesktopSessionShellView: View {
                 projectID: desktopForegroundVoiceTurnSelectedProjectID,
                 pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
             )
+            suspendedStage6IdleCloseDeadlineNS = suspendDesktopStage6IdleCloseCheck(
+                reason: "potential_explicit_voice_engagement"
+            )
             desktopCanonicalRuntimeOutcomeState = .dispatching(
                 preparedRequestID: ingressContext.preparedRequestID,
                 endpoint: ingressContext.endpoint,
@@ -22768,6 +23038,10 @@ struct DesktopSessionShellView: View {
                 transcript: pendingRequest.transcript,
                 source: "explicit_voice"
             ) {
+                restoreDesktopStage6IdleCloseCheck(
+                    deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                    reason: "screen_lifecycle_does_not_reset_session_idle"
+                )
                 desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 explicitVoiceController.clearPendingPreparedVoiceTurn()
                 await resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
@@ -22807,6 +23081,10 @@ struct DesktopSessionShellView: View {
                     desktopAuthoritativeReplyProvenanceRenderState = nil
                     desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                     explicitVoiceController.clearTransientTranscriptPreview()
+                    restoreDesktopStage6IdleCloseCheck(
+                        deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                        reason: "unsafe_voice_transcript_does_not_reset_session_idle"
+                    )
                 } else {
                     if outcomeState.authoritativeResponseText?
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
@@ -22866,9 +23144,17 @@ struct DesktopSessionShellView: View {
                 )
             } else {
                 desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
-                desktopAttemptResumeComposerVoiceMode()
+                desktopAttemptResumeComposerVoiceMode(
+                    stage6IdleCloseReason: runtimeIgnoredUnsafeVoiceTranscript
+                        ? nil
+                        : "post_answer_explicit_voice_rearm"
+                )
             }
         } catch {
+            restoreDesktopStage6IdleCloseCheck(
+                deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                reason: "explicit_voice_bridge_failure_does_not_reset_session_idle"
+            )
             desktopCanonicalRuntimeOutcomeState = .failed(
                 preparedRequestID: pendingRequest.id,
                 endpoint: desktopCanonicalRuntimeBridge.voiceTurnEndpoint,
@@ -22925,6 +23211,7 @@ struct DesktopSessionShellView: View {
         }
 
         let conversationKey = desktopForegroundConversationHistoryKey
+        var suspendedStage6IdleCloseDeadlineNS: UInt64?
 
         do {
             desktopAppendRuntimeBridgeDebugLog(
@@ -22938,6 +23225,9 @@ struct DesktopSessionShellView: View {
                     projectID: desktopForegroundVoiceTurnSelectedProjectID,
                     pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
                 )
+            suspendedStage6IdleCloseDeadlineNS = suspendDesktopStage6IdleCloseCheck(
+                reason: "potential_wake_triggered_voice_engagement"
+            )
             desktopAppendRuntimeBridgeDebugLog(
                 "\(desktopTraceClockFields()) wake dispatch built ingress id=\(pendingRequest.id) endpoint=\(ingressContext.endpoint)"
             )
@@ -22985,6 +23275,10 @@ struct DesktopSessionShellView: View {
                 transcript: pendingRequest.transcript,
                 source: "wake_triggered_voice"
             ) {
+                restoreDesktopStage6IdleCloseCheck(
+                    deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                    reason: "screen_lifecycle_does_not_reset_session_idle"
+                )
                 desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 desktopWakeListenerController.clearPendingPreparedWakeTurn()
                 lastStagedWakeTriggeredVoiceTurnRequestState = nil
@@ -23019,6 +23313,10 @@ struct DesktopSessionShellView: View {
                     desktopAuthoritativeReplyRenderState = nil
                     desktopAuthoritativeReplyProvenanceRenderState = nil
                     desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
+                    restoreDesktopStage6IdleCloseCheck(
+                        deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                        reason: "unsafe_wake_transcript_does_not_reset_session_idle"
+                    )
                 } else {
                     if outcomeState.authoritativeResponseText?
                         .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
@@ -23069,8 +23367,26 @@ struct DesktopSessionShellView: View {
                 desktopAppendRuntimeBridgeDebugLog(
                     "\(desktopTraceClockFields()) desktop post-wake instruction listening blocked reason=ph1w_wake_not_accepted phase=\(outcomeState.phase.rawValue) next_move=\(outcomeState.nextMove ?? "not_provided") runtime_reason=\(outcomeState.reasonCode ?? "not_provided")"
                 )
+            } else if outcomeState.phase == .completed,
+                      !runtimeIgnoredUnsafeVoiceTranscript {
+                desktopComposerVoiceModeEnabled = true
+                if desktopAuthoritativeReplyPlaybackState.phase == .speaking {
+                    desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = true
+                    prepareDesktopRealtimeTranscriptionSessionIfNeeded(
+                        reason: "post_answer_wake_voice_await_tts_idle"
+                    )
+                } else {
+                    desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+                    desktopAttemptResumeComposerVoiceMode(
+                        stage6IdleCloseReason: "post_answer_wake_voice_rearm"
+                    )
+                }
             }
         } catch {
+            restoreDesktopStage6IdleCloseCheck(
+                deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                reason: "wake_triggered_bridge_failure_does_not_reset_session_idle"
+            )
             desktopAppendRuntimeBridgeDebugLog(
                 "wake dispatch catch id=\(pendingRequest.id) error=\(error.localizedDescription)"
             )
@@ -23131,6 +23447,7 @@ struct DesktopSessionShellView: View {
         }
 
         let conversationKey = desktopForegroundConversationHistoryKey
+        var suspendedStage6IdleCloseDeadlineNS: UInt64?
 
         do {
             desktopAppendRuntimeBridgeDebugLog("typed dispatch start id=\(pendingRequest.id)")
@@ -23140,6 +23457,9 @@ struct DesktopSessionShellView: View {
                 authorityStatePolicyContextRef: desktopForegroundVoiceTurnActiveAuthorityPolicyContextRef,
                 projectID: desktopForegroundVoiceTurnSelectedProjectID,
                 pinnedContextRefs: desktopForegroundVoiceTurnSelectedPinnedContextRefs
+            )
+            suspendedStage6IdleCloseDeadlineNS = suspendDesktopStage6IdleCloseCheck(
+                reason: "potential_typed_engagement"
             )
             desktopAppendRuntimeBridgeDebugLog(
                 "typed dispatch built ingress id=\(pendingRequest.id) endpoint=\(ingressContext.endpoint)"
@@ -23174,6 +23494,10 @@ struct DesktopSessionShellView: View {
                 transcript: pendingRequest.text,
                 source: "typed"
             ) {
+                restoreDesktopStage6IdleCloseCheck(
+                    deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                    reason: "screen_lifecycle_does_not_reset_session_idle"
+                )
                 if desktopTypedTurnShouldResumeComposerVoiceModeAfterReply {
                     desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
                     await resumeDesktopVoiceModeAfterApprovedScreenLifecycleAction(
@@ -23238,7 +23562,9 @@ struct DesktopSessionShellView: View {
                         prepareDesktopRealtimeTranscriptionSessionIfNeeded(
                             reason: "typed_turn_text_only_after_voice_rearm"
                         )
-                        desktopAttemptResumeComposerVoiceMode()
+                        desktopAttemptResumeComposerVoiceMode(
+                            stage6IdleCloseReason: "typed_turn_completed_voice_rearm"
+                        )
                     }
                 }
             } else {
@@ -23257,7 +23583,15 @@ struct DesktopSessionShellView: View {
                 desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
             }
             desktopTypedTurnPendingRequest = nil
+            requestDesktopTypedTurnComposerFocus(reason: "typed_turn_completed")
+            scheduleDesktopStage6IdleCloseCheckAfterValidEngagement(
+                reason: "typed_turn_completed"
+            )
         } catch {
+            restoreDesktopStage6IdleCloseCheck(
+                deadlineNS: suspendedStage6IdleCloseDeadlineNS,
+                reason: "typed_bridge_failure_does_not_reset_session_idle"
+            )
             desktopAppendRuntimeBridgeDebugLog(
                 "typed dispatch catch id=\(pendingRequest.id) error=\(error.localizedDescription)"
             )
@@ -23297,6 +23631,7 @@ struct DesktopSessionShellView: View {
             }
             desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
             desktopTypedTurnPendingRequest = nil
+            requestDesktopTypedTurnComposerFocus(reason: "typed_turn_failed")
         }
     }
 

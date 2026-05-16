@@ -5,9 +5,7 @@ pub mod error_taxonomy;
 pub mod redaction;
 pub mod state_trace;
 
-pub use debug_packet::{
-    DebugPacket, DebugPacketContext, DebugStatus, HealthStatusBeforeFallback,
-};
+pub use debug_packet::{DebugPacket, DebugPacketContext, DebugStatus, HealthStatusBeforeFallback};
 pub use state_trace::{
     default_degraded_transitions, default_failed_transitions, TurnStateTransition,
 };

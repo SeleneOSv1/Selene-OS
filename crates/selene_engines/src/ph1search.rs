@@ -581,8 +581,7 @@ mod tests {
         let req = Ph1SearchRequest::SearchPlanBuild(
             SearchPlanBuildRequest::v1(
                 envelope(8),
-                "Do a deep web search and find me the CEO for Aurora Vale Cellars."
-                    .to_string(),
+                "Do a deep web search and find me the CEO for Aurora Vale Cellars.".to_string(),
                 Some("en".to_string()),
             )
             .unwrap(),
@@ -603,6 +602,8 @@ mod tests {
         assert!(queries.contains(&"Aurora Vale Cellars director".to_string()));
         assert!(queries.contains(&"Aurora Vale Cellars official site leadership".to_string()));
         assert!(queries.contains(&"Aurora Vale Cellars company profile".to_string()));
-        assert!(queries.iter().all(|query| query.contains("Aurora Vale Cellars")));
+        assert!(queries
+            .iter()
+            .all(|query| query.contains("Aurora Vale Cellars")));
     }
 }

@@ -4018,7 +4018,9 @@ mod tests {
             other => panic!("expected public chat bypass, got {other:?}"),
         }
 
-        let zh_out = rt.run(&req("解释一下网页搜索路由是什么意思。", "zh")).unwrap();
+        let zh_out = rt
+            .run(&req("解释一下网页搜索路由是什么意思。", "zh"))
+            .unwrap();
         match zh_out {
             Ph1nResponse::Chat(_) => {}
             other => panic!("expected Chinese public chat bypass, got {other:?}"),

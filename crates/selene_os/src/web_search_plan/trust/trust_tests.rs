@@ -108,8 +108,18 @@ fn test_t4_explain_factors_stable_ordering() {
         1_707_700_000_000,
         2,
     );
-    let first = build_factors(detection.trust_tier, &detection.reasons, &spam.reasons, &score);
-    let second = build_factors(detection.trust_tier, &detection.reasons, &spam.reasons, &score);
+    let first = build_factors(
+        detection.trust_tier,
+        &detection.reasons,
+        &spam.reasons,
+        &score,
+    );
+    let second = build_factors(
+        detection.trust_tier,
+        &detection.reasons,
+        &spam.reasons,
+        &score,
+    );
     assert_eq!(first, second);
 
     let mut sorted = first.clone();
@@ -121,10 +131,7 @@ fn test_t4_explain_factors_stable_ordering() {
 fn test_t5_enrichment_preserves_source_order() {
     let mixed = load_fixture("mixed_sources.json");
     let expected = load_fixture("expected_scored_sources.json");
-    let now_ms = mixed
-        .get("now_ms")
-        .and_then(Value::as_i64)
-        .expect("now_ms");
+    let now_ms = mixed.get("now_ms").and_then(Value::as_i64).expect("now_ms");
     let evidence_packet = mixed.get("evidence_packet").expect("evidence_packet");
     let result = enrich_evidence_sources(evidence_packet, now_ms).expect("enrichment should pass");
 
@@ -143,7 +150,10 @@ fn test_t5_enrichment_preserves_source_order() {
         .iter()
         .filter_map(Value::as_str)
         .collect::<Vec<&str>>();
-    assert_eq!(actual_urls, expected_urls, "source ordering must be preserved");
+    assert_eq!(
+        actual_urls, expected_urls,
+        "source ordering must be preserved"
+    );
 
     let actual_tiers = result
         .evidence_packet
@@ -176,7 +186,10 @@ fn test_t5_enrichment_preserves_source_order() {
             .get("trust_factors")
             .and_then(Value::as_array)
             .expect("trust_factors");
-        let factor_values = factors.iter().filter_map(Value::as_str).collect::<Vec<&str>>();
+        let factor_values = factors
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<&str>>();
         let required = required_subset
             .as_array()
             .expect("required subset array")
@@ -196,10 +209,7 @@ fn test_t5_enrichment_preserves_source_order() {
 #[test]
 fn test_t6_schema_validation_passes_with_enriched_sources() {
     let mixed = load_fixture("mixed_sources.json");
-    let now_ms = mixed
-        .get("now_ms")
-        .and_then(Value::as_i64)
-        .expect("now_ms");
+    let now_ms = mixed.get("now_ms").and_then(Value::as_i64).expect("now_ms");
     let evidence_packet = mixed.get("evidence_packet").expect("evidence_packet");
     let result = enrich_evidence_sources(evidence_packet, now_ms).expect("enrichment should pass");
 

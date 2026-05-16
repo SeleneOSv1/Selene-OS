@@ -124,7 +124,10 @@ pub fn normalize_feature_key(raw: &str) -> String {
 
 fn normalize_feature_label(raw: &str, fallback_key: &str) -> String {
     let lower = raw.trim().to_lowercase();
-    let trimmed = lower.strip_prefix("feature:").unwrap_or(lower.as_str()).trim();
+    let trimmed = lower
+        .strip_prefix("feature:")
+        .unwrap_or(lower.as_str())
+        .trim();
     if trimmed.is_empty() {
         fallback_key.to_string()
     } else {

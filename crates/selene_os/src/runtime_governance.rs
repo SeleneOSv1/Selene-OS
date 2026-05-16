@@ -355,9 +355,7 @@ impl RuntimeGovernanceRuntime {
             session_id,
             turn_id,
             Some(GovernanceDriftSignal::SubsystemCertificationRegression),
-            Some(
-                "test helper quarantined the identity voice engine subsystem".to_string(),
-            ),
+            Some("test helper quarantined the identity voice engine subsystem".to_string(),),
             Some(GovernanceCertificationStatus::Quarantined),
             Some(SUBSYSTEM_IDENTITY_VOICE_ENGINE.to_string()),
         ))
@@ -3944,13 +3942,27 @@ mod tests {
             .governance_state
             .clone()
             .with_artifact_trust_linkage(
-                artifact_governance_state.artifact_trust_decision_ids.clone(),
-                artifact_governance_state.artifact_trust_proof_entry_refs.clone(),
-                artifact_governance_state.artifact_trust_proof_record_ref.clone(),
-                artifact_governance_state.artifact_trust_policy_snapshot_refs.clone(),
-                artifact_governance_state.artifact_trust_set_snapshot_refs.clone(),
-                artifact_governance_state.artifact_trust_basis_fingerprints.clone(),
-                artifact_governance_state.artifact_trust_negative_result_refs.clone(),
+                artifact_governance_state
+                    .artifact_trust_decision_ids
+                    .clone(),
+                artifact_governance_state
+                    .artifact_trust_proof_entry_refs
+                    .clone(),
+                artifact_governance_state
+                    .artifact_trust_proof_record_ref
+                    .clone(),
+                artifact_governance_state
+                    .artifact_trust_policy_snapshot_refs
+                    .clone(),
+                artifact_governance_state
+                    .artifact_trust_set_snapshot_refs
+                    .clone(),
+                artifact_governance_state
+                    .artifact_trust_basis_fingerprints
+                    .clone(),
+                artifact_governance_state
+                    .artifact_trust_negative_result_refs
+                    .clone(),
             )
             .expect("quarantine state must preserve artifact trust linkage");
         let quarantined_envelope = artifact_governed

@@ -206,7 +206,12 @@ pub fn normalize_query(raw: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn derive_plan_id(root_query: &str, mode: HopMode, max_hops: usize, sub_queries: &[String]) -> String {
+fn derive_plan_id(
+    root_query: &str,
+    mode: HopMode,
+    max_hops: usize,
+    sub_queries: &[String],
+) -> String {
     let serialized_sub_queries = sub_queries.join("\x1e");
     let material = format!(
         "hop_plan_version={}\x1fmode={}\x1fmax_hops={}\x1froot_query={}\x1fsub_queries={}",

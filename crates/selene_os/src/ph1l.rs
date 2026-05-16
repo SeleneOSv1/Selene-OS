@@ -16,13 +16,8 @@ pub mod reason_codes {
 
     // PH1.L reason-code namespace. Values are placeholders until the global registry is formalized.
     pub const L_OPEN_WAKE: ReasonCodeId = ReasonCodeId(0x4C00_0001);
-    pub const L_RESUME_WAKE_SOFT_CLOSE: ReasonCodeId = ReasonCodeId(0x4C00_0002);
-    pub const L_TO_SOFT_CLOSE_SILENCE: ReasonCodeId = ReasonCodeId(0x4C00_0003);
     pub const L_TO_CLOSED_SILENCE: ReasonCodeId = ReasonCodeId(0x4C00_0004);
     pub const L_TO_CLOSED_DISMISS: ReasonCodeId = ReasonCodeId(0x4C00_0005);
-    pub const L_WAIT_TIMEOUT_PROMPTED: ReasonCodeId = ReasonCodeId(0x4C00_0006);
-    pub const L_CLOSE_CHECK_PROMPTED: ReasonCodeId = ReasonCodeId(0x4C00_0007);
-    pub const L_RESUME_USER_ACTIVITY: ReasonCodeId = ReasonCodeId(0x4C00_0008);
     pub const L_SUSPEND_AUDIO_DEGRADED: ReasonCodeId = ReasonCodeId(0x4C00_0009);
     pub const L_RESUME_STABLE: ReasonCodeId = ReasonCodeId(0x4C00_000A);
 }
@@ -82,24 +77,16 @@ pub fn ph1l_step_voice_turn(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ph1lConfig {
     pub active_silence_timeout_ms: u32,
-    pub soft_close_timeout_ms: u32,
     pub clarify_timeout_ms: u32,
     pub confirm_timeout_ms: u32,
-    pub close_check_quiet_timeout_ms: u32,
-    pub close_check_repeat_timeout_ms: u32,
-    pub close_check_max_attempts: u8,
 }
 
 impl Ph1lConfig {
     pub fn mvp_desktop_v1() -> Self {
         Self {
             active_silence_timeout_ms: 30_000,
-            soft_close_timeout_ms: 120_000,
             clarify_timeout_ms: 30_000,
             confirm_timeout_ms: 30_000,
-            close_check_quiet_timeout_ms: 25_000,
-            close_check_repeat_timeout_ms: 60_000,
-            close_check_max_attempts: 2,
         }
     }
 }
@@ -112,9 +99,6 @@ pub struct Ph1lRuntime {
     next_session_id: u128,
     pending_question: Option<PendingQuestion>,
     pending_since: Option<MonotonicTimeNs>,
-    soft_closed_since: Option<MonotonicTimeNs>,
-    close_check_attempts: u8,
-    close_check_last_prompt_at: Option<MonotonicTimeNs>,
 }
 
 impl Ph1lRuntime {
@@ -126,9 +110,6 @@ impl Ph1lRuntime {
             next_session_id: 1,
             pending_question: None,
             pending_since: None,
-            soft_closed_since: None,
-            close_check_attempts: 0,
-            close_check_last_prompt_at: None,
         }
     }
 
@@ -138,28 +119,31 @@ impl Ph1lRuntime {
         session_id: Option<SessionId>,
         next_session_id: u128,
     ) -> Result<Self, ContractViolation> {
-        let next_allowed_actions = default_next_allowed_actions_for_state(state);
+        let normalized_state = normalize_legacy_soft_closed_state(state);
+        let normalized_session_id = if normalized_state == SessionState::Closed {
+            None
+        } else {
+            session_id
+        };
+        let next_allowed_actions = default_next_allowed_actions_for_state(normalized_state);
         SessionSnapshot {
             schema_version: SchemaVersion(1),
-            session_state: state,
-            session_id,
+            session_state: normalized_state,
+            session_id: normalized_session_id,
             next_allowed_actions,
         }
         .validate()?;
-        let min_next = session_id
+        let min_next = normalized_session_id
             .map(|id| id.0.saturating_add(1))
             .unwrap_or(1)
             .max(1);
         Ok(Self {
             config,
-            state,
-            session_id,
+            state: normalized_state,
+            session_id: normalized_session_id,
             next_session_id: next_session_id.max(min_next),
             pending_question: None,
             pending_since: None,
-            soft_closed_since: None,
-            close_check_attempts: 0,
-            close_check_last_prompt_at: None,
         })
     }
 
@@ -235,23 +219,10 @@ impl Ph1lRuntime {
             }
         }
 
-        // Resume from SOFT_CLOSED without re-wake if the user speaks.
-        if self.state == SessionState::SoftClosed && input.user_activity.speech_detected {
-            self.soft_closed_since = None;
-            self.close_check_attempts = 0;
-            self.close_check_last_prompt_at = None;
-            return self.transition(
-                input.now,
-                SessionState::Active,
-                reason_codes::L_RESUME_USER_ACTIVITY,
-                policy_blocks_audible,
-            );
-        }
-
         // Track "waiting for user" posture based on PH1.X directive.
         self.update_pending_question(input.now, input.conversation_directive.as_ref());
 
-        // Never soft-close while TTS is playing.
+        // Never close while TTS is playing.
         if input.tts_state == TtsPlaybackState::Playing {
             return self.snapshot(None, None, policy_blocks_audible);
         }
@@ -265,19 +236,18 @@ impl Ph1lRuntime {
 
             if let Some(since) = self.pending_since {
                 if input.now.0.saturating_sub(since.0) >= ms_to_ns(timeout_ms) {
-                    // One gentle prompt signal then soft-close.
                     self.pending_question = None;
                     self.pending_since = None;
                     return self.transition(
                         input.now,
-                        SessionState::SoftClosed,
-                        reason_codes::L_WAIT_TIMEOUT_PROMPTED,
+                        SessionState::Closed,
+                        reason_codes::L_TO_CLOSED_SILENCE,
                         policy_blocks_audible,
                     );
                 }
             }
 
-            // Stay ACTIVE while waiting (do not soft-close on short silence).
+            // Stay ACTIVE while waiting (do not close on short silence).
             if self.state == SessionState::Closed {
                 // Waiting doesn't make sense closed; keep closed.
                 return self.snapshot(None, None, policy_blocks_audible);
@@ -294,32 +264,10 @@ impl Ph1lRuntime {
             return self.snapshot(None, None, policy_blocks_audible);
         }
 
-        // Silence-driven soft-close.
+        // Silence-driven close: Stage 6 product policy is one 30-second active window,
+        // then a sealed logical session that requires wake for the next session.
         if self.state == SessionState::Active
             && input.user_activity.silence_ms >= self.config.active_silence_timeout_ms
-        {
-            return self.transition(
-                input.now,
-                SessionState::SoftClosed,
-                reason_codes::L_TO_SOFT_CLOSE_SILENCE,
-                policy_blocks_audible,
-            );
-        }
-
-        // Close-check prompt (bounded, deterministic) before fully closing.
-        // Do not emit a prompt at or after the hard close threshold.
-        if self.state == SessionState::SoftClosed
-            && !policy_blocks_audible
-            && input.user_activity.silence_ms < self.config.soft_close_timeout_ms
-        {
-            if let Some(n) = self.maybe_close_check_prompt(input.now) {
-                return self.snapshot(None, Some(n), policy_blocks_audible);
-            }
-        }
-
-        // Silence-driven close.
-        if self.state == SessionState::SoftClosed
-            && input.user_activity.silence_ms >= self.config.soft_close_timeout_ms
         {
             return self.transition(
                 input.now,
@@ -339,33 +287,16 @@ impl Ph1lRuntime {
         policy_blocks_audible: bool,
     ) -> Ph1lOutput {
         match self.state {
-            SessionState::Closed => {
+            SessionState::Closed | SessionState::SoftClosed => {
                 let id = SessionId(self.next_session_id);
                 self.next_session_id = self.next_session_id.saturating_add(1);
                 self.session_id = Some(id);
                 self.pending_question = None;
                 self.pending_since = None;
-                self.soft_closed_since = None;
-                self.close_check_attempts = 0;
-                self.close_check_last_prompt_at = None;
                 self.transition(
                     now,
                     SessionState::Active,
                     reason_codes::L_OPEN_WAKE,
-                    policy_blocks_audible,
-                )
-            }
-            SessionState::SoftClosed => {
-                // Resume same session.
-                self.pending_question = None;
-                self.pending_since = None;
-                self.soft_closed_since = None;
-                self.close_check_attempts = 0;
-                self.close_check_last_prompt_at = None;
-                self.transition(
-                    now,
-                    SessionState::Active,
-                    reason_codes::L_RESUME_WAKE_SOFT_CLOSE,
                     policy_blocks_audible,
                 )
             }
@@ -375,32 +306,16 @@ impl Ph1lRuntime {
 
     fn on_explicit(&mut self, now: MonotonicTimeNs, policy_blocks_audible: bool) -> Ph1lOutput {
         match self.state {
-            SessionState::Closed => {
+            SessionState::Closed | SessionState::SoftClosed => {
                 let id = SessionId(self.next_session_id);
                 self.next_session_id = self.next_session_id.saturating_add(1);
                 self.session_id = Some(id);
                 self.pending_question = None;
                 self.pending_since = None;
-                self.soft_closed_since = None;
-                self.close_check_attempts = 0;
-                self.close_check_last_prompt_at = None;
                 self.transition(
                     now,
                     SessionState::Active,
                     reason_codes::L_OPEN_WAKE,
-                    policy_blocks_audible,
-                )
-            }
-            SessionState::SoftClosed => {
-                self.pending_question = None;
-                self.pending_since = None;
-                self.soft_closed_since = None;
-                self.close_check_attempts = 0;
-                self.close_check_last_prompt_at = None;
-                self.transition(
-                    now,
-                    SessionState::Active,
-                    reason_codes::L_RESUME_WAKE_SOFT_CLOSE,
                     policy_blocks_audible,
                 )
             }
@@ -448,19 +363,6 @@ impl Ph1lRuntime {
             self.session_id = None;
             self.pending_question = None;
             self.pending_since = None;
-            self.soft_closed_since = None;
-            self.close_check_attempts = 0;
-            self.close_check_last_prompt_at = None;
-        }
-        if to == SessionState::SoftClosed && from != SessionState::SoftClosed {
-            self.soft_closed_since = Some(now);
-            self.close_check_attempts = 0;
-            self.close_check_last_prompt_at = None;
-        }
-        if to == SessionState::Active && from == SessionState::SoftClosed {
-            self.soft_closed_since = None;
-            self.close_check_attempts = 0;
-            self.close_check_last_prompt_at = None;
         }
         self.state = to;
 
@@ -486,13 +388,16 @@ impl Ph1lRuntime {
                 must_wait: true,
                 must_rewake: true,
             },
-            SessionState::Open | SessionState::Active | SessionState::SoftClosed => {
-                NextAllowedActions {
-                    may_speak: !policy_blocks_audible,
-                    must_wait: false,
-                    must_rewake: false,
-                }
-            }
+            SessionState::Open | SessionState::Active => NextAllowedActions {
+                may_speak: !policy_blocks_audible,
+                must_wait: false,
+                must_rewake: false,
+            },
+            SessionState::SoftClosed => NextAllowedActions {
+                may_speak: false,
+                must_wait: true,
+                must_rewake: true,
+            },
             SessionState::Suspended => NextAllowedActions {
                 may_speak: false,
                 must_wait: true,
@@ -511,38 +416,6 @@ impl Ph1lRuntime {
             nudge,
         )
     }
-
-    fn maybe_close_check_prompt(&mut self, now: MonotonicTimeNs) -> Option<PresenceNudge> {
-        let since = self.soft_closed_since?;
-        let quiet_for_ns = now.0.saturating_sub(since.0);
-        if quiet_for_ns < ms_to_ns(self.config.close_check_quiet_timeout_ms) {
-            return None;
-        }
-        if self.close_check_attempts >= self.config.close_check_max_attempts {
-            return None;
-        }
-        if let Some(last) = self.close_check_last_prompt_at {
-            let since_last_ns = now.0.saturating_sub(last.0);
-            if since_last_ns < ms_to_ns(self.config.close_check_repeat_timeout_ms) {
-                return None;
-            }
-        }
-
-        let attempt = self.close_check_attempts.saturating_add(1);
-        let (variant, text) = close_check_phrase(self.session_id, attempt);
-        let prompt = PresenceNudge::close_check_v1(
-            attempt,
-            variant,
-            text.to_string(),
-            reason_codes::L_CLOSE_CHECK_PROMPTED,
-            now,
-        )
-        .expect("close_check prompt must validate");
-
-        self.close_check_attempts = attempt;
-        self.close_check_last_prompt_at = Some(now);
-        Some(prompt)
-    }
 }
 
 fn default_next_allowed_actions_for_state(state: SessionState) -> NextAllowedActions {
@@ -552,13 +425,16 @@ fn default_next_allowed_actions_for_state(state: SessionState) -> NextAllowedAct
             must_wait: true,
             must_rewake: true,
         },
-        SessionState::Open | SessionState::Active | SessionState::SoftClosed => {
-            NextAllowedActions {
-                may_speak: true,
-                must_wait: false,
-                must_rewake: false,
-            }
-        }
+        SessionState::Open | SessionState::Active => NextAllowedActions {
+            may_speak: true,
+            must_wait: false,
+            must_rewake: false,
+        },
+        SessionState::SoftClosed => NextAllowedActions {
+            may_speak: false,
+            must_wait: true,
+            must_rewake: true,
+        },
         SessionState::Suspended => NextAllowedActions {
             may_speak: false,
             must_wait: true,
@@ -567,26 +443,16 @@ fn default_next_allowed_actions_for_state(state: SessionState) -> NextAllowedAct
     }
 }
 
-fn ms_to_ns(ms: u32) -> u64 {
-    (ms as u64).saturating_mul(1_000_000)
+fn normalize_legacy_soft_closed_state(state: SessionState) -> SessionState {
+    if state == SessionState::SoftClosed {
+        SessionState::Closed
+    } else {
+        state
+    }
 }
 
-fn close_check_phrase(session_id: Option<SessionId>, attempt: u8) -> (u8, &'static str) {
-    // "Random" feel via deterministic rotation (no true randomness).
-    const PHRASES: [&str; 5] = [
-        "Are we finished with this topic?",
-        "Do you want to keep going on this, or are we done?",
-        "Anything else on this topic?",
-        "Are you done with this for now?",
-        "Should I stay with this topic, or can I close it?",
-    ];
-
-    let sid = session_id.map(|s| s.0).unwrap_or(0);
-    let lo = sid as u64;
-    let hi = (sid >> 64) as u64;
-    let seed = lo ^ hi ^ (attempt as u64);
-    let idx = (seed % (PHRASES.len() as u64)) as usize;
-    (idx as u8, PHRASES[idx])
+fn ms_to_ns(ms: u32) -> u64 {
+    (ms as u64).saturating_mul(1_000_000)
 }
 
 #[cfg(test)]
@@ -816,7 +682,6 @@ mod tests {
     fn at_l_00_active_window_uses_stage6_thirty_seconds() {
         let config = Ph1lConfig::mvp_desktop_v1();
         assert_eq!(config.active_silence_timeout_ms, 30_000);
-        assert_eq!(config.soft_close_timeout_ms, 120_000);
 
         let mut rt = Ph1lRuntime::new(config);
         let mut i = input(0, 0);
@@ -827,11 +692,16 @@ mod tests {
         let out = rt.step(input(1, config.active_silence_timeout_ms - 1));
         assert_eq!(out.snapshot.session_state, SessionState::Active);
         let out = rt.step(input(2, config.active_silence_timeout_ms));
-        assert_eq!(out.snapshot.session_state, SessionState::SoftClosed);
+        assert_eq!(out.snapshot.session_state, SessionState::Closed);
+        assert_eq!(
+            out.transition.unwrap().reason_code,
+            reason_codes::L_TO_CLOSED_SILENCE
+        );
+        assert!(out.snapshot.next_allowed_actions.must_rewake);
     }
 
     #[test]
-    fn at_l_01_soft_close_feels_human() {
+    fn at_l_01_idle_close_seals_after_thirty_seconds() {
         let mut rt = Ph1lRuntime::new(Ph1lConfig::mvp_desktop_v1());
         // Wake into ACTIVE.
         let mut i = input(0, 0);
@@ -839,26 +709,36 @@ mod tests {
         let out = rt.step(i);
         assert_eq!(out.snapshot.session_state, SessionState::Active);
 
-        // Silence beyond active timeout -> SOFT_CLOSED.
+        // Silence beyond active timeout -> CLOSED.
         let out = rt.step(input(1, rt.config.active_silence_timeout_ms));
-        assert_eq!(out.snapshot.session_state, SessionState::SoftClosed);
+        assert_eq!(out.snapshot.session_state, SessionState::Closed);
+        assert!(out.snapshot.session_id.is_none());
     }
 
     #[test]
-    fn at_l_02_resume_without_rewake_during_soft_close() {
+    fn at_l_02_idle_close_requires_rewake_for_new_session() {
         let mut rt = Ph1lRuntime::new(Ph1lConfig::mvp_desktop_v1());
-        // Wake into ACTIVE then soft-close.
+        // Wake into ACTIVE then idle-close.
         let mut i = input(0, 0);
         i.wake_event = Some(accepted_wake(MonotonicTimeNs(0)));
         rt.step(i);
+        let first_session_id = rt.session_id();
         rt.step(input(1, rt.config.active_silence_timeout_ms));
-        assert_eq!(rt.state(), SessionState::SoftClosed);
+        assert_eq!(rt.state(), SessionState::Closed);
+        assert_eq!(rt.session_id(), None);
 
-        // User speaks -> ACTIVE.
+        // User speech without wake does not reopen a sealed session.
         let mut i = input(2, 0);
         i.user_activity.speech_detected = true;
         let out = rt.step(i);
+        assert_eq!(out.snapshot.session_state, SessionState::Closed);
+
+        // Wake opens a fresh logical session.
+        let mut i = input(3, 0);
+        i.wake_event = Some(accepted_wake(MonotonicTimeNs(3)));
+        let out = rt.step(i);
         assert_eq!(out.snapshot.session_state, SessionState::Active);
+        assert_ne!(out.snapshot.session_id, first_session_id);
     }
 
     #[test]
@@ -869,7 +749,7 @@ mod tests {
         i.wake_event = Some(accepted_wake(MonotonicTimeNs(0)));
         rt.step(i);
 
-        // Pending clarify means we should not soft-close just due to active silence timeout.
+        // Pending clarify means we should not close just due to active silence timeout.
         let mut i = input(1, rt.config.active_silence_timeout_ms + 1);
         i.conversation_directive = Some(Ph1xDirective::Clarify(
             ClarifyDirective::v1(
@@ -884,7 +764,7 @@ mod tests {
     }
 
     #[test]
-    fn at_l_04_one_prompt_then_soft_close_then_close() {
+    fn at_l_04_pending_clarify_timeout_closes_once() {
         let mut rt = Ph1lRuntime::new(Ph1lConfig::mvp_desktop_v1());
         // Wake into ACTIVE.
         let mut i = input(0, 0);
@@ -903,28 +783,21 @@ mod tests {
         ));
         rt.step(i);
 
-        // After clarify timeout -> SOFT_CLOSED with prompt reason.
+        // After clarify timeout -> CLOSED. There is no separate soft-close stage.
         let out = rt.step(input(
             ms_to_ns(rt.config.clarify_timeout_ms) + 1,
             rt.config.clarify_timeout_ms + 1,
         ));
-        assert_eq!(out.snapshot.session_state, SessionState::SoftClosed);
+        assert_eq!(out.snapshot.session_state, SessionState::Closed);
         assert!(out.transition.is_some());
         assert_eq!(
             out.transition.unwrap().reason_code,
-            reason_codes::L_WAIT_TIMEOUT_PROMPTED
+            reason_codes::L_TO_CLOSED_SILENCE
         );
-
-        // After soft close timeout -> CLOSED.
-        let out = rt.step(input(
-            ms_to_ns(rt.config.soft_close_timeout_ms) + 2,
-            rt.config.soft_close_timeout_ms + 2,
-        ));
-        assert_eq!(out.snapshot.session_state, SessionState::Closed);
     }
 
     #[test]
-    fn at_l_08_close_check_prompt_before_fully_closing() {
+    fn at_l_08_no_close_check_prompt_before_idle_close() {
         let mut rt = Ph1lRuntime::new(Ph1lConfig::mvp_desktop_v1());
 
         // Wake into ACTIVE.
@@ -932,72 +805,35 @@ mod tests {
         i.wake_event = Some(accepted_wake(MonotonicTimeNs(0)));
         rt.step(i);
 
-        // Silence beyond active timeout -> SOFT_CLOSED.
+        // Silence beyond active timeout -> CLOSED with no nudge.
         let out = rt.step(input(1, rt.config.active_silence_timeout_ms));
-        assert_eq!(out.snapshot.session_state, SessionState::SoftClosed);
-
-        // Quiet for close_check_quiet_timeout_ms while still below soft_close_timeout_ms => nudge.
-        let now = 1 + ms_to_ns(rt.config.close_check_quiet_timeout_ms) + 2;
-        let silence_ms =
-            rt.config.active_silence_timeout_ms + rt.config.close_check_quiet_timeout_ms;
-        let out = rt.step(input(now, silence_ms));
-        let n = out.nudge.expect("expected close_check nudge");
-        assert_eq!(n.reason_code, reason_codes::L_CLOSE_CHECK_PROMPTED);
-        assert_eq!(n.attempt, 1);
-        assert!(n.prompt_text.ends_with('?'));
-    }
-
-    #[test]
-    fn at_l_09_close_check_is_bounded_and_repeats_deterministically() {
-        let mut rt = Ph1lRuntime::new(Ph1lConfig::mvp_desktop_v1());
-
-        // Wake into ACTIVE, then SOFT_CLOSED.
-        let mut i = input(0, 0);
-        i.wake_event = Some(accepted_wake(MonotonicTimeNs(0)));
-        rt.step(i);
-        rt.step(input(1, rt.config.active_silence_timeout_ms));
-        assert_eq!(rt.state(), SessionState::SoftClosed);
-
-        // First prompt.
-        let now1 = 1 + ms_to_ns(rt.config.close_check_quiet_timeout_ms) + 2;
-        let silence1 = rt.config.active_silence_timeout_ms + rt.config.close_check_quiet_timeout_ms;
-        let out = rt.step(input(now1, silence1));
-        let n1 = out.nudge.expect("expected first close_check nudge");
-        assert_eq!(n1.attempt, 1);
-
-        // Second prompt after repeat timeout (still below hard close).
-        let now2 = now1 + ms_to_ns(rt.config.close_check_repeat_timeout_ms) + 2;
-        let silence2 = silence1 + rt.config.close_check_repeat_timeout_ms;
-        let out = rt.step(input(now2, silence2));
-        let n2 = out.nudge.expect("expected second close_check nudge");
-        assert_eq!(n2.attempt, 2);
-        assert_ne!(n1.variant, n2.variant);
-
-        // Further prompts are suppressed after max_attempts.
-        let now3 = now2 + ms_to_ns(rt.config.close_check_repeat_timeout_ms) + 2;
-        let silence3 = silence2 + rt.config.close_check_repeat_timeout_ms;
-        let out = rt.step(input(now3, silence3));
+        assert_eq!(out.snapshot.session_state, SessionState::Closed);
         assert!(out.nudge.is_none());
     }
 
     #[test]
-    fn at_l_10_no_close_check_prompt_in_privacy_or_dnd() {
+    fn at_l_09_legacy_soft_closed_snapshot_requires_rewake() {
         let mut rt = Ph1lRuntime::new(Ph1lConfig::mvp_desktop_v1());
 
-        // Wake into ACTIVE, then SOFT_CLOSED.
+        rt.state = SessionState::SoftClosed;
+        rt.session_id = Some(SessionId(42));
+        let out = rt.step(input(1, 0));
+        assert_eq!(out.snapshot.session_state, SessionState::SoftClosed);
+        assert!(out.snapshot.next_allowed_actions.must_rewake);
+        assert!(!out.snapshot.next_allowed_actions.may_speak);
+    }
+
+    #[test]
+    fn at_l_10_privacy_dnd_idle_close_stays_non_audible() {
+        let mut rt = Ph1lRuntime::new(Ph1lConfig::mvp_desktop_v1());
         let mut i = input(0, 0);
         i.wake_event = Some(accepted_wake(MonotonicTimeNs(0)));
         rt.step(i);
-        rt.step(input(1, rt.config.active_silence_timeout_ms));
-        assert_eq!(rt.state(), SessionState::SoftClosed);
 
-        let now = 1 + ms_to_ns(rt.config.close_check_quiet_timeout_ms) + 2;
-        let silence_ms =
-            rt.config.active_silence_timeout_ms + rt.config.close_check_quiet_timeout_ms;
-        let mut i = input(now, silence_ms);
+        let mut i = input(1, rt.config.active_silence_timeout_ms);
         i.policy_context_ref = PolicyContextRef::v1(true, false, SafetyTier::Standard);
         let out = rt.step(i);
-        assert!(out.nudge.is_none());
+        assert_eq!(out.snapshot.session_state, SessionState::Closed);
         assert_eq!(out.snapshot.next_allowed_actions.may_speak, false);
     }
 }

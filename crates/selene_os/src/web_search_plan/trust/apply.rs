@@ -125,7 +125,10 @@ pub fn enrich_evidence_sources(
             &breakdown,
         );
 
-        source_obj.insert("canonical_url".to_string(), Value::String(canonical_url.clone()));
+        source_obj.insert(
+            "canonical_url".to_string(),
+            Value::String(canonical_url.clone()),
+        );
         source_obj.insert(
             "trust_tier".to_string(),
             Value::String(detector.trust_tier.as_str().to_string()),
@@ -134,9 +137,17 @@ pub fn enrich_evidence_sources(
         source_obj.insert("spam_risk_score".to_string(), json!(spam.spam_risk_score));
         source_obj.insert(
             "trust_factors".to_string(),
-            Value::Array(factors.iter().map(|factor| Value::String(factor.clone())).collect()),
+            Value::Array(
+                factors
+                    .iter()
+                    .map(|factor| Value::String(factor.clone()))
+                    .collect(),
+            ),
         );
-        source_obj.insert("official_source".to_string(), Value::Bool(detector.official_source));
+        source_obj.insert(
+            "official_source".to_string(),
+            Value::Bool(detector.official_source),
+        );
         source_obj.insert(
             "trust_model_version".to_string(),
             Value::String(TRUST_MODEL_VERSION.to_string()),
@@ -165,9 +176,9 @@ pub fn enrich_evidence_sources(
             "trust_metadata must be object",
         ));
     }
-    let trust_metadata_obj = trust_metadata
-        .as_object_mut()
-        .ok_or_else(|| TrustError::new(TrustErrorKind::PolicyViolation, "trust_metadata invalid"))?;
+    let trust_metadata_obj = trust_metadata.as_object_mut().ok_or_else(|| {
+        TrustError::new(TrustErrorKind::PolicyViolation, "trust_metadata invalid")
+    })?;
     trust_metadata_obj.insert(
         "trust_model".to_string(),
         json!({

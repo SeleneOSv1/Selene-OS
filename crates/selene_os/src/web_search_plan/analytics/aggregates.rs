@@ -2,8 +2,8 @@
 
 use crate::web_search_plan::analytics::currency_normalize::CurrencyRateTable;
 use crate::web_search_plan::analytics::decimal::{
-    decimal_to_numeric_value, decimal_to_string, max, mean, median, min, percentile, stddev, trimmed_mean,
-    weighted_mean,
+    decimal_to_numeric_value, decimal_to_string, max, mean, median, min, percentile, stddev,
+    trimmed_mean, weighted_mean,
 };
 use crate::web_search_plan::analytics::types::{
     Aggregate, AggregateBuildResult, AggregateGroup, AggregateMethod, AggregateWindow,
@@ -342,5 +342,10 @@ fn normalize_group(
         }
     }
 
-    (samples, normalization_trace, unit_mismatch, currency_mismatch)
+    (
+        samples,
+        normalization_trace,
+        unit_mismatch,
+        currency_mismatch,
+    )
 }

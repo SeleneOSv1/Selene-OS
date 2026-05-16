@@ -528,11 +528,7 @@ impl Validate for ComputationExecutionState {
 
 impl Validate for NormalizationTraceEntry {
     fn validate(&self) -> Result<(), ContractViolation> {
-        validate_ascii_token(
-            "normalization_trace_entry.rule_id",
-            &self.rule_id,
-            128,
-        )?;
+        validate_ascii_token("normalization_trace_entry.rule_id", &self.rule_id, 128)?;
         validate_ascii_token(
             "normalization_trace_entry.input_label",
             &self.input_label,
@@ -569,11 +565,7 @@ impl Validate for ComputationPacket {
             &self.schema_version,
             16,
         )?;
-        validate_ascii_token(
-            "computation_packet.produced_by",
-            &self.produced_by,
-            64,
-        )?;
+        validate_ascii_token("computation_packet.produced_by", &self.produced_by, 64)?;
         validate_ascii_token_vec(
             "computation_packet.intended_consumers",
             &self.intended_consumers,
@@ -603,11 +595,7 @@ impl Validate for ComputationPacket {
 
 impl Validate for ComputationInputs {
     fn validate(&self) -> Result<(), ContractViolation> {
-        validate_ascii_token(
-            "computation_inputs.evidence_hash",
-            &self.evidence_hash,
-            128,
-        )?;
+        validate_ascii_token("computation_inputs.evidence_hash", &self.evidence_hash, 128)?;
         validate_ascii_token(
             "computation_inputs.policy_snapshot_id",
             &self.policy_snapshot_id,

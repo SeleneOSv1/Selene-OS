@@ -23,9 +23,7 @@ pub fn build_enterprise_provenance(
     reason_codes: &[String],
 ) -> Result<EnterpriseProvenance, String> {
     let evidence_hash = hash_canonical_json(evidence_packet)?;
-    let computation_hash = computation_packet
-        .map(hash_canonical_json)
-        .transpose()?;
+    let computation_hash = computation_packet.map(hash_canonical_json).transpose()?;
 
     let mut output_packet_hashes = BTreeMap::new();
     for (name, packet) in outputs {

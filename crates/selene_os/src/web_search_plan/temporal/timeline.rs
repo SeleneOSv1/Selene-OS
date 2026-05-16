@@ -11,13 +11,28 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TemporalValue {
-    String { value: String },
-    Int { value: i64 },
-    Decimal { value: String },
-    Bool { value: bool },
-    Date { value: String },
-    Currency { amount: String, currency_code: String },
-    Percent { value: String },
+    String {
+        value: String,
+    },
+    Int {
+        value: i64,
+    },
+    Decimal {
+        value: String,
+    },
+    Bool {
+        value: bool,
+    },
+    Date {
+        value: String,
+    },
+    Currency {
+        amount: String,
+        currency_code: String,
+    },
+    Percent {
+        value: String,
+    },
 }
 
 impl TemporalValue {
@@ -190,7 +205,11 @@ fn extract_source_timestamps(evidence_packet: &Value) -> BTreeMap<String, i64> {
         let timestamp = source
             .get("published_at")
             .and_then(parse_timestamp_value)
-            .or_else(|| source.get("retrieved_at_ms").and_then(parse_timestamp_value));
+            .or_else(|| {
+                source
+                    .get("retrieved_at_ms")
+                    .and_then(parse_timestamp_value)
+            });
         if let Some(timestamp) = timestamp {
             out.insert(url.to_string(), timestamp);
         }

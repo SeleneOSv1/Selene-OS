@@ -144,7 +144,11 @@ pub fn build_computation_packet(
             evidence_hash,
             policy_snapshot_id: request.policy_snapshot_id,
             as_of_ms: request.as_of_ms,
-            input_count: aggregate_result.groups.iter().map(|group| group.samples.len() as u32).sum(),
+            input_count: aggregate_result
+                .groups
+                .iter()
+                .map(|group| group.samples.len() as u32)
+                .sum(),
             input_labels: aggregate_result
                 .groups
                 .iter()

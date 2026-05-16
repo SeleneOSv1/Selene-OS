@@ -33,12 +33,13 @@ pub fn apply_filters(
     tool_request_packet: &Value,
     evidence_packet: &Value,
 ) -> Result<RegulatoryFilterOutcome, RegulatoryError> {
-    let jurisdiction = resolve_jurisdiction(tool_request_packet, evidence_packet).ok_or_else(|| {
-        RegulatoryError::new(
-            RegulatoryErrorKind::JurisdictionMismatch,
-            "failed to resolve jurisdiction for regulatory mode",
-        )
-    })?;
+    let jurisdiction =
+        resolve_jurisdiction(tool_request_packet, evidence_packet).ok_or_else(|| {
+            RegulatoryError::new(
+                RegulatoryErrorKind::JurisdictionMismatch,
+                "failed to resolve jurisdiction for regulatory mode",
+            )
+        })?;
 
     if realtime_stale(evidence_packet) {
         return Err(RegulatoryError::new(

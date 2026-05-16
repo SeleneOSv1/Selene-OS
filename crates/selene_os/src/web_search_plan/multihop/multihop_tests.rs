@@ -85,7 +85,10 @@ struct DeterministicExecutor {
 
 impl DeterministicExecutor {
     fn new(scripted: Vec<Result<HopExecutionOutput, HopExecutionError>>) -> Self {
-        Self { scripted, cursor: 0 }
+        Self {
+            scripted,
+            cursor: 0,
+        }
     }
 
     fn executed_count(&self) -> usize {
@@ -131,7 +134,11 @@ fn test_t1_same_root_query_yields_identical_hop_plan() {
     assert_eq!(first.plan_id, second.plan_id);
     assert_eq!(first.hops.len(), expected.simple_chain.expected_hops.len());
     assert_eq!(
-        first.hops.iter().map(|hop| hop.sub_query.clone()).collect::<Vec<String>>(),
+        first
+            .hops
+            .iter()
+            .map(|hop| hop.sub_query.clone())
+            .collect::<Vec<String>>(),
         expected.simple_chain.expected_hops
     );
     assert_eq!(input.mode.as_str(), expected.simple_chain.mode);
@@ -169,8 +176,14 @@ fn test_t2_max_hop_enforced_deterministically() {
     let result = execute_hop_plan(&plan, budget, &mut executor).expect("run should complete");
 
     assert_eq!(result.stop_reason, "budget_exhausted");
-    assert!(result.reason_codes.iter().any(|code| code == "budget_exhausted"));
-    assert!(result.reason_codes.iter().any(|code| code == "insufficient_evidence"));
+    assert!(result
+        .reason_codes
+        .iter()
+        .any(|code| code == "budget_exhausted"));
+    assert!(result
+        .reason_codes
+        .iter()
+        .any(|code| code == "insufficient_evidence"));
     assert_eq!(result.hop_records.len(), 1, "only first hop should execute");
 }
 
@@ -198,8 +211,14 @@ fn test_t3_max_time_enforced_deterministically() {
 
     let result = execute_hop_plan(&plan, budget, &mut executor).expect("run should complete");
     assert_eq!(result.stop_reason, "timeout_exceeded");
-    assert!(result.reason_codes.iter().any(|code| code == "timeout_exceeded"));
-    assert!(result.reason_codes.iter().any(|code| code == "insufficient_evidence"));
+    assert!(result
+        .reason_codes
+        .iter()
+        .any(|code| code == "timeout_exceeded"));
+    assert!(result
+        .reason_codes
+        .iter()
+        .any(|code| code == "insufficient_evidence"));
 }
 
 #[test]
@@ -219,7 +238,10 @@ fn test_t4_cycle_detection_triggers_fail_closed() {
     };
     let plan = build_hop_plan(&input).expect("hop plan should build");
     assert_eq!(
-        plan.hops.iter().map(|hop| hop.sub_query.clone()).collect::<Vec<String>>(),
+        plan.hops
+            .iter()
+            .map(|hop| hop.sub_query.clone())
+            .collect::<Vec<String>>(),
         expected.cycle_case.expected_hops
     );
 
@@ -244,7 +266,10 @@ fn test_t4_cycle_detection_triggers_fail_closed() {
 
     assert_eq!(result.stop_reason, "policy_violation");
     assert!(result.cycle_detected);
-    assert!(result.reason_codes.iter().any(|code| code == "policy_violation"));
+    assert!(result
+        .reason_codes
+        .iter()
+        .any(|code| code == "policy_violation"));
 }
 
 #[test]
@@ -293,8 +318,7 @@ fn test_t5_hop_proof_chain_is_produced_and_ordered() {
         vec![0, 1]
     );
     assert_eq!(
-        run_a.proof_chain.proof_chain_hash,
-        run_b.proof_chain.proof_chain_hash,
+        run_a.proof_chain.proof_chain_hash, run_b.proof_chain.proof_chain_hash,
         "proof chain hash should be deterministic"
     );
 }
@@ -331,7 +355,10 @@ fn test_t6_stop_reason_is_set_correctly() {
     ))]);
     let failure = execute_hop_plan(&plan, budget, &mut failure_executor).expect("failure run");
     assert_eq!(failure.stop_reason, "insufficient_evidence");
-    assert!(failure.reason_codes.iter().any(|code| code == "insufficient_evidence"));
+    assert!(failure
+        .reason_codes
+        .iter()
+        .any(|code| code == "insufficient_evidence"));
 }
 
 #[test]

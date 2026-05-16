@@ -73,15 +73,7 @@ pub fn detect_domain(query: &str, explicit_hint: Option<&str>) -> RealtimeDomain
     } else if contains_any(
         normalized.as_str(),
         &[
-            "stock",
-            "ticker",
-            "quote",
-            "market",
-            "price",
-            "crypto",
-            "forex",
-            "fx",
-            "equity",
+            "stock", "ticker", "quote", "market", "price", "crypto", "forex", "fx", "equity",
         ],
     ) {
         RealtimeDomain::Finance
@@ -132,7 +124,11 @@ fn parse_inline_domain_hint(query: &str) -> Option<String> {
         .trim_matches(|ch: char| ch == ';' || ch == ',')
         .trim()
         .to_string();
-    if hint.is_empty() { None } else { Some(hint) }
+    if hint.is_empty() {
+        None
+    } else {
+        Some(hint)
+    }
 }
 
 fn contains_any(haystack: &str, needles: &[&str]) -> bool {

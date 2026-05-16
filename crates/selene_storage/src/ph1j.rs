@@ -1,11 +1,11 @@
 #![forbid(unsafe_code)]
 
+use selene_kernel_contracts::ph1j::TurnId;
 use selene_kernel_contracts::ph1j::{
-    AuditEventId, AuditEventInput, CanonicalProofRecord, CanonicalProofRecordInput, ProofVerificationResult,
-    ProofWriteReceipt,
+    AuditEventId, AuditEventInput, CanonicalProofRecord, CanonicalProofRecordInput,
+    ProofVerificationResult, ProofWriteReceipt,
 };
 use selene_kernel_contracts::ph1l::SessionId;
-use selene_kernel_contracts::ph1j::TurnId;
 
 use crate::ph1f::{Ph1fStore, StorageError};
 

@@ -60,7 +60,8 @@ pub fn run_competitive_mode(
         &allowed_refs,
         &request.evidence_packet,
     )?;
-    let feature_matrix = build_feature_matrix(&request.structured_rows, &entity_index, &allowed_refs)?;
+    let feature_matrix =
+        build_feature_matrix(&request.structured_rows, &entity_index, &allowed_refs)?;
 
     let comparison = build_competitive_comparison(
         request.target_entity.as_str(),
@@ -105,7 +106,10 @@ fn collect_allowed_source_refs(evidence_packet: &Value) -> BTreeSet<String> {
             }
         }
     }
-    if let Some(chunks) = evidence_packet.get("content_chunks").and_then(Value::as_array) {
+    if let Some(chunks) = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+    {
         for chunk in chunks {
             if let Some(chunk_id) = chunk.get("chunk_id").and_then(Value::as_str) {
                 let trimmed = chunk_id.trim();
@@ -118,7 +122,9 @@ fn collect_allowed_source_refs(evidence_packet: &Value) -> BTreeSet<String> {
     refs
 }
 
-fn validate_competitive_packet(packet: &CompetitiveComparisonPacket) -> Result<(), CompetitiveError> {
+fn validate_competitive_packet(
+    packet: &CompetitiveComparisonPacket,
+) -> Result<(), CompetitiveError> {
     let registry = load_packet_schema_registry().map_err(|err| {
         CompetitiveError::new(
             CompetitiveErrorKind::PolicyViolation,

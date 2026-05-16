@@ -135,9 +135,14 @@ pub fn build_merge_packet(request: MergeRequest) -> Result<MergeBuildOutput, Mer
     let allowed_refs = collect_evidence_refs(&request.evidence_packet);
     let external_findings = extract_external_findings(&request.evidence_packet, &allowed_refs)
         .map_err(|message| MergeBuildError::new("policy_violation", message))?;
-    let delta_result = build_delta(&internal_view.prior_key_points, external_findings.as_slice());
-    let conflict_report =
-        build_conflict_report(delta_result.changes.as_slice(), external_findings.as_slice());
+    let delta_result = build_delta(
+        &internal_view.prior_key_points,
+        external_findings.as_slice(),
+    );
+    let conflict_report = build_conflict_report(
+        delta_result.changes.as_slice(),
+        external_findings.as_slice(),
+    );
 
     enforce_evidence_supremacy(
         &allowed_refs,

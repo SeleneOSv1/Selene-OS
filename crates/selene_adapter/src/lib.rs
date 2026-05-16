@@ -1218,6 +1218,26 @@ pub struct SessionRecentListAdapterResponse {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionIdleCloseCheckAdapterRequest {
+    pub correlation_id: u64,
+    pub idempotency_key: String,
+    pub actor_user_id: String,
+    pub device_id: String,
+    pub tts_playback_active: bool,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct SessionIdleCloseCheckAdapterResponse {
+    pub status: String,
+    pub outcome: String,
+    pub reason: Option<String>,
+    pub session_id: Option<String>,
+    pub session_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_lifecycle_action: Option<VoiceTurnSessionLifecycleActionPacket>,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SessionPostureEvidenceAdapterRequest {
     pub correlation_id: u64,
     pub idempotency_key: String,
@@ -3508,6 +3528,12 @@ fn h380_contextual_place_followup_location(text: &str) -> Option<String> {
         return h380_clean_contextual_place_candidate(&normalized);
     }
     let candidate = [
+        "and what about ",
+        "and same for ",
+        "and same question for ",
+        "and same question in ",
+        "also what about ",
+        "also same for ",
         "what about ",
         "same for ",
         "same question for ",
@@ -3641,6 +3667,29 @@ fn h380_clean_contextual_place_candidate(candidate: &str) -> Option<String> {
                 | "clear"
                 | "cloud"
                 | "cloudy"
+                | "about"
+                | "answer"
+                | "ask"
+                | "born"
+                | "country"
+                | "give"
+                | "handle"
+                | "how"
+                | "i"
+                | "know"
+                | "long"
+                | "name"
+                | "question"
+                | "short"
+                | "story"
+                | "tell"
+                | "what"
+                | "when"
+                | "where"
+                | "who"
+                | "why"
+                | "write"
+                | "your"
                 | "time"
                 | "proof"
                 | "source"
@@ -5209,6 +5258,81 @@ impl AdapterRuntime {
                     pinned_context_refs: session.pinned_context_refs,
                 })
                 .collect(),
+        })
+    }
+
+    pub fn run_session_idle_close_check(
+        &self,
+        request: SessionIdleCloseCheckAdapterRequest,
+    ) -> Result<SessionIdleCloseCheckAdapterResponse, String> {
+        let correlation_id = CorrelationId(u128::from(request.correlation_id));
+        let actor_user_id = UserId::new(request.actor_user_id.clone())
+            .map_err(|err| format!("invalid actor_user_id: {err:?}"))?;
+        let device_id = DeviceId::new(request.device_id.clone())
+            .map_err(|err| format!("invalid device_id: {err:?}"))?;
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        self.run_session_idle_close_check_at(request, actor_user_id, device_id, correlation_id, now)
+    }
+
+    fn run_session_idle_close_check_at(
+        &self,
+        request: SessionIdleCloseCheckAdapterRequest,
+        actor_user_id: UserId,
+        device_id: DeviceId,
+        correlation_id: CorrelationId,
+        now: MonotonicTimeNs,
+    ) -> Result<SessionIdleCloseCheckAdapterResponse, String> {
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        let turn_id = TurnId(correlation_id.0.max(1) as u64);
+        let outcome = idle_close_stage6_session_for_actor(
+            &mut store,
+            now,
+            correlation_id,
+            turn_id,
+            &actor_user_id,
+            &device_id,
+            request.tts_playback_active,
+            &self.runtime_node_id,
+            self.session_lease_ttl_ms,
+        )?;
+
+        let Some(outcome) = outcome else {
+            return Ok(SessionIdleCloseCheckAdapterResponse {
+                status: "ok".to_string(),
+                outcome: "SESSION_IDLE_NO_ACTIVE_SESSION".to_string(),
+                reason: Some("no recoverable active session found for actor".to_string()),
+                session_id: None,
+                session_state: None,
+                session_lifecycle_action: None,
+            });
+        };
+
+        let session_lifecycle_action = if outcome.closed {
+            Some(VoiceTurnSessionLifecycleActionPacket {
+                canonical_intent: "SESSION_CLOSE_SEAL".to_string(),
+                action: "close_seal".to_string(),
+                source: "ph1l_runtime_idle_close".to_string(),
+                evidence: "stage6_idle_30s_no_valid_engagement".to_string(),
+            })
+        } else {
+            None
+        };
+
+        Ok(SessionIdleCloseCheckAdapterResponse {
+            status: "ok".to_string(),
+            outcome: if outcome.closed {
+                "SESSION_IDLE_CLOSED"
+            } else {
+                "SESSION_IDLE_STILL_ACTIVE"
+            }
+            .to_string(),
+            reason: Some(outcome.reason),
+            session_id: Some(session_id_to_string(outcome.session_id)),
+            session_state: Some(session_state_to_api_value(outcome.session_state)),
+            session_lifecycle_action,
         })
     }
 
@@ -13594,12 +13718,21 @@ fn deterministic_public_clarification_followup_query(
     }
     match topic_hint {
         DETERMINISTIC_TIME_CLARIFICATION_TOPIC => {
-            Some(format!("what is the time in {}", truncate_utf8(text, 128)))
+            let place = h380_contextual_place_followup_location(text)
+                .or_else(|| h380_clean_contextual_place_candidate(text))?;
+            Some(format!(
+                "what is the time in {}",
+                truncate_utf8(&place, 128)
+            ))
         }
-        DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC => Some(format!(
-            "what is the weather in {}",
-            truncate_utf8(text, 128)
-        )),
+        DETERMINISTIC_WEATHER_CLARIFICATION_TOPIC => {
+            let place = h380_contextual_place_followup_location(text)
+                .or_else(|| h380_clean_contextual_place_candidate(text))?;
+            Some(format!(
+                "what is the weather in {}",
+                truncate_utf8(&place, 128)
+            ))
+        }
         _ => None,
     }
 }
@@ -17714,6 +17847,10 @@ fn h411_is_selene_self_identity_question(lower: &str) -> bool {
             | "what s your name"
             | "whats your name"
             | "who are you"
+            | "where are you from"
+            | "what country were you born"
+            | "what country were you born in"
+            | "where were you born"
             | "tell me your name"
             | "may i know your name"
     )
@@ -20299,7 +20436,32 @@ fn resolve_session_turn_state(
         session_lease_ttl_ms,
         session_retry_cache,
     } = input;
-    let selection = canonical_actor_session_selection(store, actor_user_id)?;
+    let mut selection = canonical_actor_session_selection(store, actor_user_id)?;
+    if let Some(legacy_soft_closed) = selection
+        .latest_recoverable
+        .as_ref()
+        .filter(|record| record.session_state == SessionState::SoftClosed)
+        .cloned()
+    {
+        let mut closed = legacy_soft_closed;
+        closed.session_state = SessionState::Closed;
+        closed.last_activity_at = now;
+        closed.closed_at = Some(now);
+        closed.active_turn_id = None;
+        closed.lease_owner_id = None;
+        closed.lease_acquired_at = None;
+        closed.lease_expires_at = None;
+        store
+            .upsert_session_lifecycle(
+                closed,
+                Some(sanitize_idempotency_token(&format!(
+                    "adapter_session_legacy_soft_closed_seal:{}:{}",
+                    correlation_id.0, turn_id.0
+                ))),
+            )
+            .map_err(storage_error_to_string)?;
+        selection = canonical_actor_session_selection(store, actor_user_id)?;
+    }
     if let Some(existing) = selection.latest_recoverable.as_ref() {
         match existing.device_turn_sequence_for(device_id) {
             Some(previous_sequence) if device_turn_sequence < previous_sequence => {
@@ -20810,6 +20972,112 @@ fn close_stage6_session_for_actor(
         session_lease_ttl_ms,
     )?;
     Ok(Some(out.snapshot.session_state))
+}
+
+#[derive(Debug, Clone)]
+struct Stage6IdleCloseCheckOutcome {
+    session_id: SessionId,
+    session_state: SessionState,
+    closed: bool,
+    reason: String,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn idle_close_stage6_session_for_actor(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    device_id: &DeviceId,
+    tts_playback_active: bool,
+    runtime_node_id: &str,
+    session_lease_ttl_ms: u64,
+) -> Result<Option<Stage6IdleCloseCheckOutcome>, String> {
+    let selection = canonical_actor_session_selection(store, actor_user_id)?;
+    let Some(record) = selection.latest_recoverable else {
+        return Ok(None);
+    };
+    if record.session_state == SessionState::Closed {
+        return Ok(Some(Stage6IdleCloseCheckOutcome {
+            session_id: record.session_id,
+            session_state: SessionState::Closed,
+            closed: false,
+            reason: "session_already_closed".to_string(),
+        }));
+    }
+
+    let silence_ms = now
+        .0
+        .saturating_sub(record.last_activity_at.0)
+        .saturating_div(1_000_000)
+        .min(u32::MAX as u64) as u32;
+    let next_session_id_seed = store
+        .session_rows()
+        .keys()
+        .map(|session_id| session_id.0)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1)
+        .max(record.session_id.0.saturating_add(1))
+        .max(1);
+    let mut lifecycle = Ph1lRuntime::from_persisted_state(
+        Ph1lConfig::mvp_desktop_v1(),
+        record.session_state,
+        Some(record.session_id),
+        next_session_id_seed,
+    )
+    .map_err(|err| format!("invalid PH1.L persisted state for idle close check: {err:?}"))?;
+    let previous_session_id = lifecycle.session_id();
+    let out = lifecycle.step(Ph1lInput::v1(
+        now,
+        None,
+        None,
+        tts_playback_state_from_bool(tts_playback_active),
+        UserActivitySignals {
+            speech_detected: false,
+            barge_in: false,
+            silence_ms,
+        },
+        PolicyContextRef::v1(false, false, SafetyTier::Standard),
+        false,
+        false,
+        false,
+    ));
+
+    if out.snapshot.session_state == SessionState::Closed {
+        persist_session_snapshot(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+            actor_user_id,
+            device_id,
+            previous_session_id,
+            &out,
+            "idle_close_check",
+            runtime_node_id,
+            session_lease_ttl_ms,
+            false,
+        )?;
+        return Ok(Some(Stage6IdleCloseCheckOutcome {
+            session_id: record.session_id,
+            session_state: SessionState::Closed,
+            closed: true,
+            reason: "ph1l_closed_after_30s_no_valid_engagement".to_string(),
+        }));
+    }
+
+    Ok(Some(Stage6IdleCloseCheckOutcome {
+        session_id: record.session_id,
+        session_state: out.snapshot.session_state,
+        closed: false,
+        reason: if tts_playback_active {
+            "tts_playback_active_no_idle_close".to_string()
+        } else {
+            "active_idle_window_not_expired".to_string()
+        },
+    }))
 }
 
 fn tts_playback_state_from_bool(active: bool) -> TtsPlaybackState {
@@ -31099,6 +31367,66 @@ mod tests {
     }
 
     #[test]
+    fn stage6_idle_close_check_closes_without_next_user_turn() {
+        let runtime = AdapterRuntime::default();
+        let mut first = base_request();
+        first.correlation_id = 31_504;
+        first.turn_id = 41_504;
+        first.now_ns = Some(3_000_000_000);
+        first.app_platform = "DESKTOP".to_string();
+        first.trigger = "WAKE_WORD".to_string();
+        seed_wake_enrollment_complete_for_request(&runtime, &mut first, "stage6_idle_check");
+        runtime
+            .run_voice_turn(first.clone())
+            .expect("wake turn must open session");
+
+        let actor_user_id = UserId::new(first.actor_user_id.clone()).expect("actor id must parse");
+        let device_id = DeviceId::new(first.device_id.clone().expect("device id must exist"))
+            .expect("device id must parse");
+        let first_session_id = {
+            let store = runtime.store.lock().expect("store lock must not poison");
+            latest_canonical_session_for_actor(&store, &actor_user_id)
+                .expect("canonical session lookup must succeed")
+                .expect("first turn must persist session")
+                .session_id
+        };
+
+        let request = SessionIdleCloseCheckAdapterRequest {
+            correlation_id: 31_505,
+            idempotency_key: "stage6_idle_close_check_without_turn".to_string(),
+            actor_user_id: first.actor_user_id,
+            device_id: first.device_id.expect("device id must remain available"),
+            tts_playback_active: false,
+        };
+        let response = runtime
+            .run_session_idle_close_check_at(
+                request,
+                actor_user_id.clone(),
+                device_id,
+                CorrelationId(31_505),
+                MonotonicTimeNs(34_000_000_000),
+            )
+            .expect("idle close check must succeed");
+
+        assert_eq!(response.status, "ok");
+        assert_eq!(response.outcome, "SESSION_IDLE_CLOSED");
+        assert_eq!(
+            response
+                .session_lifecycle_action
+                .as_ref()
+                .map(|action| (action.canonical_intent.as_str(), action.action.as_str())),
+            Some(("SESSION_CLOSE_SEAL", "close_seal"))
+        );
+
+        let store = runtime.store.lock().expect("store lock must not poison");
+        let closed = store
+            .get_session(&first_session_id)
+            .expect("session row must remain archived");
+        assert_eq!(closed.session_state, SessionState::Closed);
+        assert_eq!(closed.closed_at, Some(MonotonicTimeNs(34_000_000_000)));
+    }
+
+    #[test]
     fn at_l_04_cross_device_attach_reuses_canonical_session() {
         let runtime = AdapterRuntime::default();
 
@@ -38949,6 +39277,8 @@ mod tests {
             "also London",
             "same for London",
             "what about in London",
+            "and what about in London",
+            "also what about in London",
         ]
         .iter()
         .enumerate()
@@ -39028,6 +39358,117 @@ mod tests {
                 && !switched.response_text.contains(" in London."),
             "{}",
             switched.response_text
+        );
+    }
+
+    #[test]
+    fn active_session_context_time_slot_does_not_poison_identity_or_public_chat() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "active-session-time-context-normal-topic-switches";
+        let seed = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_261,
+            "What time is it in New York?",
+        );
+        assert_h363_clean_time_answer(&seed, "New York");
+
+        let malformed_identity = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_262,
+            "what i syour name",
+        );
+        assert_eq!(malformed_identity.status, "ok");
+        assert!(
+            !malformed_identity
+                .response_text
+                .contains("I can't resolve that location yet"),
+            "{}",
+            malformed_identity.response_text
+        );
+
+        let identity = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_263,
+            "What is your name?",
+        );
+        assert_eq!(identity.status, "ok");
+        assert_eq!(identity.response_text, "I’m Selene.");
+        assert_eq!(identity.reason_code, "SELENE_SELF_IDENTITY_PASS");
+
+        let origin = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_264,
+            "where are you from?",
+        );
+        assert_eq!(origin.status, "ok");
+        assert_eq!(origin.response_text, "I’m Selene.");
+        assert_eq!(origin.reason_code, "SELENE_SELF_IDENTITY_PASS");
+
+        let public_chat = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_265,
+            "Tell me a short story about a synthetic helper.",
+        );
+        assert_eq!(public_chat.status, "ok");
+        assert!(
+            !public_chat
+                .response_text
+                .contains("I can't resolve that location yet"),
+            "{}",
+            public_chat.response_text
+        );
+    }
+
+    #[test]
+    fn active_session_context_voice_time_slot_does_not_poison_identity_or_public_chat() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "active-session-voice-time-context-normal-topic-switches";
+        let seed = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_271,
+            "What's the time in Sydney?",
+        );
+        assert_h363_clean_time_answer(&seed, "Sydney");
+
+        let identity = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_272,
+            "What is your name?",
+        );
+        assert_eq!(identity.status, "ok");
+        assert_eq!(identity.response_text, "I’m Selene.");
+        assert_eq!(identity.reason_code, "SELENE_SELF_IDENTITY_PASS");
+
+        let origin = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_273,
+            "Where are you from?",
+        );
+        assert_eq!(origin.status, "ok");
+        assert_eq!(origin.response_text, "I’m Selene.");
+        assert_eq!(origin.reason_code, "SELENE_SELF_IDENTITY_PASS");
+
+        let public_chat = h363_run_desktop_voice_like_time_query_on_thread(
+            &runtime,
+            thread_key,
+            363_274,
+            "Tell me a short story about a synthetic helper.",
+        );
+        assert_eq!(public_chat.status, "ok");
+        assert!(
+            !public_chat
+                .response_text
+                .contains("I can't resolve that location yet"),
+            "{}",
+            public_chat.response_text
         );
     }
 

@@ -122,7 +122,11 @@ impl StageBudgetTracker {
         self.plan
     }
 
-    pub fn record_stage_timing(&mut self, stage: Stage, elapsed_ms: u64) -> Result<(), BudgetViolation> {
+    pub fn record_stage_timing(
+        &mut self,
+        stage: Stage,
+        elapsed_ms: u64,
+    ) -> Result<(), BudgetViolation> {
         let stage_deadline = self.plan.stage_deadlines_ms.for_stage(stage);
         if elapsed_ms > stage_deadline {
             return Err(BudgetViolation {

@@ -19,7 +19,10 @@ pub fn collect_evidence_refs(evidence_packet: &Value) -> BTreeSet<String> {
         }
     }
 
-    if let Some(chunks) = evidence_packet.get("content_chunks").and_then(Value::as_array) {
+    if let Some(chunks) = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+    {
         for chunk in chunks {
             if let Some(chunk_id) = chunk.get("chunk_id").and_then(Value::as_str) {
                 let trimmed = chunk_id.trim();

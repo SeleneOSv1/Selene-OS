@@ -63,7 +63,9 @@ pub struct EvalReport {
     pub overall_pass: bool,
 }
 
-pub fn generate_eval_report(config: &ContinuousEvalConfig) -> Result<ContinuousEvalOutcome, String> {
+pub fn generate_eval_report(
+    config: &ContinuousEvalConfig,
+) -> Result<ContinuousEvalOutcome, String> {
     if config.head_commit.trim().is_empty() {
         return Err("head_commit is required".to_string());
     }
@@ -120,8 +122,13 @@ fn write_report(
     head_commit: &str,
     report: &EvalReport,
 ) -> Result<PathBuf, String> {
-    fs::create_dir_all(output_dir)
-        .map_err(|e| format!("failed creating report directory {}: {}", output_dir.display(), e))?;
+    fs::create_dir_all(output_dir).map_err(|e| {
+        format!(
+            "failed creating report directory {}: {}",
+            output_dir.display(),
+            e
+        )
+    })?;
 
     let path = output_dir.join(format!(
         "EvalReport_{}_{}.json",
@@ -167,7 +174,9 @@ fn build_metric_summaries(cases: &[EvalCase], evaluations: &[CaseEvaluation]) ->
     let freshness_passed = cases
         .iter()
         .zip(evaluations.iter())
-        .filter(|(case, evaluation)| case.expect_stale_refusal && evaluation.metrics.freshness_compliance)
+        .filter(|(case, evaluation)| {
+            case.expect_stale_refusal && evaluation.metrics.freshness_compliance
+        })
         .count() as u32;
 
     let conflict_total = cases
@@ -177,7 +186,9 @@ fn build_metric_summaries(cases: &[EvalCase], evaluations: &[CaseEvaluation]) ->
     let conflict_passed = cases
         .iter()
         .zip(evaluations.iter())
-        .filter(|(case, evaluation)| case.expect_conflict_flag && evaluation.metrics.conflict_handling)
+        .filter(|(case, evaluation)| {
+            case.expect_conflict_flag && evaluation.metrics.conflict_handling
+        })
         .count() as u32;
 
     let trust_total = cases
@@ -187,7 +198,9 @@ fn build_metric_summaries(cases: &[EvalCase], evaluations: &[CaseEvaluation]) ->
     let trust_passed = cases
         .iter()
         .zip(evaluations.iter())
-        .filter(|(case, evaluation)| case.expect_trust_filtering && evaluation.metrics.trust_filtering)
+        .filter(|(case, evaluation)| {
+            case.expect_trust_filtering && evaluation.metrics.trust_filtering
+        })
         .count() as u32;
 
     let determinism_total = evaluations.len() as u32;

@@ -76,13 +76,11 @@ fn test_debug_packet_serialization_is_deterministic_and_complete() {
             .expect("redacted url must exist"),
         "https://example.com/path?redacted"
     );
-    assert!(
-        packet
-            .debug_hint
-            .as_deref()
-            .expect("hint exists")
-            .contains("[REDACTED]")
-    );
+    assert!(packet
+        .debug_hint
+        .as_deref()
+        .expect("hint exists")
+        .contains("[REDACTED]"));
 }
 
 #[test]

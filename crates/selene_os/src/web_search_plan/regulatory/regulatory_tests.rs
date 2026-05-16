@@ -91,7 +91,10 @@ fn test_t3_filtering_removes_low_and_unknown_for_compliance_mode() {
         .collect::<Vec<&str>>();
     assert_eq!(
         urls,
-        vec!["https://www.sec.gov/news", "https://www.standards.org/controls"]
+        vec![
+            "https://www.sec.gov/news",
+            "https://www.standards.org/controls"
+        ]
     );
     assert_eq!(outcome.filtered_source_count, 3);
 }
@@ -150,7 +153,10 @@ fn test_t7_filtered_ordering_preserves_original_sequence() {
         .collect::<Vec<&str>>();
     assert_eq!(
         urls,
-        vec!["https://www.mas.gov.sg/regulation", "https://www.gov.sg/policy"]
+        vec![
+            "https://www.mas.gov.sg/regulation",
+            "https://www.gov.sg/policy"
+        ]
     );
 }
 

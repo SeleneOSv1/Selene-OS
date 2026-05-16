@@ -51,7 +51,9 @@ pub fn assess_confidence(
         return ComplianceConfidence::High;
     }
 
-    if trust_tiers.iter().any(|tier| *tier == TrustTier::Official || *tier == TrustTier::High)
+    if trust_tiers
+        .iter()
+        .any(|tier| *tier == TrustTier::Official || *tier == TrustTier::High)
         && corroboration_count >= MODERATE_CORROBORATION_THRESHOLD
     {
         return ComplianceConfidence::Moderate;

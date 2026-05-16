@@ -2,14 +2,14 @@
 
 use std::{cmp::min, collections::BTreeSet};
 
+use selene_engines::ph1_voice_id::reason_codes as voice_id_reason_codes;
 use selene_engines::ph1_voice_id::{
     EnrolledSpeaker as EngineEnrolledSpeaker, VoiceIdObservation as EngineVoiceIdObservation,
 };
-use selene_engines::ph1_voice_id::reason_codes as voice_id_reason_codes;
 use selene_engines::ph1d::{Ph1dProviderAdapter, Ph1dProviderAdapterError};
 use selene_kernel_contracts::ph1_voice_id::{
-    IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse,
-    SpoofLivenessStatus, UserId,
+    IdentityConfidence, IdentityTierV2, Ph1VoiceIdRequest, Ph1VoiceIdResponse, SpoofLivenessStatus,
+    UserId,
 };
 use selene_kernel_contracts::ph1c::TranscriptOk;
 use selene_kernel_contracts::ph1d::{
@@ -120,18 +120,16 @@ fn recanonicalize_posture_fail_closed_voice_identity_assertion(
                 code if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE => {
                     IdentityConfidence::Low
                 }
-                code
-                    if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
-                        || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
+                code if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+                    || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
                 {
                     IdentityConfidence::Medium
                 }
                 _ => IdentityConfidence::Low,
             };
             normalized.score_bp = match unknown.reason_code {
-                code
-                    if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
-                        || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
+                code if code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN
+                    || code == voice_id_reason_codes::VID_FAIL_ECHO_UNSAFE =>
                 {
                     4_500
                 }
@@ -142,9 +140,8 @@ fn recanonicalize_posture_fail_closed_voice_identity_assertion(
             normalized.candidate_set = Vec::new();
             normalized.device_owner_user_id = None;
             normalized.candidate_user_id = match unknown.reason_code {
-                code
-                    if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
-                        || code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN =>
+                code if code == voice_id_reason_codes::VID_FAIL_LOW_CONFIDENCE
+                    || code == voice_id_reason_codes::VID_FAIL_GRAY_ZONE_MARGIN =>
                 {
                     Some(actor_user_id.clone())
                 }
@@ -4675,9 +4672,13 @@ mod tests {
             Some(&expected_actor_user_id)
         );
         assert!(unknown_voice_identity_assertion.candidate_set.is_empty());
-        assert!(unknown_voice_identity_assertion.device_owner_user_id.is_none());
+        assert!(unknown_voice_identity_assertion
+            .device_owner_user_id
+            .is_none());
         assert_eq!(
-            forwarded.runtime_execution_envelope.voice_identity_assertion,
+            forwarded
+                .runtime_execution_envelope
+                .voice_identity_assertion,
             Some(forwarded.voice_identity_assertion.clone())
         );
         let expected_envelope = attach_identity_state_for_governed_voice_turn(
@@ -4685,12 +4686,17 @@ mod tests {
                 .runtime_execution_envelope
                 .clone()
                 .with_identity_state(None)
-                .expect("runtime execution envelope should allow identity-state reset for comparison"),
+                .expect(
+                    "runtime execution envelope should allow identity-state reset for comparison",
+                ),
             &forwarded.voice_identity_assertion,
         )
         .expect("canonical runtime governance helper must attach identity state");
         assert!(
-            forwarded.runtime_execution_envelope.identity_state.is_some(),
+            forwarded
+                .runtime_execution_envelope
+                .identity_state
+                .is_some(),
             "PH1.OS forwarded envelope must now carry canonical identity_state"
         );
         assert_eq!(
@@ -5224,7 +5230,9 @@ mod tests {
             AppPlatform::Ios
         );
         assert_eq!(
-            runtime_execution_envelope.platform_context.requested_trigger,
+            runtime_execution_envelope
+                .platform_context
+                .requested_trigger,
             RuntimeEntryTrigger::WakeWord
         );
 
@@ -5296,28 +5304,24 @@ mod tests {
             AppPlatform::Ios
         );
         assert_eq!(
-            runtime_execution_envelope.platform_context.requested_trigger,
+            runtime_execution_envelope
+                .platform_context
+                .requested_trigger,
             RuntimeEntryTrigger::Explicit
         );
         assert!(runtime_execution_envelope.platform_context.trigger_allowed);
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::WakeWord));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::WakeWord));
         runtime_execution_envelope
             .platform_context
             .negotiated_capabilities
@@ -5374,34 +5378,28 @@ mod tests {
             AppPlatform::Ios
         );
         assert_eq!(
-            runtime_execution_envelope.platform_context.requested_trigger,
+            runtime_execution_envelope
+                .platform_context
+                .requested_trigger,
             RuntimeEntryTrigger::Explicit
         );
         assert!(runtime_execution_envelope.platform_context.trigger_allowed);
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
+        assert!(runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::WakeWord));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::WakeWord));
         runtime_execution_envelope
             .platform_context
             .claimed_capabilities
@@ -5444,7 +5442,8 @@ mod tests {
     }
 
     #[test]
-    fn at_os_22n_voice_live_entrypoint_rejects_ios_explicit_claimed_camera_capability_missing_from_negotiated_capabilities() {
+    fn at_os_22n_voice_live_entrypoint_rejects_ios_explicit_claimed_camera_capability_missing_from_negotiated_capabilities(
+    ) {
         let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
         let device_id = DeviceId::new("os_live_voice_device_12").unwrap();
         let voice_context =
@@ -5457,62 +5456,48 @@ mod tests {
             AppPlatform::Ios
         );
         assert_eq!(
-            runtime_execution_envelope.platform_context.requested_trigger,
+            runtime_execution_envelope
+                .platform_context
+                .requested_trigger,
             RuntimeEntryTrigger::Explicit
         );
         assert!(runtime_execution_envelope.platform_context.trigger_allowed);
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::Camera)
-        );
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::Camera)
-        );
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
+        assert!(runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::Camera));
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::WakeWord));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::Camera));
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::WakeWord));
         runtime_execution_envelope
             .platform_context
             .negotiated_capabilities
             .retain(|capability| capability != &DeviceCapability::Camera);
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::Camera)
-        );
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::Camera)
-        );
+        assert!(runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::Camera));
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::Camera));
 
         let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
             OsTopLevelTurnInput::v1(
@@ -5554,7 +5539,8 @@ mod tests {
     }
 
     #[test]
-    fn at_os_22o_voice_live_entrypoint_rejects_android_attested_wake_without_negotiated_wake_word_capability() {
+    fn at_os_22o_voice_live_entrypoint_rejects_android_attested_wake_without_negotiated_wake_word_capability(
+    ) {
         let actor_user_id = UserId::new("tenant_1:os_live_voice_user").unwrap();
         let device_id = DeviceId::new("os_live_voice_device_13").unwrap();
         let voice_context =
@@ -5567,7 +5553,9 @@ mod tests {
             AppPlatform::Android
         );
         assert_eq!(
-            runtime_execution_envelope.platform_context.requested_trigger,
+            runtime_execution_envelope
+                .platform_context
+                .requested_trigger,
             RuntimeEntryTrigger::WakeWord
         );
         assert!(runtime_execution_envelope.platform_context.trigger_allowed);
@@ -5575,53 +5563,39 @@ mod tests {
             runtime_execution_envelope.platform_context.integrity_status,
             ClientIntegrityStatus::Attested
         );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .attestation_ref
-                .is_some()
-        );
+        assert!(runtime_execution_envelope
+            .platform_context
+            .attestation_ref
+            .is_some());
         assert!(
             runtime_execution_envelope
                 .platform_context
                 .capture_artifact_trust_verified
         );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .capture_artifact_observed_at_ns
-                .is_some()
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .capture_artifact_retention_deadline_ns
-                .is_some()
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
+        assert!(runtime_execution_envelope
+            .platform_context
+            .capture_artifact_observed_at_ns
+            .is_some());
+        assert!(runtime_execution_envelope
+            .platform_context
+            .capture_artifact_retention_deadline_ns
+            .is_some());
+        assert!(runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::WakeWord));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::WakeWord));
         runtime_execution_envelope
             .platform_context
             .claimed_capabilities
@@ -5630,30 +5604,22 @@ mod tests {
             .platform_context
             .negotiated_capabilities
             .retain(|capability| capability != &DeviceCapability::WakeWord);
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
-        assert!(
-            !runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::WakeWord)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .claimed_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
-        assert!(
-            runtime_execution_envelope
-                .platform_context
-                .negotiated_capabilities
-                .contains(&DeviceCapability::Microphone)
-        );
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::WakeWord));
+        assert!(!runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::WakeWord));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .claimed_capabilities
+            .contains(&DeviceCapability::Microphone));
+        assert!(runtime_execution_envelope
+            .platform_context
+            .negotiated_capabilities
+            .contains(&DeviceCapability::Microphone));
         assert!(runtime_execution_envelope.platform_context.trigger_allowed);
 
         let input = OsVoiceLiveTurnInput::v1_with_runtime_execution_envelope(
@@ -5682,7 +5648,9 @@ mod tests {
                 spoof_risk: false,
             },
         )
-        .expect_err("android attested wake without negotiated wake-word capability must fail closed");
+        .expect_err(
+            "android attested wake without negotiated wake-word capability must fail closed",
+        );
         match input {
             ContractViolation::InvalidValue { field, reason } => {
                 assert_eq!(field, "platform_runtime_context.trigger_allowed");

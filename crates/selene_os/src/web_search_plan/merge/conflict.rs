@@ -63,12 +63,19 @@ pub fn build_conflict_report(
         (
             left.topic_key.as_str(),
             left.evidence_claim.as_str(),
-            left.evidence_citations.first().map(String::as_str).unwrap_or(""),
+            left.evidence_citations
+                .first()
+                .map(String::as_str)
+                .unwrap_or(""),
         )
             .cmp(&(
                 right.topic_key.as_str(),
                 right.evidence_claim.as_str(),
-                right.evidence_citations.first().map(String::as_str).unwrap_or(""),
+                right
+                    .evidence_citations
+                    .first()
+                    .map(String::as_str)
+                    .unwrap_or(""),
             ))
     });
     conflicts.dedup_by(|left, right| {

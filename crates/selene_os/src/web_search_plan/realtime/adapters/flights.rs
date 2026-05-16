@@ -46,7 +46,8 @@ pub fn execute(
         query_pairs.append_pair("apikey", api_key.as_str());
     }
 
-    let (payload, latency_ms) = fetch_json_with_caps(ADAPTER_ID, request, config, url.as_str(), &[])?;
+    let (payload, latency_ms) =
+        fetch_json_with_caps(ADAPTER_ID, request, config, url.as_str(), &[])?;
     let retrieved_at_ms = parse_retrieved_at_ms(ADAPTER_ID, &payload)?;
     let trust_tier = parse_trust_tier(&payload);
 

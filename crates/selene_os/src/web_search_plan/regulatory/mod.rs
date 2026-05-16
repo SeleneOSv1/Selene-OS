@@ -67,8 +67,12 @@ pub fn apply_regulatory_mode(
 
     let outcome = apply_filters(tool_request_packet, evidence_packet)?;
     let mut updated_evidence_packet = evidence_packet.clone();
-    attach_provenance(&mut updated_evidence_packet, &outcome, &outcome.reason_codes)
-        .map_err(|error| RegulatoryError::new(RegulatoryErrorKind::PolicyViolation, error))?;
+    attach_provenance(
+        &mut updated_evidence_packet,
+        &outcome,
+        &outcome.reason_codes,
+    )
+    .map_err(|error| RegulatoryError::new(RegulatoryErrorKind::PolicyViolation, error))?;
 
     Ok(RegulatoryResult {
         evidence_packet: updated_evidence_packet,

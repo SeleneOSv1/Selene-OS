@@ -5,13 +5,8 @@ use url::Url;
 pub const TRUST_MODEL_VERSION: &str = "1.0.0";
 pub const SPAM_SIGNAL_VERSION: &str = "1.0.0";
 
-pub const OFFICIAL_ALLOWLIST: &[&str] = &[
-    "sec.gov",
-    "mas.gov.sg",
-    "europa.eu",
-    "bafin.de",
-    "gov.sg",
-];
+pub const OFFICIAL_ALLOWLIST: &[&str] =
+    &["sec.gov", "mas.gov.sg", "europa.eu", "bafin.de", "gov.sg"];
 
 pub const HIGH_ALLOWLIST: &[&str] = &[
     "iso.org",
@@ -29,12 +24,7 @@ pub const MEDIUM_ALLOWLIST: &[&str] = &[
     "cnbc.com",
 ];
 
-pub const LOW_ALLOWLIST: &[&str] = &[
-    "reddit.com",
-    "medium.com",
-    "blogspot.com",
-    "wordpress.com",
-];
+pub const LOW_ALLOWLIST: &[&str] = &["reddit.com", "medium.com", "blogspot.com", "wordpress.com"];
 
 pub const CLICKBAIT_KEYWORDS: &[&str] = &[
     "shocking",

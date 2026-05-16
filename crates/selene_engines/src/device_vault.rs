@@ -250,7 +250,9 @@ fn validate_key_id(raw: &str) -> Result<ProviderSecretId, VaultError> {
 
 fn default_vault_path() -> PathBuf {
     if let Ok(xdg_config_home) = env::var("XDG_CONFIG_HOME") {
-        return PathBuf::from(xdg_config_home).join("selene").join("device_vault.json");
+        return PathBuf::from(xdg_config_home)
+            .join("selene")
+            .join("device_vault.json");
     }
     if let Ok(home) = env::var("HOME") {
         return PathBuf::from(home)

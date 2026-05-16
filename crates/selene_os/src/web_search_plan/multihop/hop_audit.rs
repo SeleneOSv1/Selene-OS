@@ -124,8 +124,8 @@ fn normalize_query(raw: &str) -> String {
 
 fn hash_canonical_json(value: &Value) -> Result<String, String> {
     let canonical = canonicalize_value(value);
-    let encoded =
-        serde_json::to_string(&canonical).map_err(|e| format!("canonical serialization failed: {}", e))?;
+    let encoded = serde_json::to_string(&canonical)
+        .map_err(|e| format!("canonical serialization failed: {}", e))?;
     Ok(sha256_hex(encoded.as_bytes()))
 }
 

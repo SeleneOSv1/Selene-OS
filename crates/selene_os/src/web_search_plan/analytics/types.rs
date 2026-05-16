@@ -8,10 +8,9 @@ pub const ANALYTICS_SCHEMA_VERSION: &str = PH1COMP_SCHEMA_VERSION;
 pub const ANALYTICS_ENGINE_ID: &str = PH1COMP_ENGINE_ID;
 
 pub use selene_kernel_contracts::ph1comp::{
-    Aggregate, AggregateMethod, AggregateWindow, ComputationConfidenceBucket,
-    ComputationInputs, ComputationPacket, ConsensusCandidate, ConsensusGroup, ConsensusMethod,
-    ConsensusOutlier, ConfidenceFactors, ConfidenceItem, NormalizationKind,
-    NormalizationTraceEntry, NumericValue,
+    Aggregate, AggregateMethod, AggregateWindow, ComputationConfidenceBucket, ComputationInputs,
+    ComputationPacket, ConfidenceFactors, ConfidenceItem, ConsensusCandidate, ConsensusGroup,
+    ConsensusMethod, ConsensusOutlier, NormalizationKind, NormalizationTraceEntry, NumericValue,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

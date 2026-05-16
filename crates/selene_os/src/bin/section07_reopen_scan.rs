@@ -7,8 +7,7 @@ use selene_os::ph1builder::{
 use std::collections::BTreeSet;
 use std::process::{Command, ExitCode};
 
-const USAGE: &str =
-    "usage: section07_reopen_scan --repo-root <path> --base <rev> --head <rev>";
+const USAGE: &str = "usage: section07_reopen_scan --repo-root <path> --base <rev> --head <rev>";
 
 const SECTION07_WATCHLIST: [&str; 7] = [
     "crates/selene_os/src/runtime_governance.rs",
@@ -380,8 +379,8 @@ mod section07_reopen_scan {
         }
 
         #[test]
-        fn at_section07_reopen_scan_bin_04_patch_output_collects_program_e_and_insufficient_tokens(
-        ) {
+        fn at_section07_reopen_scan_bin_04_patch_output_collects_program_e_and_insufficient_tokens()
+        {
             let collected = collect_symbol_hits_from_patch(
                 "diff --git a/x b/x\n\
                  @@ -1 +1 @@\n\
@@ -447,10 +446,15 @@ mod section07_reopen_scan {
                 ],
                 |_, args| {
                     if args.contains(&"--name-only") {
-                        Ok("crates/selene_os/src/ph1j.rs\ncrates/selene_storage/src/repo.rs\n"
-                            .to_string())
+                        Ok(
+                            "crates/selene_os/src/ph1j.rs\ncrates/selene_storage/src/repo.rs\n"
+                                .to_string(),
+                        )
                     } else if args.contains(&"--unified=0") {
-                        Ok("diff --git a/x b/x\n@@ -1 +1 @@\n+certification_target_ref\n".to_string())
+                        Ok(
+                            "diff --git a/x b/x\n@@ -1 +1 @@\n+certification_target_ref\n"
+                                .to_string(),
+                        )
                     } else {
                         Err("unexpected git args".to_string())
                     }
@@ -479,8 +483,10 @@ mod section07_reopen_scan {
                 ],
                 |_, args| {
                     if args.contains(&"--name-only") {
-                        Ok("crates/selene_os/src/ph1j.rs\ncrates/selene_storage/src/repo.rs\n"
-                            .to_string())
+                        Ok(
+                            "crates/selene_os/src/ph1j.rs\ncrates/selene_storage/src/repo.rs\n"
+                                .to_string(),
+                        )
                     } else if args.contains(&"--unified=0") {
                         Ok("diff --git a/x b/x\n@@ -1 +1 @@\n+artifact_trust_entries\n+target_id\n".to_string())
                     } else {

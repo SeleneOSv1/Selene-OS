@@ -9,7 +9,11 @@ use std::path::PathBuf;
 
 fn temp_dir(name: &str) -> PathBuf {
     let mut dir = std::env::temp_dir();
-    dir.push(format!("selene_run30_release_tests_{}_{}", name, std::process::id()));
+    dir.push(format!(
+        "selene_run30_release_tests_{}_{}",
+        name,
+        std::process::id()
+    ));
     dir
 }
 
@@ -52,8 +56,8 @@ fn test_release_evidence_pack_generation_is_deterministic() {
         output_dir: output_dir.clone(),
     };
 
-    let first_path =
-        generate_release_evidence_pack(&config).expect("first evidence pack generation should pass");
+    let first_path = generate_release_evidence_pack(&config)
+        .expect("first evidence pack generation should pass");
     let first_content = fs::read_to_string(&first_path).expect("first evidence file should read");
 
     let second_path = generate_release_evidence_pack(&config)

@@ -169,7 +169,10 @@ fn test_snapshot_hashes_match_expected_fixture() {
         ("external_only", "external_only.json"),
         ("consistent_case", "consistent_case.json"),
         ("conflict_case", "conflict_case.json"),
-        ("insufficient_evidence_case", "insufficient_evidence_case.json"),
+        (
+            "insufficient_evidence_case",
+            "insufficient_evidence_case.json",
+        ),
     ];
     let expected = load_fixture("expected_merge_packet.json")
         .as_object()
@@ -178,10 +181,14 @@ fn test_snapshot_hashes_match_expected_fixture() {
 
     let mut actual = BTreeMap::new();
     for (key, fixture_name) in cases {
-        let output = build_merge_packet(request_from_fixture(fixture_name))
-            .unwrap_or_else(|error: MergeBuildError| {
-                panic!("merge fixture {} should build: {}", fixture_name, error.message)
-            });
+        let output = build_merge_packet(request_from_fixture(fixture_name)).unwrap_or_else(
+            |error: MergeBuildError| {
+                panic!(
+                    "merge fixture {} should build: {}",
+                    fixture_name, error.message
+                )
+            },
+        );
         let packet_value =
             serde_json::to_value(output.packet).expect("merge packet should serialize");
         let hash = hash_canonical_json(&packet_value).expect("hash should compute");

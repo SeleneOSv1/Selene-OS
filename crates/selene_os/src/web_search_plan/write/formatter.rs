@@ -1,10 +1,10 @@
 #![forbid(unsafe_code)]
 
+use crate::web_search_plan::parity::presentation_modes::plan_for_mode;
+use crate::web_search_plan::parity::stitching::deep_mode_contradiction_lines;
 use crate::web_search_plan::write::citation_renderer::{
     build_citation_map, citation_keys_for_bullet, parse_evidence_lines, strip_marker_tokens,
 };
-use crate::web_search_plan::parity::presentation_modes::plan_for_mode;
-use crate::web_search_plan::parity::stitching::deep_mode_contradiction_lines;
 use crate::web_search_plan::write::localization::{
     derive_language_tag, enforce_language_contract, normalize_language_tag,
 };

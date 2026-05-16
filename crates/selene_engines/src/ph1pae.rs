@@ -10,8 +10,8 @@ use selene_kernel_contracts::ph1pae::{
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 
 use crate::ph1comp::{
-    compare_pae_rank, compute_pae_candidate_score, compute_pae_signal_bias, pae_priority_from_total,
-    pae_route_index,
+    compare_pae_rank, compute_pae_candidate_score, compute_pae_signal_bias,
+    pae_priority_from_total, pae_route_index,
 };
 
 pub mod reason_codes {
@@ -121,8 +121,11 @@ impl Ph1PaeRuntime {
 
         let mut route_signal_bp = [0i32; 4];
         for signal in &req.signals {
-            let weighted =
-                compute_pae_signal_bias(signal.signal_value_bp, signal.confidence_bp, signal.source);
+            let weighted = compute_pae_signal_bias(
+                signal.signal_value_bp,
+                signal.confidence_bp,
+                signal.source,
+            );
             let idx = pae_route_index(signal.route_domain);
             route_signal_bp[idx] = (route_signal_bp[idx] + weighted).clamp(-4_000, 4_000);
         }

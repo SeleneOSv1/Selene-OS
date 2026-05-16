@@ -22,7 +22,8 @@ use selene_adapter::{
     AdapterProcessProvenance, AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest,
     InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
     OnboardingContinueAdapterResponse, PublicBrainTraceReportResponse, SessionAttachAdapterRequest,
-    SessionAttachAdapterResponse, SessionPostureEvidenceAdapterRequest,
+    SessionAttachAdapterResponse, SessionIdleCloseCheckAdapterRequest,
+    SessionIdleCloseCheckAdapterResponse, SessionPostureEvidenceAdapterRequest,
     SessionPostureEvidenceAdapterResponse, SessionRecentListAdapterRequest,
     SessionRecentListAdapterResponse, SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
     SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
@@ -315,6 +316,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/session/resume", post(run_session_resume))
         .route("/v1/session/recover", post(run_session_recover))
         .route("/v1/session/recent", post(run_session_recent_list))
+        .route(
+            "/v1/session/idle-close-check",
+            post(run_session_idle_close_check),
+        )
         .route("/v1/session/posture", post(run_session_posture_evidence))
         .route(
             "/v1/wake-profile/availability",
@@ -1454,6 +1459,61 @@ async fn run_session_recent_list(
     }
 }
 
+async fn run_session_idle_close_check(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<SessionIdleCloseCheckAdapterRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return session_idle_close_check_security_reject_response(reject),
+    };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return session_idle_close_check_security_reject_response(reject),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return session_idle_close_check_security_reject_response(reject),
+    };
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/session/idle-close-check",
+        expected_subject: request.actor_user_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key: request.idempotency_key.clone(),
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return session_idle_close_check_security_reject_response(reject);
+    }
+
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return session_idle_close_check_error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "adapter runtime lock poisoned".to_string(),
+            )
+        }
+    };
+    match runtime.run_session_idle_close_check(request) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(reason) => session_idle_close_check_error_response(StatusCode::BAD_REQUEST, reason),
+    }
+}
+
 async fn run_session_posture_evidence(
     State(state): State<HttpAdapterState>,
     headers: HeaderMap,
@@ -2482,6 +2542,19 @@ fn session_recent_list_security_reject_response(reject: SecurityReject) -> Respo
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
 }
 
+fn session_idle_close_check_security_reject_response(reject: SecurityReject) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = SessionIdleCloseCheckAdapterResponse {
+        status: "error".to_string(),
+        outcome: "REJECTED".to_string(),
+        reason: Some(reject.reason),
+        session_id: None,
+        session_state: None,
+        session_lifecycle_action: None,
+    };
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
 fn session_posture_evidence_security_reject_response(reject: SecurityReject) -> Response {
     let status = status_for_security_reject(reject.kind);
     let response = SessionPostureEvidenceAdapterResponse {
@@ -2654,6 +2727,21 @@ fn session_recent_list_error_response(status: StatusCode, reason: String) -> Res
             outcome: "REJECTED".to_string(),
             reason: Some(reason),
             sessions: Vec::new(),
+        }),
+    )
+        .into_response()
+}
+
+fn session_idle_close_check_error_response(status: StatusCode, reason: String) -> Response {
+    (
+        status,
+        Json(SessionIdleCloseCheckAdapterResponse {
+            status: "error".to_string(),
+            outcome: "REJECTED".to_string(),
+            reason: Some(reason),
+            session_id: None,
+            session_state: None,
+            session_lifecycle_action: None,
         }),
     )
         .into_response()

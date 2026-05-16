@@ -120,7 +120,10 @@ pub fn build_temporal_comparison_packet(
         .collect::<Vec<StructuredRow>>();
     let timeline_events = build_timeline_events(timeline_rows.as_slice(), evidence_packet, true);
 
-    let diff = build_changes(baseline_rows.rows.as_slice(), comparison_rows.rows.as_slice());
+    let diff = build_changes(
+        baseline_rows.rows.as_slice(),
+        comparison_rows.rows.as_slice(),
+    );
     for reason_code in &diff.reason_codes {
         push_unique(&mut reason_codes, reason_code.as_str());
     }
@@ -162,10 +165,7 @@ pub fn build_temporal_comparison_packet(
     })
 }
 
-pub fn append_temporal_audit_metadata(
-    audit_packet: &Value,
-    output: &TemporalBuildOutput,
-) -> Value {
+pub fn append_temporal_audit_metadata(audit_packet: &Value, output: &TemporalBuildOutput) -> Value {
     let mut root = match audit_packet {
         Value::Object(map) => map.clone(),
         _ => Map::new(),

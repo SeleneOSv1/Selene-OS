@@ -108,8 +108,10 @@ impl Default for RealtimeRuntimeConfig {
             user_agent: REALTIME_USER_AGENT.to_string(),
 
             generic_api_key_override: None,
-            generic_vault_secret_id_override: std::env::var("SELENE_REALTIME_GENERIC_VAULT_SECRET_ID")
-                .ok(),
+            generic_vault_secret_id_override: std::env::var(
+                "SELENE_REALTIME_GENERIC_VAULT_SECRET_ID",
+            )
+            .ok(),
 
             weather_endpoint: std::env::var("SELENE_REALTIME_WEATHER_ENDPOINT")
                 .unwrap_or_else(|_| "https://api.weatherapi.com/v1/current.json".to_string()),
@@ -184,15 +186,16 @@ pub(crate) fn finalize_realtime_result(
 ) -> Result<RealtimeConnectorResult, RealtimeError> {
     let tier = ImportanceTier::parse_or_default(request.importance_tier.as_str());
     let applied_ttl_ms = ttl_ms(request.domain, tier);
-    let freshness = evaluate(request.now_ms, output.retrieved_at_ms, applied_ttl_ms).map_err(|error| {
-        RealtimeError::new(
-            output.provider_id.as_str(),
-            RealtimeErrorKind::PolicyViolation,
-            None,
-            format!("freshness evaluation failed: {}", error),
-            output.latency_ms,
-        )
-    })?;
+    let freshness =
+        evaluate(request.now_ms, output.retrieved_at_ms, applied_ttl_ms).map_err(|error| {
+            RealtimeError::new(
+                output.provider_id.as_str(),
+                RealtimeErrorKind::PolicyViolation,
+                None,
+                format!("freshness evaluation failed: {}", error),
+                output.latency_ms,
+            )
+        })?;
 
     if freshness.stale {
         return Err(RealtimeError::new(

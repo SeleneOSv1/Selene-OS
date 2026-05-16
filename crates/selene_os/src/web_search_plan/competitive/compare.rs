@@ -51,9 +51,9 @@ pub fn build_competitive_comparison(
         reason_codes.push(code.to_string());
     }
 
-    let swot = target_entity_id
-        .as_deref()
-        .and_then(|target_id| build_swot(target_id, &competitor_ids, &pricing_table, &feature_matrix));
+    let swot = target_entity_id.as_deref().and_then(|target_id| {
+        build_swot(target_id, &competitor_ids, &pricing_table, &feature_matrix)
+    });
 
     let mut all_source_refs = BTreeSet::new();
     for entity in &competitors {
@@ -118,7 +118,11 @@ fn derive_position_summary(
     target_entity_id: Option<&str>,
     pricing_table: &[CompetitivePrice],
     computation_packet: Option<&ComputationPacket>,
-) -> (Option<PositionSummary>, Option<&'static str>, Option<&'static str>) {
+) -> (
+    Option<PositionSummary>,
+    Option<&'static str>,
+    Option<&'static str>,
+) {
     let Some(target_id) = target_entity_id else {
         return (
             None,
@@ -169,15 +173,16 @@ fn derive_position_summary(
         source_set.insert(source_ref);
     }
 
-    let classification = if target_value > (p75_value * Decimal::from_str("1.50").unwrap_or(Decimal::ONE)) {
-        PositionClass::Outlier
-    } else if target_value > p75_value {
-        PositionClass::Premium
-    } else if target_value > p50_value {
-        PositionClass::UpperTier
-    } else {
-        PositionClass::WithinMarket
-    };
+    let classification =
+        if target_value > (p75_value * Decimal::from_str("1.50").unwrap_or(Decimal::ONE)) {
+            PositionClass::Outlier
+        } else if target_value > p75_value {
+            PositionClass::Premium
+        } else if target_value > p50_value {
+            PositionClass::UpperTier
+        } else {
+            PositionClass::WithinMarket
+        };
 
     (
         Some(PositionSummary {
@@ -192,17 +197,25 @@ fn derive_position_summary(
     )
 }
 
-fn monthly_equivalent_for_entry(entry: &CompetitivePrice) -> Option<(Decimal, String, Vec<String>)> {
+fn monthly_equivalent_for_entry(
+    entry: &CompetitivePrice,
+) -> Option<(Decimal, String, Vec<String>)> {
     if entry.currency == "UNKNOWN" {
         return None;
     }
     let amount = match entry.billing_period {
-        BillingPeriod::Monthly | BillingPeriod::Unknown => Decimal::from_str(&entry.price_value).ok(),
+        BillingPeriod::Monthly | BillingPeriod::Unknown => {
+            Decimal::from_str(&entry.price_value).ok()
+        }
         BillingPeriod::Yearly => entry
             .normalized_to
             .as_ref()
             .and_then(|value| Decimal::from_str(value).ok())
-            .or_else(|| Decimal::from_str(&entry.price_value).ok().map(|value| value / Decimal::from(12))),
+            .or_else(|| {
+                Decimal::from_str(&entry.price_value)
+                    .ok()
+                    .map(|value| value / Decimal::from(12))
+            }),
         BillingPeriod::OneTime | BillingPeriod::UsageBased => None,
     }?;
     Some((amount, entry.currency.clone(), entry.source_refs.clone()))
@@ -218,13 +231,13 @@ fn find_aggregate_value(
         .iter()
         .find(|aggregate| {
             aggregate.method == method
-                && aggregate
-                    .attribute
-                    .to_lowercase()
-                    .contains("price")
+                && aggregate.attribute.to_lowercase().contains("price")
                 && aggregate.currency.as_deref().unwrap_or_default() == currency
         })
-        .and_then(|aggregate| numeric_value_to_decimal(&aggregate.value).map(|value| (value, aggregate.source_refs.clone())))
+        .and_then(|aggregate| {
+            numeric_value_to_decimal(&aggregate.value)
+                .map(|value| (value, aggregate.source_refs.clone()))
+        })
 }
 
 fn numeric_value_to_decimal(value: &NumericValue) -> Option<Decimal> {

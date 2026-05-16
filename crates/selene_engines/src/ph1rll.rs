@@ -5,8 +5,8 @@ use std::collections::BTreeSet;
 
 use selene_kernel_contracts::ph1rll::{
     Ph1RllRequest, Ph1RllResponse, RllArtifactRecommendOk, RllArtifactRecommendRequest,
-    RllCapabilityId, RllPolicyRankOfflineOk, RllPolicyRankOfflineRequest,
-    RllRecommendationItem, RllRefuse, RllValidationStatus,
+    RllCapabilityId, RllPolicyRankOfflineOk, RllPolicyRankOfflineRequest, RllRecommendationItem,
+    RllRefuse, RllValidationStatus,
 };
 use selene_kernel_contracts::{ReasonCodeId, Validate};
 

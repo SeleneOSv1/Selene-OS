@@ -40186,12 +40186,17 @@ mod tests {
     use serde::Deserialize;
     use std::{cell::Cell, fs, path::PathBuf};
 
+    use selene_kernel_contracts::ph1_voice_id::{
+        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
+        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
+    };
     use selene_kernel_contracts::ph1j::{CorrelationId, TurnId};
     use selene_kernel_contracts::ph1lang::{
         LangMultipleDetectOk, LangPlanScope, LangResponseMode, LangResponsePlanItem, LangSegment,
         LangSegmentResponseMapOk, LangSourceModality, LangValidationStatus, Ph1LangRequest,
         Ph1LangResponse,
     };
+    use selene_kernel_contracts::ph1link::TokenId;
     use selene_kernel_contracts::ph1multi::{
         MultiBundleComposeOk, MultiBundleItem, MultiModality, MultiSignalAlignOk,
         MultiSourceSignal, MultiValidationStatus, Ph1MultiRequest, Ph1MultiResponse,
@@ -40200,11 +40205,6 @@ mod tests {
         Ph1PronRequest, Ph1PronResponse, PronApplyValidateOk, PronLexiconEntry,
         PronLexiconPackBuildOk, PronScope, PronTargetEngine, PronValidationStatus,
     };
-    use selene_kernel_contracts::ph1_voice_id::{
-        DiarizationSegment, IdentityConfidence, Ph1VoiceIdResponse, SpeakerAssertionOk,
-        SpeakerAssertionUnknown, SpeakerId, SpeakerLabel,
-    };
-    use selene_kernel_contracts::ph1link::TokenId;
     use selene_kernel_contracts::provider_secrets::ProviderSecretId;
     use selene_kernel_contracts::ReasonCodeId;
 
@@ -42557,9 +42557,10 @@ mod tests {
     }
 
     fn load_stage34k_corpus_pack() -> Stage34KProviderGovernanceCorpusPack {
-        let text =
-            fs::read_to_string(stage34k_eval_corpus_pack_path("provider_model_governance.json"))
-                .expect("stage34k corpus pack should load");
+        let text = fs::read_to_string(stage34k_eval_corpus_pack_path(
+            "provider_model_governance.json",
+        ))
+        .expect("stage34k corpus pack should load");
         serde_json::from_str(&text).expect("stage34k corpus pack should parse")
     }
 
@@ -46480,18 +46481,16 @@ mod tests {
     impl Ph1LangEngine for Stage34JDeterministicLangEngine {
         fn run(&self, req: &Ph1LangRequest) -> Ph1LangResponse {
             match req {
-                Ph1LangRequest::LangMultipleDetect(_) => {
-                    Ph1LangResponse::LangMultipleDetectOk(
-                        LangMultipleDetectOk::v1(
-                            ReasonCodeId(351),
-                            self.fixture.detected_languages.clone(),
-                            self.segments(),
-                            self.fixture.dominant_language.clone(),
-                            true,
-                        )
-                        .expect("stage34j lang detect ok"),
+                Ph1LangRequest::LangMultipleDetect(_) => Ph1LangResponse::LangMultipleDetectOk(
+                    LangMultipleDetectOk::v1(
+                        ReasonCodeId(351),
+                        self.fixture.detected_languages.clone(),
+                        self.segments(),
+                        self.fixture.dominant_language.clone(),
+                        true,
                     )
-                }
+                    .expect("stage34j lang detect ok"),
+                ),
                 Ph1LangRequest::LangSegmentResponseMap(r) => {
                     let plan = match self.fixture.response_mode {
                         Stage34JFixtureResponseMode::Text => r
@@ -46721,7 +46720,10 @@ mod tests {
                 "pron-context-stage34j-{}-{}",
                 fixture.fixture_case_id, pron_bundle.pack_build.pack_id
             )),
-            Some(format!("audit-stage34j-stage10-{}", fixture.fixture_case_id)),
+            Some(format!(
+                "audit-stage34j-stage10-{}",
+                fixture.fixture_case_id
+            )),
         )
         .expect("stage34j stage10 input");
 
@@ -46729,15 +46731,13 @@ mod tests {
             input.intent_id = None;
             input.slot_id = None;
             input.semantic_frame_id = None;
-            input.ambiguity_id = Some(format!(
-                "ambiguity-stage34j-{}",
-                fixture.fixture_case_id
-            ));
+            input.ambiguity_id = Some(format!("ambiguity-stage34j-{}", fixture.fixture_case_id));
             input.one_best_clarification_question_id = Some(format!(
                 "clarify-question-stage34j-{}",
                 fixture.fixture_case_id
             ));
-            input.protected_slot_disposition = Stage10ProtectedSlotDisposition::ClarificationRequired;
+            input.protected_slot_disposition =
+                Stage10ProtectedSlotDisposition::ClarificationRequired;
             input.protected_slot_uncertainties = vec![Stage10ProtectedSlotUncertainty::v1(
                 Stage8ProtectedSlotKind::Recipient,
                 "recipient-stage34j-protected",
@@ -46768,12 +46768,17 @@ mod tests {
         input.public_read_only_evidence_id =
             format!("public-evidence-stage34j-{}", fixture.fixture_case_id);
         input.tool_route_id = format!("tool-route-stage34j-{}", fixture.fixture_case_id);
-        input.source_evidence_id = Some(format!("source-evidence-stage34j-{}", fixture.fixture_case_id));
+        input.source_evidence_id = Some(format!(
+            "source-evidence-stage34j-{}",
+            fixture.fixture_case_id
+        ));
         input.citation_id = Some(format!("citation-stage34j-{}", fixture.fixture_case_id));
         input.provenance_id = Some(format!("provenance-stage34j-{}", fixture.fixture_case_id));
         input.verifier_id = Some(format!("verifier-stage34j-{}", fixture.fixture_case_id));
-        input.provider_budget_id =
-            Some(format!("provider-budget-stage34j-{}", fixture.fixture_case_id));
+        input.provider_budget_id = Some(format!(
+            "provider-budget-stage34j-{}",
+            fixture.fixture_case_id
+        ));
         input.audit_id = Some(audit_id.clone());
         input.ph1j_proof_ref = Some(audit_id);
         input.source_evidence_present = true;
@@ -46801,10 +46806,14 @@ mod tests {
 
         input.public_answer_id = format!("public-answer-stage34j-{}", fixture.fixture_case_id);
         input.answer_hash = format!("answer-hash-stage34j-{}", fixture.fixture_case_id);
-        input.citation_rendering_id =
-            Some(format!("citation-render-stage34j-{}", fixture.fixture_case_id));
-        input.source_chip_rendering_id =
-            Some(format!("source-chip-render-stage34j-{}", fixture.fixture_case_id));
+        input.citation_rendering_id = Some(format!(
+            "citation-render-stage34j-{}",
+            fixture.fixture_case_id
+        ));
+        input.source_chip_rendering_id = Some(format!(
+            "source-chip-render-stage34j-{}",
+            fixture.fixture_case_id
+        ));
         input.source_link_rendering_id =
             Some(format!("source-link-stage34j-{}", fixture.fixture_case_id));
         input.answer_claims_supported_by_stage13 = true;
@@ -46878,7 +46887,10 @@ mod tests {
         );
 
         input.no_silent_translation_or_summary = !fixture.silent_translation_or_summary_attempted;
-        if !matches!(stage15_packet.output_kind, Stage15ResponseOutputKind::PublicAnswer) {
+        if !matches!(
+            stage15_packet.output_kind,
+            Stage15ResponseOutputKind::PublicAnswer
+        ) {
             input.citation_context_required = false;
             input.citation_context_bound_to_stage14_15 = false;
         }
@@ -46906,7 +46918,10 @@ mod tests {
                     .zip(fixture.segments.iter())
                 {
                     assert_eq!(plan_item.scope, LangPlanScope::Segment);
-                    assert_eq!(plan_item.segment_id.as_deref(), Some(segment.segment_id.as_str()));
+                    assert_eq!(
+                        plan_item.segment_id.as_deref(),
+                        Some(segment.segment_id.as_str())
+                    );
                     assert_eq!(plan_item.language_tag, segment.language_tag);
                 }
             }
@@ -46950,7 +46965,10 @@ mod tests {
             assert!(pron_bundle.validate().is_ok());
             assert!(lang_bundle.detect.no_translation_performed);
             assert!(lang_bundle.map.no_translation_performed);
-            assert_eq!(lang_bundle.detect.dominant_language_tag, fixture.dominant_language);
+            assert_eq!(
+                lang_bundle.detect.dominant_language_tag,
+                fixture.dominant_language
+            );
             assert_eq!(
                 lang_bundle.map.default_response_language,
                 fixture.dominant_language
@@ -46987,7 +47005,11 @@ mod tests {
             assert!(!stage10_packet.work_authority.can_route_tools);
             assert!(!stage10_packet.work_authority.can_connector_write);
             assert!(!stage10_packet.work_authority.can_execute_protected_mutation);
-            assert!(!stage10_packet.work_authority.can_update_memory_persona_emotion);
+            assert!(
+                !stage10_packet
+                    .work_authority
+                    .can_update_memory_persona_emotion
+            );
             assert!(!stage13_packet.can_mutate_or_execute());
             assert!(!stage14_packet.can_mutate_or_execute());
             assert!(!stage15_packet.can_mutate_or_execute());
@@ -47077,8 +47099,7 @@ mod tests {
         stage34j_multilingual_corpus_closes_offline_benchmark_row_impl();
     }
 
-    fn stage34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output_impl()
-    {
+    fn stage34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output_impl() {
         let pack = load_stage34j_corpus_pack();
         let fixtures = load_stage34j_fixture_set();
 
@@ -47135,8 +47156,8 @@ mod tests {
         stage34j_language_dialect_and_code_switch_cases_require_same_language_bounded_output_impl();
     }
 
-    fn stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl(
-    ) {
+    fn stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl()
+    {
         let pack = load_stage34j_corpus_pack();
         let fixtures = load_stage34j_fixture_set();
 
@@ -47182,7 +47203,8 @@ mod tests {
         let blocked_fixture = stage34j_fixture_case(&fixtures, &blocked_case.fixture_case_id);
         let blocked_lang = stage34j_lang_bundle(blocked_fixture);
         let blocked_pron = stage34j_pron_bundle(blocked_fixture);
-        let blocked_stage10 = stage34j_stage10_packet(blocked_fixture, &blocked_lang, &blocked_pron);
+        let blocked_stage10 =
+            stage34j_stage10_packet(blocked_fixture, &blocked_lang, &blocked_pron);
         let blocked_stage13 = stage34j_stage13_packet(blocked_fixture);
         let blocked_stage14 = stage34j_stage14_packet(blocked_fixture, &blocked_stage13);
         let blocked_stage15 = stage34j_stage15_packet(blocked_fixture, &blocked_stage14);
@@ -47206,12 +47228,14 @@ mod tests {
 
     #[test]
     fn stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation() {
-        stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl();
+        stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl(
+        );
     }
 
     #[test]
     fn stage_34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation() {
-        stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl();
+        stage34j_protected_non_english_cases_clarify_or_fail_closed_without_silent_translation_impl(
+        );
     }
 
     fn stage34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority_impl(
@@ -47227,7 +47251,10 @@ mod tests {
         let stage15_packet = stage34j_stage15_packet(fixture, &stage14_packet);
         let stage17_packet = stage34j_stage17_packet(fixture, &stage15_packet);
 
-        assert_eq!(multi_bundle.signal_align.validation_status, MultiValidationStatus::Ok);
+        assert_eq!(
+            multi_bundle.signal_align.validation_status,
+            MultiValidationStatus::Ok
+        );
         assert!(lang_bundle.detect.no_translation_performed);
         assert!(lang_bundle.map.no_translation_performed);
         assert_eq!(
@@ -47254,7 +47281,11 @@ mod tests {
         assert!(!stage10_packet.work_authority.can_route_tools);
         assert!(!stage10_packet.work_authority.can_connector_write);
         assert!(!stage10_packet.work_authority.can_execute_protected_mutation);
-        assert!(!stage10_packet.work_authority.can_update_memory_persona_emotion);
+        assert!(
+            !stage10_packet
+                .work_authority
+                .can_update_memory_persona_emotion
+        );
         assert!(!stage15_packet.can_mutate_or_execute());
         assert!(!stage17_packet.can_mutate_or_execute());
     }
@@ -47266,8 +47297,8 @@ mod tests {
     }
 
     #[test]
-    fn stage_34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority(
-    ) {
+    fn stage_34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority()
+    {
         stage34j_multilingual_packets_cannot_invent_fluency_translation_or_pronunciation_authority_impl();
     }
 
@@ -47324,14 +47355,12 @@ mod tests {
     }
 
     #[test]
-    fn stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative()
-    {
+    fn stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative() {
         stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative_impl();
     }
 
     #[test]
-    fn stage_34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative(
-    ) {
+    fn stage_34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative() {
         stage34j_response_language_and_pronunciation_hints_remain_advisory_and_non_authoritative_impl();
     }
 
@@ -47398,8 +47427,7 @@ mod tests {
     ) {
         let tier = fixture.importance_tier.to_contract();
         let plan = crate::web_search_plan::perf_cost::budgets::budget_plan_for_tier(tier);
-        let mut tracker =
-            crate::web_search_plan::perf_cost::budgets::StageBudgetTracker::new(plan);
+        let mut tracker = crate::web_search_plan::perf_cost::budgets::StageBudgetTracker::new(plan);
         tracker
             .record_stage_timing(
                 crate::web_search_plan::perf_cost::budgets::Stage::X,
@@ -47500,10 +47528,9 @@ mod tests {
 
     fn stage34k_write_release_lock_results(path: &PathBuf, head: &str) {
         let manifest_hash = {
-            let text = crate::web_search_plan::registry_loader::read_text(
-                "CONTRACT_HASH_MANIFEST.json",
-            )
-            .expect("stage34k contract hash manifest text should load");
+            let text =
+                crate::web_search_plan::registry_loader::read_text("CONTRACT_HASH_MANIFEST.json")
+                    .expect("stage34k contract hash manifest text should load");
             crate::web_search_plan::contract_hash::sha256_hex(text.as_bytes())
         };
         let text = format!(
@@ -47645,7 +47672,9 @@ mod tests {
             assert!(!registry_entry.provider_name.is_empty());
             assert_eq!(registry_entry.provider_id, fixture.registry_provider_id);
             assert_eq!(
-                route_json.get("route_reason").and_then(|value| value.as_str()),
+                route_json
+                    .get("route_reason")
+                    .and_then(|value| value.as_str()),
                 Some(decision.route_reason.as_str())
             );
             assert_eq!(
@@ -47655,12 +47684,10 @@ mod tests {
                     .map(|value| value.is_empty()),
                 Some(false)
             );
-            assert!(
-                audit_packet
-                    .get("turn_state_transition")
-                    .and_then(|value| value.get("perf_cost_audit"))
-                    .is_some()
-            );
+            assert!(audit_packet
+                .get("turn_state_transition")
+                .and_then(|value| value.get("perf_cost_audit"))
+                .is_some());
             assert!(plan.absolute_deadline_ms > 0);
             if matches!(
                 fixture.case_kind,
@@ -47711,7 +47738,10 @@ mod tests {
                     };
                     assert!(!ok.promotion_eligible);
                     assert!(ok.rollback_ready);
-                    assert_eq!(ok.selected_mode, selene_kernel_contracts::ph1pae::PaeMode::Assist);
+                    assert_eq!(
+                        ok.selected_mode,
+                        selene_kernel_contracts::ph1pae::PaeMode::Assist
+                    );
 
                     safety_pass += 1;
                 }
@@ -47794,7 +47824,9 @@ mod tests {
             case.expected_fallback_provider_id.as_deref()
         );
         assert_eq!(
-            registry_json.get("provider_id").and_then(|value| value.as_str()),
+            registry_json
+                .get("provider_id")
+                .and_then(|value| value.as_str()),
             Some(fixture.registry_provider_id.as_str())
         );
         assert_eq!(
@@ -47823,10 +47855,7 @@ mod tests {
     fn stage34k_fallback_rollback_and_cost_quality_packets_remain_non_authoritative() {
         let pack = load_stage34k_corpus_pack();
         let fixtures = load_stage34k_fixture_set();
-        let case = stage34k_corpus_case(
-            &pack,
-            "fallback_rollback_cost_quality_advisory_ready",
-        );
+        let case = stage34k_corpus_case(&pack, "fallback_rollback_cost_quality_advisory_ready");
         let fixture = stage34k_fixture_case(&fixtures, &case.fixture_case_id);
         let policy = stage34k_policy(fixture.policy_profile);
         let request = stage34k_route_request(fixture);
@@ -47912,7 +47941,8 @@ mod tests {
         };
         let path = crate::web_search_plan::release::generate_release_evidence_pack(&config)
             .expect("stage34k release evidence generation should pass");
-        let content = fs::read_to_string(&path).expect("stage34k release evidence file should read");
+        let content =
+            fs::read_to_string(&path).expect("stage34k release evidence file should read");
 
         assert!(path.display().to_string().contains("ReleaseEvidencePack_"));
         assert!(content.contains(fixture.release_head_commit.as_str()));
@@ -47974,7 +48004,10 @@ mod tests {
         assert_eq!(gate.counter.provider_network_dispatch_count, 0);
         assert!(!ok.promotion_eligible);
         assert!(ok.rollback_ready);
-        assert_eq!(ok.selected_mode, selene_kernel_contracts::ph1pae::PaeMode::Assist);
+        assert_eq!(
+            ok.selected_mode,
+            selene_kernel_contracts::ph1pae::PaeMode::Assist
+        );
     }
 
     #[test]

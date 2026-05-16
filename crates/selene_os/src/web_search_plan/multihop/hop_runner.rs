@@ -2,7 +2,9 @@
 
 use crate::web_search_plan::contract_hash::sha256_hex;
 use crate::web_search_plan::multihop::cycle_detect::CycleDetector;
-use crate::web_search_plan::multihop::hop_audit::{build_hop_proof_chain, can_mark_complete, HopProofChain};
+use crate::web_search_plan::multihop::hop_audit::{
+    build_hop_proof_chain, can_mark_complete, HopProofChain,
+};
 use crate::web_search_plan::multihop::hop_budget::{HopBudget, HopBudgetTracker};
 use crate::web_search_plan::multihop::hop_plan::{Hop, HopPlan};
 use serde::{Deserialize, Serialize};
@@ -109,7 +111,8 @@ pub fn execute_hop_plan(
             Ok(output) => {
                 let mut cycle_violation: Option<String> = None;
                 for canonical_url in &output.source_urls {
-                    if let Err(err) = cycle_detector.register_canonical_url(canonical_url.as_str()) {
+                    if let Err(err) = cycle_detector.register_canonical_url(canonical_url.as_str())
+                    {
                         cycle_violation = Some(err.reason_code.to_string());
                         cycle_detected = true;
                         break;
@@ -122,7 +125,8 @@ pub fn execute_hop_plan(
                 }
                 let success = reason_code.is_none();
 
-                let evidence_hash = hash_hop_evidence(hop, &output.provider_runs, &output.source_urls);
+                let evidence_hash =
+                    hash_hop_evidence(hop, &output.provider_runs, &output.source_urls);
                 records.push(HopExecutionRecord {
                     hop_index: hop.hop_index,
                     query: hop.sub_query.clone(),
@@ -134,9 +138,11 @@ pub fn execute_hop_plan(
                     time_spent_ms: output.elapsed_ms,
                 });
 
-                if let Err(err) =
-                    tracker.record_hop_usage(output.elapsed_ms, output.provider_calls, output.url_opens)
-                {
+                if let Err(err) = tracker.record_hop_usage(
+                    output.elapsed_ms,
+                    output.provider_calls,
+                    output.url_opens,
+                ) {
                     stop_reason = err.reason_code.to_string();
                     push_reason_code(&mut reason_codes, err.reason_code);
                     push_reason_code(&mut reason_codes, "insufficient_evidence");
@@ -180,7 +186,9 @@ pub fn execute_hop_plan(
     }
 
     if (stop_reason == "budget_exhausted" || stop_reason == "timeout_exceeded")
-        && !reason_codes.iter().any(|code| code == "insufficient_evidence")
+        && !reason_codes
+            .iter()
+            .any(|code| code == "insufficient_evidence")
     {
         push_reason_code(&mut reason_codes, "insufficient_evidence");
     }

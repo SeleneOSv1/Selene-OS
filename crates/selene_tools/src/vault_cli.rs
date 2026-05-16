@@ -114,13 +114,8 @@ mod tests {
     fn at_vault_cli_02_output_never_contains_secret_value() {
         let (base, vault) = temp_vault();
         let sentinel = "DO_NOT_LEAK_SENTINEL";
-        let out = execute_vault_command(
-            &vault,
-            "set",
-            Some("openai_api_key"),
-            Some(sentinel),
-        )
-        .unwrap();
+        let out =
+            execute_vault_command(&vault, "set", Some("openai_api_key"), Some(sentinel)).unwrap();
         assert!(!out.contains(sentinel));
         fs::remove_dir_all(base).unwrap();
     }

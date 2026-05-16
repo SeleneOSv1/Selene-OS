@@ -2,7 +2,8 @@
 
 use crate::web_search_plan::registry_loader::load_turn_state_machine;
 use crate::web_search_plan::turn_state_machine_validator::{
-    validate_fail_closed_reason_codes, validate_transition_sequence, validate_turn_state_machine_spec,
+    validate_fail_closed_reason_codes, validate_transition_sequence,
+    validate_turn_state_machine_spec,
 };
 use serde::{Deserialize, Serialize};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};

@@ -3,7 +3,9 @@
 use crate::web_search_plan::eval::corpus_packs::{load_default_corpus_packs, merge_cases};
 use crate::web_search_plan::eval::metrics::{evaluate_case, evaluate_cases};
 use crate::web_search_plan::eval::report::{generate_eval_report, ContinuousEvalConfig};
-use crate::web_search_plan::eval::thresholds::{evaluate_thresholds, load_thresholds, validate_thresholds};
+use crate::web_search_plan::eval::thresholds::{
+    evaluate_thresholds, load_thresholds, validate_thresholds,
+};
 use serde_json::Value;
 use std::fs;
 use std::path::PathBuf;
@@ -40,15 +42,17 @@ fn test_t3_threshold_breach_fails() {
         .iter()
         .position(|case| case.expected_outcome == "answer")
         .expect("at least one answer case is required");
-    evaluations[first_answer_index].metrics.citation_coverage_ratio = 0.0;
+    evaluations[first_answer_index]
+        .metrics
+        .citation_coverage_ratio = 0.0;
     evaluations[first_answer_index].pass = false;
     evaluations[first_answer_index]
         .reasons
         .push("forced threshold breach".to_string());
 
     thresholds.max_allowed_regressions = 0;
-    let outcome =
-        evaluate_thresholds(&cases, &evaluations, &thresholds).expect("threshold evaluation should run");
+    let outcome = evaluate_thresholds(&cases, &evaluations, &thresholds)
+        .expect("threshold evaluation should run");
     assert!(!outcome.pass, "threshold outcome must fail on breach");
     assert!(
         !outcome.failing_case_ids.is_empty(),

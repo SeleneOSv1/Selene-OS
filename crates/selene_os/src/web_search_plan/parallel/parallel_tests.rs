@@ -1,8 +1,12 @@
 #![forbid(unsafe_code)]
 
 use crate::web_search_plan::parallel::join::join_in_planned_order;
-use crate::web_search_plan::parallel::limiter::{ConcurrencyLimiter, LimiterConfig, SubmissionResult};
-use crate::web_search_plan::parallel::merge_order::{merge_completed_by_plan, merge_lead_then_fallback, MergeItem};
+use crate::web_search_plan::parallel::limiter::{
+    ConcurrencyLimiter, LimiterConfig, SubmissionResult,
+};
+use crate::web_search_plan::parallel::merge_order::{
+    merge_completed_by_plan, merge_lead_then_fallback, MergeItem,
+};
 use crate::web_search_plan::parallel::scheduler::{schedule_deterministically, RetrievalTask};
 use std::collections::BTreeMap;
 
@@ -14,9 +18,18 @@ fn test_t6_scheduler_enforces_concurrency_cap() {
     })
     .expect("limiter config should be valid");
 
-    assert_eq!(limiter.submit("task-a".to_string()), Ok(SubmissionResult::Started));
-    assert_eq!(limiter.submit("task-b".to_string()), Ok(SubmissionResult::Started));
-    assert_eq!(limiter.submit("task-c".to_string()), Ok(SubmissionResult::Queued));
+    assert_eq!(
+        limiter.submit("task-a".to_string()),
+        Ok(SubmissionResult::Started)
+    );
+    assert_eq!(
+        limiter.submit("task-b".to_string()),
+        Ok(SubmissionResult::Started)
+    );
+    assert_eq!(
+        limiter.submit("task-c".to_string()),
+        Ok(SubmissionResult::Queued)
+    );
 
     assert_eq!(limiter.in_flight_len(), 2);
     assert_eq!(limiter.queue_snapshot(), vec!["task-c".to_string()]);
@@ -35,8 +48,14 @@ fn test_t7_queue_cap_enforced_deterministically() {
     })
     .expect("limiter config should be valid");
 
-    assert_eq!(limiter.submit("task-a".to_string()), Ok(SubmissionResult::Started));
-    assert_eq!(limiter.submit("task-b".to_string()), Ok(SubmissionResult::Queued));
+    assert_eq!(
+        limiter.submit("task-a".to_string()),
+        Ok(SubmissionResult::Started)
+    );
+    assert_eq!(
+        limiter.submit("task-b".to_string()),
+        Ok(SubmissionResult::Queued)
+    );
     assert_eq!(limiter.submit("task-c".to_string()), Err("quota_exceeded"));
     assert_eq!(limiter.queue_snapshot(), vec!["task-b".to_string()]);
 }
@@ -127,11 +146,14 @@ fn test_t9_cache_hit_vs_network_hit_does_not_change_final_ordering() {
         .map(|item| item.canonical_url)
         .collect::<Vec<String>>();
 
-    assert_eq!(merged_network, vec![
-        "https://a.example.com".to_string(),
-        "https://b.example.com".to_string(),
-        "https://c.example.com".to_string(),
-    ]);
+    assert_eq!(
+        merged_network,
+        vec![
+            "https://a.example.com".to_string(),
+            "https://b.example.com".to_string(),
+            "https://c.example.com".to_string(),
+        ]
+    );
     assert_eq!(merged_cache, merged_network);
 
     let planned = vec!["a".to_string(), "b".to_string(), "c".to_string()];
@@ -162,9 +184,12 @@ fn test_t9_cache_hit_vs_network_hit_does_not_change_final_ordering() {
         .into_iter()
         .map(|item| item.canonical_url)
         .collect::<Vec<String>>();
-    assert_eq!(merged, vec![
-        "https://a.example.com".to_string(),
-        "https://b.example.com".to_string(),
-        "https://c.example.com".to_string(),
-    ]);
+    assert_eq!(
+        merged,
+        vec![
+            "https://a.example.com".to_string(),
+            "https://b.example.com".to_string(),
+            "https://c.example.com".to_string(),
+        ]
+    );
 }

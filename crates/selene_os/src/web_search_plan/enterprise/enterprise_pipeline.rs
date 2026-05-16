@@ -3,21 +3,27 @@
 use crate::web_search_plan::analytics::{run_numeric_consensus, structured_rows_from_evidence};
 use crate::web_search_plan::competitive::schema::CompetitiveRequest;
 use crate::web_search_plan::competitive::{parse_computation_packet, run_competitive_mode};
-use crate::web_search_plan::document::{execute_document_pipeline_from_tool_request, DocumentRuntimeConfig};
-use crate::web_search_plan::enterprise::consistency::{validate_cross_mode_consistency, ConsistencyInputs};
+use crate::web_search_plan::document::{
+    execute_document_pipeline_from_tool_request, DocumentRuntimeConfig,
+};
+use crate::web_search_plan::enterprise::consistency::{
+    validate_cross_mode_consistency, ConsistencyInputs,
+};
 use crate::web_search_plan::enterprise::enterprise_request::EnterpriseRequest;
 use crate::web_search_plan::enterprise::mode_router::EnterpriseMode;
-use crate::web_search_plan::enterprise::provenance::{build_enterprise_provenance, EnterpriseProvenance};
+use crate::web_search_plan::enterprise::provenance::{
+    build_enterprise_provenance, EnterpriseProvenance,
+};
 use crate::web_search_plan::merge::{run_internal_external_merge, MergeRequest};
 use crate::web_search_plan::multihop::{
-    build_hop_plan, execute_hop_plan, HopBudget, HopExecutionOutput, HopExecutor, HopMode, HopPlanInput,
-    ProviderRunSummary,
+    build_hop_plan, execute_hop_plan, HopBudget, HopExecutionOutput, HopExecutor, HopMode,
+    HopPlanInput, ProviderRunSummary,
 };
 use crate::web_search_plan::realtime::{execute_realtime_from_tool_request, RealtimeRuntimeConfig};
 use crate::web_search_plan::regulatory::apply_regulatory_mode;
 use crate::web_search_plan::risk::{build_risk_packet, RiskRequest};
-use crate::web_search_plan::structured::types::{StructuredRow, StructuredRuntimeConfig};
 use crate::web_search_plan::structured::execute_structured_from_tool_request;
+use crate::web_search_plan::structured::types::{StructuredRow, StructuredRuntimeConfig};
 use crate::web_search_plan::temporal::{build_temporal_comparison_packet, TemporalRequest};
 use crate::web_search_plan::trust::enrich_evidence_sources;
 use serde::{Deserialize, Serialize};
@@ -67,13 +73,12 @@ pub fn run_enterprise_pipeline(
         stage_trace.push("base_evidence:provided".to_string());
         existing.clone()
     } else {
-        let tool_request = request
-            .tool_request_packet
-            .as_ref()
-            .ok_or_else(|| EnterprisePipelineError::new(
+        let tool_request = request.tool_request_packet.as_ref().ok_or_else(|| {
+            EnterprisePipelineError::new(
                 "insufficient_evidence",
                 "enterprise pipeline requires either evidence_packet or tool_request_packet",
-            ))?;
+            )
+        })?;
         match request.mode {
             EnterpriseMode::Structured => {
                 stage_trace.push("base_evidence:structured".to_string());
@@ -95,7 +100,9 @@ pub fn run_enterprise_pipeline(
                     now_ms,
                     &DocumentRuntimeConfig::default(),
                 )
-                .map_err(|error| EnterprisePipelineError::new(error.reason_code(), error.message))?;
+                .map_err(|error| {
+                    EnterprisePipelineError::new(error.reason_code(), error.message)
+                })?;
                 base_rows = Some(result.extraction.rows);
                 result.evidence_packet
             }
@@ -106,7 +113,9 @@ pub fn run_enterprise_pipeline(
                     now_ms,
                     &RealtimeRuntimeConfig::default(),
                 )
-                .map_err(|error| EnterprisePipelineError::new(error.reason_code(), error.message))?;
+                .map_err(|error| {
+                    EnterprisePipelineError::new(error.reason_code(), error.message)
+                })?;
                 result.evidence_packet
             }
             _ => {
@@ -119,9 +128,8 @@ pub fn run_enterprise_pipeline(
     };
 
     stage_trace.push("trust_enrichment".to_string());
-    let trust_applied = enrich_evidence_sources(&evidence_packet, now_ms).map_err(|error| {
-        EnterprisePipelineError::new(error.reason_code(), error.message)
-    })?;
+    let trust_applied = enrich_evidence_sources(&evidence_packet, now_ms)
+        .map_err(|error| EnterprisePipelineError::new(error.reason_code(), error.message))?;
     evidence_packet = trust_applied.evidence_packet;
 
     if should_apply_regulatory(request) {
@@ -358,7 +366,10 @@ fn resolve_computation_packet(
 fn needs_computation(mode: EnterpriseMode) -> bool {
     matches!(
         mode,
-        EnterpriseMode::Competitive | EnterpriseMode::Temporal | EnterpriseMode::Risk | EnterpriseMode::Report
+        EnterpriseMode::Competitive
+            | EnterpriseMode::Temporal
+            | EnterpriseMode::Risk
+            | EnterpriseMode::Report
     )
 }
 
@@ -369,9 +380,8 @@ fn run_competitive(
     computation_packet: Option<&Value>,
 ) -> Result<Value, EnterprisePipelineError> {
     let target_entity = target_entity_for_request(request)?;
-    let parsed_computation = parse_computation_packet(computation_packet).map_err(|error| {
-        EnterprisePipelineError::new(error.reason_code(), error.message)
-    })?;
+    let parsed_computation = parse_computation_packet(computation_packet)
+        .map_err(|error| EnterprisePipelineError::new(error.reason_code(), error.message))?;
     let packet = run_competitive_mode(CompetitiveRequest {
         trace_id: request.trace_id.clone(),
         created_at_ms: request.created_at_ms,
@@ -420,8 +430,9 @@ fn run_temporal(
         allow_default_windows: request.as_of_from_ms.is_none() || request.as_of_to_ms.is_none(),
         policy_snapshot_id: request.policy_snapshot_id.clone(),
     };
-    let output = build_temporal_comparison_packet(&temporal_request, evidence_packet, structured_rows)
-        .map_err(|error| EnterprisePipelineError::new(error.reason_code, error.message))?;
+    let output =
+        build_temporal_comparison_packet(&temporal_request, evidence_packet, structured_rows)
+            .map_err(|error| EnterprisePipelineError::new(error.reason_code, error.message))?;
     serde_json::to_value(output.packet)
         .map_err(|error| EnterprisePipelineError::new("policy_violation", error.to_string()))
 }
@@ -448,7 +459,10 @@ fn run_risk(
         .map_err(|error| EnterprisePipelineError::new("policy_violation", error.to_string()))
 }
 
-fn run_merge(request: &EnterpriseRequest, evidence_packet: &Value) -> Result<Value, EnterprisePipelineError> {
+fn run_merge(
+    request: &EnterpriseRequest,
+    evidence_packet: &Value,
+) -> Result<Value, EnterprisePipelineError> {
     let packet = run_internal_external_merge(MergeRequest {
         trace_id: request.trace_id.clone(),
         created_at_ms: request.created_at_ms,
@@ -486,7 +500,8 @@ fn run_multihop(
             policy_version: crate::web_search_plan::multihop::hop_budget::HOP_BUDGET_POLICY_VERSION,
             max_hops: request.constraints.max_hops,
             max_total_time_ms: request.constraints.max_total_time_ms,
-            max_time_per_hop_ms: request.constraints.max_total_time_ms / (request.constraints.max_hops.max(1) as u64),
+            max_time_per_hop_ms: request.constraints.max_total_time_ms
+                / (request.constraints.max_hops.max(1) as u64),
             max_provider_calls_total: request.constraints.max_provider_calls_total,
             max_url_opens_total: request.constraints.max_url_opens_total,
         },
@@ -511,7 +526,8 @@ fn build_report_packet(
     let mut claims = Vec::new();
 
     if let Some(packet) = competitive_packet {
-        let citations = read_string_array(packet.get("source_refs")).unwrap_or_else(|_| fallback_citation.clone());
+        let citations = read_string_array(packet.get("source_refs"))
+            .unwrap_or_else(|_| fallback_citation.clone());
         claims.push(json!({
             "text": "Competitive comparison output generated from evidence-bound inputs.",
             "citations": citations,
@@ -521,7 +537,13 @@ fn build_report_packet(
         let citations = packet
             .pointer("/changes/0/citations_new")
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(ToString::to_string).collect::<Vec<String>>())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>()
+            })
             .filter(|items| !items.is_empty())
             .unwrap_or_else(|| fallback_citation.clone());
         claims.push(json!({
@@ -530,7 +552,8 @@ fn build_report_packet(
         }));
     }
     if let Some(packet) = risk_packet {
-        let citations = read_string_array(packet.get("evidence_refs")).unwrap_or_else(|_| fallback_citation.clone());
+        let citations = read_string_array(packet.get("evidence_refs"))
+            .unwrap_or_else(|_| fallback_citation.clone());
         claims.push(json!({
             "text": "Risk scoring output generated from evidence-bound inputs.",
             "citations": citations,
@@ -540,7 +563,13 @@ fn build_report_packet(
         let citations = packet
             .pointer("/delta/changes_since_last_time/0/citations")
             .and_then(Value::as_array)
-            .map(|items| items.iter().filter_map(Value::as_str).map(ToString::to_string).collect::<Vec<String>>())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>()
+            })
             .filter(|items| !items.is_empty())
             .unwrap_or_else(|| fallback_citation.clone());
         claims.push(json!({
@@ -610,7 +639,9 @@ fn read_string_array(raw: Option<&Value>) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
-fn target_entity_for_request(request: &EnterpriseRequest) -> Result<String, EnterprisePipelineError> {
+fn target_entity_for_request(
+    request: &EnterpriseRequest,
+) -> Result<String, EnterprisePipelineError> {
     if let Some(target) = request.target_entity.as_ref() {
         return Ok(target.clone());
     }

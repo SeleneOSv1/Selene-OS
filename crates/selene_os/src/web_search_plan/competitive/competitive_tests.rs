@@ -29,12 +29,9 @@ fn request_from_fixture(name: &str) -> CompetitiveRequest {
     )
     .expect("structured rows must deserialize");
 
-    let computation_packet = fixture
-        .get("computation_packet")
-        .cloned()
-        .map(|value| {
-            serde_json::from_value(value).expect("computation packet fixture must deserialize")
-        });
+    let computation_packet = fixture.get("computation_packet").cloned().map(|value| {
+        serde_json::from_value(value).expect("computation packet fixture must deserialize")
+    });
 
     CompetitiveRequest {
         trace_id: fixture

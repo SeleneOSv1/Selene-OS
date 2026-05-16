@@ -44,8 +44,8 @@ pub fn build_snapshot(
 
 pub fn hash_canonical_json(value: &Value) -> Result<String, String> {
     let canonical = canonicalize_value(value);
-    let encoded =
-        serde_json::to_string(&canonical).map_err(|e| format!("canonical json encode failed: {}", e))?;
+    let encoded = serde_json::to_string(&canonical)
+        .map_err(|e| format!("canonical json encode failed: {}", e))?;
     Ok(sha256_hex(encoded.as_bytes()))
 }
 

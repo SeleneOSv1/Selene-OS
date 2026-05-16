@@ -59,11 +59,8 @@ pub fn calibrate_claim_confidence(
 
     let mut out = Vec::with_capacity(trace_report.claims.len());
     for claim in &trace_report.claims {
-        let support_component =
-            decimal_ratio(claim.citations.len().min(3) as i64, 3).round_dp_with_strategy(
-                CLAIM_CONFIDENCE_SCALE,
-                CLAIM_CONFIDENCE_ROUNDING,
-            );
+        let support_component = decimal_ratio(claim.citations.len().min(3) as i64, 3)
+            .round_dp_with_strategy(CLAIM_CONFIDENCE_SCALE, CLAIM_CONFIDENCE_ROUNDING);
         let trust_component = average_component(
             claim.citations.as_slice(),
             &source_index,
@@ -89,10 +86,8 @@ pub fn calibrate_claim_confidence(
             - conflict_penalty
             - outlier_penalty;
 
-        let confidence = clamp_unit(raw).round_dp_with_strategy(
-            CLAIM_CONFIDENCE_SCALE,
-            CLAIM_CONFIDENCE_ROUNDING,
-        );
+        let confidence = clamp_unit(raw)
+            .round_dp_with_strategy(CLAIM_CONFIDENCE_SCALE, CLAIM_CONFIDENCE_ROUNDING);
 
         out.push(ClaimConfidenceItem {
             claim_index: claim.claim_index,
@@ -234,10 +229,8 @@ where
     if count == 0 {
         return default;
     }
-    (total / Decimal::from(count as u64)).round_dp_with_strategy(
-        CLAIM_CONFIDENCE_SCALE,
-        CLAIM_CONFIDENCE_ROUNDING,
-    )
+    (total / Decimal::from(count as u64))
+        .round_dp_with_strategy(CLAIM_CONFIDENCE_SCALE, CLAIM_CONFIDENCE_ROUNDING)
 }
 
 fn has_consensus_outliers(computation_packet: Option<&Value>) -> bool {

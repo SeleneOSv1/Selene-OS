@@ -8,11 +8,11 @@ use std::time::Duration;
 use selene_kernel_contracts::ph1art::ArtifactVersion;
 use selene_kernel_contracts::ph1j::DeviceId;
 use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, Validate};
-use sha2::{Digest, Sha256};
 use selene_storage::ph1f::{
     MobileArtifactSyncKind, MobileArtifactSyncQueueRecord, MobileArtifactSyncState, Ph1fStore,
     StorageError,
 };
+use sha2::{Digest, Sha256};
 
 pub const DEVICE_SYNC_WORKER_MAX_ITEMS: u16 = 16;
 pub const DEVICE_SYNC_WORKER_LEASE_MS: u32 = 30_000;
@@ -438,9 +438,9 @@ impl DeviceArtifactSyncSenderRuntime {
                 *retry_after_ms,
             )),
             #[cfg(test)]
-            Self::AlwaysFatalNack { message } => Err(DeviceArtifactSyncSendError::fatal(
-                message.clone(),
-            )),
+            Self::AlwaysFatalNack { message } => {
+                Err(DeviceArtifactSyncSendError::fatal(message.clone()))
+            }
             Self::Http(config) => send_http_sync_envelope(config, envelope),
         }
     }
@@ -646,7 +646,14 @@ fn run_device_artifact_pull_apply_pass_internal(
             .unwrap_or_default();
         let request_id = stable_sync_key(
             "wake_pull",
-            format!("{}:{}:{}:{}", worker_id, device_id.as_str(), now.0, platform).as_bytes(),
+            format!(
+                "{}:{}:{}:{}",
+                worker_id,
+                device_id.as_str(),
+                now.0,
+                platform
+            )
+            .as_bytes(),
             24,
         );
         let request = DeviceArtifactPullRequest {
@@ -708,7 +715,9 @@ fn apply_wake_artifact_update(
     activation_hook: Option<&ActivationHook>,
 ) -> Result<WakeApplyOutcome, StorageError> {
     let artifact_version = ArtifactVersion(update.artifact_version);
-    artifact_version.validate().map_err(StorageError::ContractViolation)?;
+    artifact_version
+        .validate()
+        .map_err(StorageError::ContractViolation)?;
     if let Some(current) = store.wake_artifact_apply_current_row(device_id) {
         if current.active_artifact_version == Some(artifact_version) {
             return Ok(WakeApplyOutcome::NoopAlreadyActive);
@@ -732,7 +741,8 @@ fn apply_wake_artifact_update(
     }
 
     let base_idem = update.idempotency_key.as_deref().unwrap_or("pull_update");
-    let payload_bytes = match load_payload_bytes_from_ref(pull_runtime, update.payload_ref.as_str()) {
+    let payload_bytes = match load_payload_bytes_from_ref(pull_runtime, update.payload_ref.as_str())
+    {
         Ok(bytes) => bytes,
         Err(_) => {
             let stage_key = stable_sync_key(
@@ -1047,14 +1057,13 @@ fn pull_http_sync_updates(
                         DEVICE_SYNC_PULL_RETRY_AFTER_MS_DEFAULT,
                     )
                 })?;
-                let parsed: DeviceArtifactPullResponse = serde_json::from_str(text.as_str()).map_err(
-                    |err| {
+                let parsed: DeviceArtifactPullResponse = serde_json::from_str(text.as_str())
+                    .map_err(|err| {
                         DeviceArtifactPullError::retryable(
                             format!("pull response json parse failed: {}", err),
                             DEVICE_SYNC_PULL_RETRY_AFTER_MS_DEFAULT,
                         )
-                    },
-                )?;
+                    })?;
                 Ok(parsed)
             } else {
                 let retry_after = parse_retry_after_ms(resp.header("retry-after"));
@@ -1117,11 +1126,7 @@ fn send_http_sync_envelope(
             }
             if (200..=299).contains(&status) {
                 Ok(DeviceArtifactSyncSendReceipt {
-                    remote_ack_ref: Some(format!(
-                        "http:{}:{}",
-                        status,
-                        envelope.sync_job_id
-                    )),
+                    remote_ack_ref: Some(format!("http:{}:{}", status, envelope.sync_job_id)),
                 })
             } else {
                 let retry_after = parse_retry_after_ms(retry_after_header.as_deref());
@@ -1225,12 +1230,14 @@ fn parse_retry_after_ms(retry_after_header: Option<&str>) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use selene_kernel_contracts::ph1art::ArtifactVersion;
-    use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
     use selene_kernel_contracts::ph1_voice_id::UserId;
+    use selene_kernel_contracts::ph1art::ArtifactVersion;
     use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
+    use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
     use selene_kernel_contracts::ph1link::{AppPlatform, InviteeType, Ph1LinkRequest};
-    use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, WakeArtifactApplyState};
+    use selene_storage::ph1f::{
+        DeviceRecord, IdentityRecord, IdentityStatus, WakeArtifactApplyState,
+    };
 
     fn user(id: &str) -> UserId {
         UserId::new(id).unwrap()
@@ -1383,7 +1390,12 @@ mod tests {
             .expect("voice sync receipt must exist")
     }
 
-    fn pull_update(version: u32, payload: &str, package_hash: Option<&str>, idem: &str) -> DeviceArtifactPullUpdate {
+    fn pull_update(
+        version: u32,
+        payload: &str,
+        package_hash: Option<&str>,
+        idem: &str,
+    ) -> DeviceArtifactPullUpdate {
         DeviceArtifactPullUpdate {
             artifact_type: "WakePack".to_string(),
             artifact_version: version,
@@ -1580,7 +1592,10 @@ mod tests {
             .wake_artifact_apply_current_row(&d)
             .expect("apply current must exist");
         assert_eq!(current.active_artifact_version, Some(ArtifactVersion(1)));
-        assert_eq!(current.last_known_good_artifact_version, Some(ArtifactVersion(1)));
+        assert_eq!(
+            current.last_known_good_artifact_version,
+            Some(ArtifactVersion(1))
+        );
         assert_eq!(
             store.wake_artifact_blocked_reason(&d, ArtifactVersion(2)),
             Some(WAKE_ARTIFACT_REASON_HASH_MISMATCH)
@@ -1613,7 +1628,10 @@ mod tests {
             .wake_artifact_apply_current_row(&d)
             .expect("apply current must exist");
         assert_eq!(current.active_artifact_version, Some(ArtifactVersion(2)));
-        assert_eq!(current.last_known_good_artifact_version, Some(ArtifactVersion(1)));
+        assert_eq!(
+            current.last_known_good_artifact_version,
+            Some(ArtifactVersion(1))
+        );
         assert!(store.wake_artifact_apply_rows().iter().any(|row| {
             row.device_id == d
                 && row.artifact_version == ArtifactVersion(2)
@@ -1633,9 +1651,10 @@ mod tests {
             schema_version: 1,
             updates: vec![pull_update(2, "wake_v2_hook_fail", None, "pull-hook-fail")],
         };
-        let hook = |_device: &DeviceId, _version: ArtifactVersion, _cache_ref: &str| -> Result<(), String> {
-            Err("activation_failed".to_string())
-        };
+        let hook = |_device: &DeviceId,
+                    _version: ArtifactVersion,
+                    _cache_ref: &str|
+         -> Result<(), String> { Err("activation_failed".to_string()) };
         let metrics = run_device_artifact_pull_apply_pass_internal(
             &mut store,
             MonotonicTimeNs(70),
@@ -1650,7 +1669,10 @@ mod tests {
             .wake_artifact_apply_current_row(&d)
             .expect("apply current must exist");
         assert_eq!(current.active_artifact_version, Some(ArtifactVersion(1)));
-        assert_eq!(current.last_known_good_artifact_version, Some(ArtifactVersion(1)));
+        assert_eq!(
+            current.last_known_good_artifact_version,
+            Some(ArtifactVersion(1))
+        );
         assert_eq!(
             store.wake_artifact_blocked_reason(&d, ArtifactVersion(2)),
             Some(WAKE_ARTIFACT_REASON_ACTIVATION_FAILED)

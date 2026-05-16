@@ -198,16 +198,12 @@ pub fn packet_name_from_fixture_filename(filename: &str) -> Option<&'static str>
         "vision_tool_request_missing_required.json" => Some("VisionToolRequestPacket"),
         "vision_evidence.json"
         | "vision_evidence_missing_outputs.json"
-        | "vision_evidence_missing_required.json" => {
-            Some("VisionEvidencePacket")
-        }
+        | "vision_evidence_missing_required.json" => Some("VisionEvidencePacket"),
         "merge.json" | "merge_missing_required.json" => Some("MergePacket"),
         "audit.json"
         | "audit_missing_hashes.json"
         | "audit_missing_required.json"
-        | "unknown_reason_code.json" => {
-            Some("AuditPacket")
-        }
+        | "unknown_reason_code.json" => Some("AuditPacket"),
         _ => None,
     }
 }

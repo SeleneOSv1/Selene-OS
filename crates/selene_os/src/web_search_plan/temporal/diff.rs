@@ -1,8 +1,8 @@
 #![forbid(unsafe_code)]
 
+use crate::web_search_plan::structured::types::{StructuredRow, StructuredValue};
 use crate::web_search_plan::temporal::change_classify::{classify_change, ChangeType};
 use crate::web_search_plan::temporal::timeline::{structured_to_temporal_value, TemporalValue};
-use crate::web_search_plan::structured::types::{StructuredRow, StructuredValue};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -91,15 +91,13 @@ pub fn build_changes(
             push_reason_code(&mut reason_codes, "policy_violation");
         }
 
-        let first_seen_ms = min_option_i64(prior.map(|row| row.as_of_ms), next.map(|row| row.as_of_ms));
-        let latest_seen_ms = max_option_i64(prior.map(|row| row.as_of_ms), next.map(|row| row.as_of_ms));
+        let first_seen_ms =
+            min_option_i64(prior.map(|row| row.as_of_ms), next.map(|row| row.as_of_ms));
+        let latest_seen_ms =
+            max_option_i64(prior.map(|row| row.as_of_ms), next.map(|row| row.as_of_ms));
 
-        let citations_prior = prior
-            .map(|row| row.source_refs.clone())
-            .unwrap_or_default();
-        let citations_new = next
-            .map(|row| row.source_refs.clone())
-            .unwrap_or_default();
+        let citations_prior = prior.map(|row| row.source_refs.clone()).unwrap_or_default();
+        let citations_new = next.map(|row| row.source_refs.clone()).unwrap_or_default();
 
         let item = ChangeItem {
             key: key.clone(),

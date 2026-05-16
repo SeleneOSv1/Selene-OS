@@ -169,8 +169,8 @@ fn test_parity_promotion_gate_and_rollback() {
         proposal_id: proposal.proposal_id.clone(),
         approved_at_ms: 1_772_496_300_000,
     };
-    let (approved, record) = approve_proposal(&proposal, &approval, &current, &next)
-        .expect("promotion should pass");
+    let (approved, record) =
+        approve_proposal(&proposal, &approval, &current, &next).expect("promotion should pass");
     assert_eq!(approved.status, ProposalStatus::Approved);
 
     let mut state = PromotionState::new(current);

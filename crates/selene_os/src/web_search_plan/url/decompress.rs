@@ -31,10 +31,7 @@ pub fn parse_content_encoding(header: Option<&str>) -> Result<ContentEncoding, U
     }
 }
 
-pub fn wrap_decoder<R: Read + 'static>(
-    reader: R,
-    encoding: ContentEncoding,
-) -> Box<dyn Read> {
+pub fn wrap_decoder<R: Read + 'static>(reader: R, encoding: ContentEncoding) -> Box<dyn Read> {
     match encoding {
         ContentEncoding::Identity => Box::new(reader),
         ContentEncoding::Gzip => Box::new(GzDecoder::new(reader)),

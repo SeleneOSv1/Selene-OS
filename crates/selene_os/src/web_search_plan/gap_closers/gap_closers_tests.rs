@@ -19,7 +19,8 @@ use std::fs;
 use std::path::PathBuf;
 
 fn fixture_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../docs/web_search_plan/gap_closers_fixtures")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../docs/web_search_plan/gap_closers_fixtures")
 }
 
 fn load_fixture(name: &str) -> Value {
@@ -56,7 +57,10 @@ fn test_t1_injection_defense_removes_or_flags_malicious_segments_deterministical
         .map(|segment| segment.matched_pattern.clone())
         .collect::<Vec<String>>();
     assert_eq!(actual_patterns, expected_patterns);
-    assert!(!first.sanitized_text.to_ascii_lowercase().contains("ignore previous instructions"));
+    assert!(!first
+        .sanitized_text
+        .to_ascii_lowercase()
+        .contains("ignore previous instructions"));
 }
 
 #[test]
@@ -94,7 +98,10 @@ fn test_t2_unknown_first_triggers_on_low_conflict_or_missing_citations() {
         explicit_reason_codes,
     });
     assert!(decision.unknown_required);
-    assert_eq!(decision.reason_code.as_deref(), Some("insufficient_evidence"));
+    assert_eq!(
+        decision.reason_code.as_deref(),
+        Some("insufficient_evidence")
+    );
     assert!(!decision.causes.is_empty());
 }
 
@@ -247,7 +254,10 @@ fn test_unknown_first_pre_synthesis_can_read_planning_metadata() {
 
     let decision = evaluate_unknown_first_pre_synthesis(&evidence);
     assert!(decision.unknown_required);
-    assert_eq!(decision.reason_code.as_deref(), Some("insufficient_evidence"));
+    assert_eq!(
+        decision.reason_code.as_deref(),
+        Some("insufficient_evidence")
+    );
 }
 
 fn collect_known_refs(evidence_packet: &Value) -> BTreeSet<String> {
@@ -262,7 +272,10 @@ fn collect_known_refs(evidence_packet: &Value) -> BTreeSet<String> {
             }
         }
     }
-    if let Some(chunks) = evidence_packet.get("content_chunks").and_then(Value::as_array) {
+    if let Some(chunks) = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+    {
         for chunk in chunks {
             if let Some(chunk_id) = chunk.get("chunk_id").and_then(Value::as_str) {
                 refs.insert(chunk_id.to_string());

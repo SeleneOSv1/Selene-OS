@@ -2,9 +2,7 @@
 
 use std::cell::RefCell;
 
-use selene_kernel_contracts::ph1art::{
-    ArtifactTrustDecisionRecord, ArtifactTrustExecutionState,
-};
+use selene_kernel_contracts::ph1art::{ArtifactTrustDecisionRecord, ArtifactTrustExecutionState};
 use selene_kernel_contracts::ph1d::SafetyTier;
 use selene_kernel_contracts::ph1j::{
     artifact_trust_proof_entry_ref_for_event_id_and_ordinal,
@@ -218,10 +216,9 @@ impl Ph1jRuntime {
             self.config.signature_algorithm.clone(),
         )
         .map_err(StorageError::ContractViolation)?;
-        let artifact_trust_entries = artifact_trust_proof_entry_inputs(
-            &request.runtime_execution_envelope,
-        )
-        .map_err(StorageError::ContractViolation)?;
+        let artifact_trust_entries =
+            artifact_trust_proof_entry_inputs(&request.runtime_execution_envelope)
+                .map_err(StorageError::ContractViolation)?;
         let input = CanonicalProofRecordInput::v1_with_artifact_trust_entries(
             request.runtime_execution_envelope.request_id.clone(),
             request.runtime_execution_envelope.trace_id.clone(),
@@ -499,22 +496,20 @@ fn env_or_default(key: &str, default: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1art::{
         ArtifactIdentityRef, ArtifactTrustBindingRef, ArtifactTrustControlHints,
-        ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance,
-        ArtifactVerificationFailureClass, ArtifactVerificationOutcome,
-        ArtifactVerificationResult, NegativeVerificationResultRef,
+        ArtifactTrustDecisionId, ArtifactTrustDecisionProvenance, ArtifactVerificationFailureClass,
+        ArtifactVerificationOutcome, ArtifactVerificationResult, NegativeVerificationResultRef,
         TrustPolicySnapshotRef, TrustSetSnapshotRef, VerificationBasisFingerprint,
     };
-    use selene_kernel_contracts::ph1_voice_id::UserId;
     use selene_kernel_contracts::ph1d::PolicyContextRef;
     use selene_kernel_contracts::ph1j::DeviceId;
     use selene_kernel_contracts::ph1l::SessionId;
     use selene_kernel_contracts::ph1link::AppPlatform;
     use selene_kernel_contracts::runtime_execution::{
-        AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision,
-        OnboardingReadinessState, PlatformRuntimeContext, RuntimeExecutionEnvelope,
-        SimulationCertificationState,
+        AdmissionState, AuthorityExecutionState, AuthorityPolicyDecision, OnboardingReadinessState,
+        PlatformRuntimeContext, RuntimeExecutionEnvelope, SimulationCertificationState,
     };
     use selene_kernel_contracts::SessionState;
     use selene_storage::ph1f::{DeviceRecord, IdentityRecord, IdentityStatus, SessionRecord};
@@ -581,9 +576,7 @@ mod tests {
         .unwrap()
     }
 
-    fn sample_envelope_with_authority_reason(
-        reason_code: Option<u64>,
-    ) -> RuntimeExecutionEnvelope {
+    fn sample_envelope_with_authority_reason(reason_code: Option<u64>) -> RuntimeExecutionEnvelope {
         sample_envelope()
             .with_authority_state(Some(
                 AuthorityExecutionState::v1(
@@ -612,9 +605,7 @@ mod tests {
                     artifact_trust_binding_ref: ArtifactTrustBindingRef(
                         "artifact.trust.binding.1".to_string(),
                     ),
-                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
-                        "policy.snap.1".to_string(),
-                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
                     trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                     artifact_verification_result: ArtifactVerificationResult {
                         artifact_identity_ref: ArtifactIdentityRef(
@@ -626,9 +617,7 @@ mod tests {
                         trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                             "policy.snap.1".to_string(),
                         ),
-                        trust_set_snapshot_ref: TrustSetSnapshotRef(
-                            "trust.set.snap.1".to_string(),
-                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                         verification_basis_fingerprint: VerificationBasisFingerprint(
                             "basis.fp.1".to_string(),
                         ),
@@ -649,9 +638,7 @@ mod tests {
                         trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                             "policy.snap.1".to_string(),
                         ),
-                        trust_set_snapshot_ref: TrustSetSnapshotRef(
-                            "trust.set.snap.1".to_string(),
-                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                         evidence_refs: vec!["evidence.1".to_string()],
                         historical_snapshot_ref: None,
                         replay_reconstructable: true,
@@ -673,9 +660,7 @@ mod tests {
                     artifact_trust_binding_ref: ArtifactTrustBindingRef(
                         "artifact.trust.binding.2".to_string(),
                     ),
-                    trust_policy_snapshot_ref: TrustPolicySnapshotRef(
-                        "policy.snap.1".to_string(),
-                    ),
+                    trust_policy_snapshot_ref: TrustPolicySnapshotRef("policy.snap.1".to_string()),
                     trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                     artifact_verification_result: ArtifactVerificationResult {
                         artifact_identity_ref: ArtifactIdentityRef(
@@ -687,9 +672,7 @@ mod tests {
                         trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                             "policy.snap.1".to_string(),
                         ),
-                        trust_set_snapshot_ref: TrustSetSnapshotRef(
-                            "trust.set.snap.1".to_string(),
-                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                         verification_basis_fingerprint: VerificationBasisFingerprint(
                             "basis.fp.2".to_string(),
                         ),
@@ -716,9 +699,7 @@ mod tests {
                         trust_policy_snapshot_ref: TrustPolicySnapshotRef(
                             "policy.snap.1".to_string(),
                         ),
-                        trust_set_snapshot_ref: TrustSetSnapshotRef(
-                            "trust.set.snap.1".to_string(),
-                        ),
+                        trust_set_snapshot_ref: TrustSetSnapshotRef("trust.set.snap.1".to_string()),
                         evidence_refs: vec!["evidence.2".to_string()],
                         historical_snapshot_ref: None,
                         replay_reconstructable: true,
@@ -918,7 +899,10 @@ mod tests {
                 .unwrap(),
             )
             .unwrap();
-        let record = store.proof_records().first().expect("proof record must exist");
+        let record = store
+            .proof_records()
+            .first()
+            .expect("proof record must exist");
         assert_eq!(record.artifact_trust_entries.len(), 2);
         assert_eq!(
             record.artifact_trust_entries[0].linkage.proof_record_ref.0,

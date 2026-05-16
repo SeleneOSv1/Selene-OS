@@ -72,10 +72,14 @@ fn test_t1_deterministic_factor_extraction_and_scoring() {
     .expect("factor extraction should pass");
     assert_eq!(first, second, "factor extraction must be deterministic");
 
-    let composite_first = compute_composite_risk(&first.factors).expect("composite score should pass");
+    let composite_first =
+        compute_composite_risk(&first.factors).expect("composite score should pass");
     let composite_second =
         compute_composite_risk(&second.factors).expect("composite score should pass");
-    assert_eq!(composite_first, composite_second, "composite scoring must be deterministic");
+    assert_eq!(
+        composite_first, composite_second,
+        "composite scoring must be deterministic"
+    );
 
     let factor_ids = first
         .factors
@@ -101,7 +105,10 @@ fn test_t2_composite_score_deterministic() {
     let request_b = to_request(fixture.request);
     let packet_a = build_risk_packet(&request_a).expect("risk packet should build");
     let packet_b = build_risk_packet(&request_b).expect("risk packet should build");
-    assert_eq!(packet_a, packet_b, "same inputs must produce identical risk packet");
+    assert_eq!(
+        packet_a, packet_b,
+        "same inputs must produce identical risk packet"
+    );
 
     let expected: ExpectedRiskPacketFixture = load_fixture("expected_risk_packet.json");
     assert_eq!(packet_a.trace_id, expected.trace_id);
@@ -133,7 +140,8 @@ fn test_t4_conflict_penalty_deterministic_and_disclosed() {
     let conflict: RiskFixture = load_fixture("conflicting_evidence.json");
     let sufficient_packet =
         build_risk_packet(&to_request(sufficient.request)).expect("sufficient packet");
-    let conflict_packet = build_risk_packet(&to_request(conflict.request)).expect("conflict packet");
+    let conflict_packet =
+        build_risk_packet(&to_request(conflict.request)).expect("conflict packet");
 
     let sufficient_confidence = sufficient_packet
         .confidence_score
@@ -155,10 +163,9 @@ fn test_t4_conflict_penalty_deterministic_and_disclosed() {
 
 #[test]
 fn test_t5_guardrails_block_recommendation_language() {
-    let err = enforce_non_advice_guardrails(&[
-        "Users should buy this stock immediately".to_string()
-    ])
-    .expect_err("recommendation language must be blocked");
+    let err =
+        enforce_non_advice_guardrails(&["Users should buy this stock immediately".to_string()])
+            .expect_err("recommendation language must be blocked");
     assert_eq!(err.reason_code, "policy_violation");
 }
 
@@ -186,7 +193,10 @@ fn test_t7_all_evidence_refs_exist_in_evidence_packet() {
             }
         }
     }
-    if let Some(chunks) = evidence_packet.get("content_chunks").and_then(Value::as_array) {
+    if let Some(chunks) = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+    {
         for chunk in chunks {
             if let Some(chunk_id) = chunk.get("chunk_id").and_then(Value::as_str) {
                 known_refs.insert(chunk_id.to_string());
@@ -210,10 +220,8 @@ fn test_t7_all_evidence_refs_exist_in_evidence_packet() {
 fn test_low_confidence_fixture_sets_confidence_low_flag() {
     let fixture: RiskFixture = load_fixture("low_confidence.json");
     let packet = build_risk_packet(&to_request(fixture.request)).expect("risk packet should build");
-    assert!(
-        packet
-            .uncertainty_flags
-            .iter()
-            .any(|flag| flag == "confidence_low")
-    );
+    assert!(packet
+        .uncertainty_flags
+        .iter()
+        .any(|flag| flag == "confidence_low"));
 }

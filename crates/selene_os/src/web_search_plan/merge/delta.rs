@@ -131,11 +131,12 @@ pub fn build_delta(
                 if normalized_prior == normalized_new {
                     continue;
                 }
-                let change_type = if is_contradiction(prior_statement.as_str(), finding.statement.as_str()) {
-                    ChangeType::Contradicted
-                } else {
-                    ChangeType::Modified
-                };
+                let change_type =
+                    if is_contradiction(prior_statement.as_str(), finding.statement.as_str()) {
+                        ChangeType::Contradicted
+                    } else {
+                        ChangeType::Modified
+                    };
                 changes.push(DeltaChange {
                     topic_key,
                     prior_statement: prior_statement.clone(),
@@ -277,7 +278,10 @@ fn extract_chunk_findings(
     evidence_packet: &Value,
     allowed_refs: &BTreeSet<String>,
 ) -> Vec<ExternalFinding> {
-    let Some(chunks) = evidence_packet.get("content_chunks").and_then(Value::as_array) else {
+    let Some(chunks) = evidence_packet
+        .get("content_chunks")
+        .and_then(Value::as_array)
+    else {
         return Vec::new();
     };
 
@@ -319,7 +323,10 @@ fn extract_chunk_findings(
     sort_and_limit_findings(findings)
 }
 
-fn extract_source_findings(evidence_packet: &Value, allowed_refs: &BTreeSet<String>) -> Vec<ExternalFinding> {
+fn extract_source_findings(
+    evidence_packet: &Value,
+    allowed_refs: &BTreeSet<String>,
+) -> Vec<ExternalFinding> {
     let Some(sources) = evidence_packet.get("sources").and_then(Value::as_array) else {
         return Vec::new();
     };

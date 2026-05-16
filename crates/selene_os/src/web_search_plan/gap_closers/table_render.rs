@@ -25,7 +25,13 @@ pub fn render_competitive_pricing_table(packet: &Value) -> Result<String, String
     normalized_rows.sort();
 
     Ok(render_text_table(
-        &["entity_id", "price", "currency", "billing_period", "tax_included"],
+        &[
+            "entity_id",
+            "price",
+            "currency",
+            "billing_period",
+            "tax_included",
+        ],
         normalized_rows,
     ))
 }
@@ -82,7 +88,10 @@ pub fn render_risk_factor_table(packet: &Value) -> Result<String, String> {
 }
 
 pub fn render_text_table(headers: &[&str], rows: Vec<Vec<String>>) -> String {
-    let mut widths = headers.iter().map(|header| header.len()).collect::<Vec<usize>>();
+    let mut widths = headers
+        .iter()
+        .map(|header| header.len())
+        .collect::<Vec<usize>>();
     for row in &rows {
         for (index, cell) in row.iter().enumerate() {
             if let Some(width) = widths.get_mut(index) {

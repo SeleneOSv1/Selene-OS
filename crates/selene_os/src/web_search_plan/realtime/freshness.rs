@@ -11,7 +11,11 @@ pub struct FreshnessAssessment {
     pub stale: bool,
 }
 
-pub fn evaluate(now_ms: i64, retrieved_at_ms: i64, ttl_ms: u64) -> Result<FreshnessAssessment, String> {
+pub fn evaluate(
+    now_ms: i64,
+    retrieved_at_ms: i64,
+    ttl_ms: u64,
+) -> Result<FreshnessAssessment, String> {
     if ttl_ms == 0 {
         return Err("ttl_ms must be > 0".to_string());
     }

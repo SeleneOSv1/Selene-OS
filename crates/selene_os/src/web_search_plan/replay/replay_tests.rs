@@ -4,7 +4,9 @@ use crate::web_search_plan::packet_validator::validate_packet;
 use crate::web_search_plan::registry_loader::load_packet_schema_registry;
 use crate::web_search_plan::replay::corpus::{load_replay_corpus, validate_replay_corpus};
 use crate::web_search_plan::replay::regressions::{evaluate_regressions, load_replay_expected};
-use crate::web_search_plan::replay::runner::{load_fixture_case, run_replay_corpus, run_replay_with_regression_gate};
+use crate::web_search_plan::replay::runner::{
+    load_fixture_case, run_replay_corpus, run_replay_with_regression_gate,
+};
 
 #[test]
 fn test_t1_corpus_loads_and_validates() {
@@ -42,7 +44,8 @@ fn test_t4_expected_snapshot_mismatch_fails() {
         .cases
         .first_mut()
         .expect("expected replay cases must not be empty");
-    first.snapshot.evidence_hash = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    first.snapshot.evidence_hash =
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
     let err = evaluate_regressions(&results, &expected)
         .expect_err("tampered expected snapshot must fail regression gate");

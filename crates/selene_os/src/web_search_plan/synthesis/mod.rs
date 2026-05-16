@@ -7,6 +7,10 @@ pub mod conflict_handler;
 pub mod insufficiency_gate;
 pub mod template;
 
+use crate::web_search_plan::diag::{
+    default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
+};
+use crate::web_search_plan::gap_closers::unknown_first::evaluate_unknown_first_pre_synthesis;
 use crate::web_search_plan::synthesis::boundary_guard::{
     assert_evidence_boundary, EvidenceBoundaryContext,
 };
@@ -20,10 +24,6 @@ use crate::web_search_plan::synthesis::insufficiency_gate::{
 };
 use crate::web_search_plan::synthesis::template::{
     render_grounded_draft, render_insufficient_evidence_answer, TemplateChunkInput,
-};
-use crate::web_search_plan::gap_closers::unknown_first::evaluate_unknown_first_pre_synthesis;
-use crate::web_search_plan::diag::{
-    default_failed_transitions, try_build_debug_packet, DebugPacketContext, DebugStatus,
 };
 use serde_json::{json, Map, Value};
 
@@ -85,10 +85,7 @@ pub fn synthesize_evidence_bound(
         external_lookup.is_some(),
     ))
     .map_err(|violation| {
-        let message = format!(
-            "PH1.D evidence boundary violation: {}",
-            violation.as_str()
-        );
+        let message = format!("PH1.D evidence boundary violation: {}", violation.as_str());
         emit_synthesis_debug_packet(
             trace_id,
             created_at_ms,
@@ -207,8 +204,8 @@ pub fn synthesize_evidence_bound(
 
     let draft = render_grounded_draft(user_question, &ranked_chunks, &conflicts);
     let claims = extract_atomic_claims(&draft.answer_text);
-    let validation = validate_claim_citation_coverage(&claims, &citation_index).map_err(|err| {
-        match err {
+    let validation =
+        validate_claim_citation_coverage(&claims, &citation_index).map_err(|err| match err {
             CitationValidationError::CitationMismatch { message, .. } => {
                 emit_synthesis_debug_packet(
                     trace_id,
@@ -229,8 +226,7 @@ pub fn synthesize_evidence_bound(
                 );
                 SynthesisError::UnsupportedClaim(message)
             }
-        }
-    })?;
+        })?;
 
     let mut reason_codes = Vec::new();
     if !conflicts.is_empty() {
