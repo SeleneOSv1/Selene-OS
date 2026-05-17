@@ -6361,6 +6361,70 @@ impl Ph1fStore {
         &self.conversation_ledger
     }
 
+    pub fn restore_conversation_turn_record(
+        &mut self,
+        record: ConversationTurnRecord,
+    ) -> Result<ConversationTurnId, StorageError> {
+        record.validate()?;
+
+        // Durable replay restores an immutable conversation projection that was already
+        // validated at append time. Identity/device/session projections may be rebuilt
+        // separately after a process restart, so replay preserves the refs without
+        // re-authoring the original turn.
+        if let Some(existing) = self
+            .conversation_ledger
+            .iter()
+            .find(|row| row.conversation_turn_id == record.conversation_turn_id)
+        {
+            if existing == &record {
+                return Ok(record.conversation_turn_id);
+            }
+            return Err(StorageError::AppendOnlyViolation {
+                table: "conversation_ledger",
+            });
+        }
+
+        if let Some(k) = &record.idempotency_key {
+            if let Some(existing) = self
+                .conversation_idempotency_index
+                .get(&(record.correlation_id, k.clone()))
+            {
+                if *existing == record.conversation_turn_id {
+                    return Ok(*existing);
+                }
+                return Err(StorageError::AppendOnlyViolation {
+                    table: "conversation_ledger",
+                });
+            }
+        }
+
+        let restored_id = record.conversation_turn_id;
+        if let Some(k) = &record.idempotency_key {
+            self.conversation_idempotency_index
+                .insert((record.correlation_id, k.clone()), restored_id);
+        }
+        self.next_conversation_turn_id = self
+            .next_conversation_turn_id
+            .max(restored_id.0.saturating_add(1));
+        self.conversation_ledger.push(record);
+        self.conversation_ledger
+            .sort_by_key(|row| row.conversation_turn_id.0);
+        Ok(restored_id)
+    }
+
+    pub fn replace_conversation_turn_records_from_replay(
+        &mut self,
+        records: &[ConversationTurnRecord],
+    ) -> Result<(), StorageError> {
+        self.conversation_ledger.clear();
+        self.conversation_idempotency_index.clear();
+        self.next_conversation_turn_id = 1;
+        for record in records {
+            self.restore_conversation_turn_record(record.clone())?;
+        }
+        Ok(())
+    }
+
     pub fn append_internal_history_evidence(
         &mut self,
         input: InternalHistoryEvidenceInput,
@@ -26882,6 +26946,60 @@ mod tests {
             )
             .unwrap();
         assert_eq!(next_id.0, evidence_id.0 + 1);
+    }
+
+    #[test]
+    fn at_f_stage8_conversation_turn_records_restore_after_store_reload() {
+        let mut s = store_with_user_device_and_session();
+        let corr = CorrelationId(930_201);
+        let turn = TurnId(201);
+        let conversation_turn_id = s
+            .append_conversation_turn(
+                ConversationTurnInput::v1(
+                    MonotonicTimeNs(201),
+                    corr,
+                    turn,
+                    Some(SessionId(1)),
+                    user(),
+                    Some(device()),
+                    ConversationRole::User,
+                    ConversationSource::VoiceTranscript,
+                    "what time is it in New York".to_string(),
+                    "hash_new_york_time".to_string(),
+                    PrivacyScope::PublicChat,
+                    Some("stage8_voice_turn".to_string()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let record = s
+            .conversation_ledger()
+            .iter()
+            .find(|row| row.conversation_turn_id == conversation_turn_id)
+            .cloned()
+            .unwrap();
+
+        let mut reloaded = Ph1fStore::new_in_memory();
+        let restored_id = reloaded
+            .restore_conversation_turn_record(record.clone())
+            .unwrap();
+        assert_eq!(restored_id, conversation_turn_id);
+        assert_eq!(reloaded.conversation_ledger(), &[record.clone()]);
+
+        let duplicate_id = reloaded
+            .restore_conversation_turn_record(record.clone())
+            .unwrap();
+        assert_eq!(duplicate_id, conversation_turn_id);
+        assert_eq!(reloaded.conversation_ledger().len(), 1);
+
+        let mut conflicting = record;
+        conflicting.text = "what time is it in London".to_string();
+        assert!(matches!(
+            reloaded.restore_conversation_turn_record(conflicting),
+            Err(StorageError::AppendOnlyViolation { .. })
+        ));
     }
 
     #[test]

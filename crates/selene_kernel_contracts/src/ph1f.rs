@@ -1324,7 +1324,7 @@ impl Validate for ConversationTurnInput {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct ConversationTurnRecord {
     pub schema_version: SchemaVersion,
     pub conversation_turn_id: ConversationTurnId,

@@ -38,6 +38,12 @@ use selene_engines::ph1k::{
 use selene_engines::ph1lang::{
     Ph1LangConfig as EnginePh1LangConfig, Ph1LangRuntime as EnginePh1LangRuntime,
 };
+use selene_engines::ph1m::{
+    FreshMemoryContinuationRequest as EngineFreshMemoryContinuationRequest,
+    FreshMemoryContinuationResolution as EngineFreshMemoryContinuationResolution,
+    FreshMemoryPriorTurnEvidence as EngineFreshMemoryPriorTurnEvidence,
+    Ph1mConfig as EnginePh1mConfig, Ph1mRuntime as EnginePh1mRuntime,
+};
 use selene_engines::ph1n::{
     reason_codes as ph1n_reason_codes, Ph1nConfig as EnginePh1nConfig,
     Ph1nRuntime as EnginePh1nRuntime,
@@ -79,10 +85,10 @@ use selene_kernel_contracts::ph1e::{
 };
 use selene_kernel_contracts::ph1f::{
     ConversationRole, ConversationSource, ConversationTurnId, ConversationTurnInput,
-    InputTranscriptEvidenceRefs, InternalHistoryEventKind, InternalHistoryEvidenceInput,
-    InternalHistoryEvidenceRecord, InternalHistoryEvidenceRefs, InternalHistoryModality,
-    LiveContextEvidenceRefs, MemoryCandidateStatus, MemoryEvidenceRefs, PrivacyScope,
-    ResponseSpokenEvidenceRefs, SpeakerEvidenceRefs, TtsEvidenceStatus,
+    ConversationTurnRecord, InputTranscriptEvidenceRefs, InternalHistoryEventKind,
+    InternalHistoryEvidenceInput, InternalHistoryEvidenceRecord, InternalHistoryEvidenceRefs,
+    InternalHistoryModality, LiveContextEvidenceRefs, MemoryCandidateStatus, MemoryEvidenceRefs,
+    PrivacyScope, ResponseSpokenEvidenceRefs, SpeakerEvidenceRefs, TtsEvidenceStatus,
 };
 use selene_kernel_contracts::ph1feedback::FeedbackEventType;
 use selene_kernel_contracts::ph1health::{
@@ -109,8 +115,8 @@ use selene_kernel_contracts::ph1lang::{
 use selene_kernel_contracts::ph1learn::{LearnSignalType, WakeLearnSignalV1, WakeLearnTrigger};
 use selene_kernel_contracts::ph1link::{AppPlatform, TokenId};
 use selene_kernel_contracts::ph1m::{
-    MemoryResumeTier, MemoryRetentionMode, MemoryThreadDigest, Ph1mRecentArchiveRecallRequest,
-    MEMORY_RESUME_HOT_WINDOW_MS,
+    MemoryContinuationDecisionKind, MemoryResumeTier, MemoryRetentionMode, MemoryThreadDigest,
+    Ph1mRecentArchiveRecallRequest, MEMORY_RESUME_HOT_WINDOW_MS,
 };
 use selene_kernel_contracts::ph1n::{
     Chat as Ph1nChat, Clarify as Ph1nClarify, FieldKey, IntentType, Ph1nRequest, Ph1nResponse,
@@ -897,6 +903,8 @@ struct AdapterPersistenceState {
     authoritative_outcomes: BTreeMap<String, AdapterAuthoritativeOutcomeRecord>,
     audit_trail: Vec<AdapterPersistenceAuditEntry>,
     #[serde(default)]
+    conversation_turn_records: Vec<ConversationTurnRecord>,
+    #[serde(default)]
     internal_history_evidence_records: Vec<InternalHistoryEvidenceRecord>,
     next_journal_sequence: u64,
     next_audit_sequence: u64,
@@ -912,6 +920,7 @@ impl Default for AdapterPersistenceState {
             operation_journal: Vec::new(),
             authoritative_outcomes: BTreeMap::new(),
             audit_trail: Vec::new(),
+            conversation_turn_records: Vec::new(),
             internal_history_evidence_records: Vec::new(),
             next_journal_sequence: 1,
             next_audit_sequence: 1,
@@ -3408,7 +3417,83 @@ fn h380_contains_chinese(text: &str) -> bool {
         .any(|ch| ('\u{4E00}'..='\u{9FFF}').contains(&ch))
 }
 
+fn payroll_public_business_knowledge_intent(lower: &str) -> bool {
+    lower.contains("payroll")
+        && (lower.starts_with("how ")
+            || lower.starts_with("what ")
+            || lower.starts_with("why ")
+            || lower.starts_with("explain ")
+            || lower.starts_with("define ")
+            || lower.starts_with("compare ")
+            || lower.starts_with("tell me about ")
+            || lower.contains(" how do i ")
+            || lower.contains(" how to ")
+            || lower.contains(" what does ")
+            || lower.contains(" what is ")
+            || lower.contains(" explain ")
+            || lower.contains(" define "))
+}
+
+fn payroll_governed_business_intent(lower: &str) -> bool {
+    if !lower.contains("payroll") || payroll_public_business_knowledge_intent(lower) {
+        return false;
+    }
+    [
+        "prepare",
+        "organise",
+        "organize",
+        "run",
+        "process",
+        "approve",
+        "submit",
+        "finalize",
+        "finalise",
+        "pay",
+        "adjust",
+        "calculate",
+        "correct",
+        "change",
+        "update",
+        "create",
+        "draft",
+    ]
+    .iter()
+    .any(|verb| {
+        lower.starts_with(&format!("{verb} "))
+            || lower.contains(&format!(" {verb} "))
+            || lower == format!("{verb} payroll")
+            || lower.starts_with(&format!("{verb} payroll"))
+            || lower.contains(&format!("{verb} payroll"))
+            || lower.contains(&format!("{verb} the payroll"))
+            || lower.contains(&format!("{verb} this payroll"))
+            || lower.contains(&format!("{verb} company payroll"))
+            || lower.contains(&format!("{verb} employee payroll"))
+    })
+}
+
+fn payroll_private_business_read_intent(lower: &str) -> bool {
+    if !lower.contains("payroll") || payroll_public_business_knowledge_intent(lower) {
+        return false;
+    }
+    ["check", "show", "view", "report", "review"]
+        .iter()
+        .any(|verb| {
+            lower.starts_with(&format!("{verb} "))
+                || lower.contains(&format!(" {verb} "))
+                || lower == format!("{verb} payroll")
+                || lower.starts_with(&format!("{verb} payroll"))
+                || lower.contains(&format!("{verb} payroll"))
+                || lower.contains(&format!("{verb} the payroll"))
+                || lower.contains(&format!("{verb} this payroll"))
+                || lower.contains(&format!("{verb} company payroll"))
+                || lower.contains(&format!("{verb} employee payroll"))
+        })
+}
+
 fn h380_detects_protected_intent(lower: &str, original: &str) -> bool {
+    if payroll_governed_business_intent(lower) {
+        return true;
+    }
     [
         "approve payroll",
         "increase tim s salary",
@@ -3423,7 +3508,6 @@ fn h380_detects_protected_intent(lower: &str, original: &str) -> bool {
         "leave approval",
         "database write",
         "database mutation",
-        "payroll",
         "salary",
         "roster",
         "refund",
@@ -4368,6 +4452,7 @@ fn h381_h380_primary_location(packet: &H380TurnUnderstandingPacket) -> Option<St
 fn h381_h380_clear_live_protected_shadow(packet: &H380TurnUnderstandingPacket) -> bool {
     let lower = packet.normalized_text.as_str();
     lower.contains("approve payroll")
+        || lower.contains("payroll")
         || lower.contains("increase tim s salary")
         || lower.contains("increase tims salary")
         || lower.contains("pay him more")
@@ -5110,7 +5195,10 @@ impl AdapterRuntime {
         let Some(posture) = self.wake_guest_lane_posture(&key)? else {
             return Ok(None);
         };
-        if existing_protected_or_private_classification_for_identity_prompt(text) {
+        if existing_protected_execution_for_identity_prompt(text) {
+            return Ok(Some(WakeGuestLaneTurnDecision::AllowPublicSafeGuest));
+        }
+        if existing_private_classification_for_identity_prompt(text) {
             if let WakeGuestLanePosture::ClaimedNameUnverified { display_name, .. } = posture {
                 return Ok(Some(WakeGuestLaneTurnDecision::Respond(
                     wake_guest_lane_verified_identity_required_response(
@@ -5469,6 +5557,16 @@ impl AdapterRuntime {
             });
         };
 
+        if outcome.closed {
+            append_stage8_session_sleep_boundary_evidence(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                outcome.session_id,
+            )?;
+        }
+
         let session_lifecycle_action = if outcome.closed {
             Some(VoiceTurnSessionLifecycleActionPacket {
                 canonical_intent: "SESSION_CLOSE_SEAL".to_string(),
@@ -5480,7 +5578,7 @@ impl AdapterRuntime {
             None
         };
 
-        Ok(SessionIdleCloseCheckAdapterResponse {
+        let response = SessionIdleCloseCheckAdapterResponse {
             status: "ok".to_string(),
             outcome: if outcome.closed {
                 "SESSION_IDLE_CLOSED"
@@ -5492,7 +5590,12 @@ impl AdapterRuntime {
             session_id: Some(session_id_to_string(outcome.session_id)),
             session_state: Some(session_state_to_api_value(outcome.session_state)),
             session_lifecycle_action,
-        })
+        };
+        drop(store);
+        if outcome.closed {
+            self.sync_internal_history_evidence_to_persistence()?;
+        }
+        Ok(response)
     }
 
     pub fn run_session_posture_evidence(
@@ -8898,6 +9001,7 @@ impl AdapterRuntime {
         }
 
         let stage7_user_text_for_fallback = user_text_final.clone();
+        let mut stage8_fresh_memory_bridge_for_fallback: Option<Stage8FreshMemoryBridge> = None;
         let execution_result = (|| {
             let mut store = self
                 .store
@@ -9651,8 +9755,113 @@ impl AdapterRuntime {
                 &base_thread_state,
                 user_text_final.as_deref(),
             );
+            let stage8_fresh_memory_bridge = if active_context_followup_rewrite.is_none() {
+                stage8_fresh_memory_bridge_from_store(
+                    &store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    &thread_key,
+                    user_text_final.as_deref(),
+                )
+                .map_err(post_session_error)?
+            } else {
+                None
+            };
+            stage8_fresh_memory_bridge_for_fallback = stage8_fresh_memory_bridge.clone();
+            let stage8_fresh_memory_followup_rewrite = stage8_fresh_memory_bridge
+                .as_ref()
+                .and_then(|bridge| bridge.rewritten_query.clone());
+            if let Some(response_text) = stage8_fresh_memory_bridge
+                .as_ref()
+                .and_then(|bridge| bridge.direct_response_text.clone())
+            {
+                self.record_transcript_updates(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &actor_user_id,
+                    Some(&runtime_device_id),
+                    session_turn_state.session_id_for_commits,
+                    committed_user_source,
+                    user_text_partial.clone(),
+                    user_text_final.clone(),
+                    selene_text_partial.clone(),
+                    selene_text_final.clone().or(Some(response_text.clone())),
+                    true,
+                )
+                .map_err(post_session_error)?;
+                append_stage7_runtime_response_evidence(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    session_turn_state.session_id_for_commits,
+                    committed_user_source,
+                    user_text_final.as_deref(),
+                    Some(&response_text),
+                    None,
+                    false,
+                    stage8_fresh_memory_bridge.as_ref(),
+                )
+                .map_err(post_session_error)?;
+                finalize_session_turn_record(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    &runtime_device_id,
+                    session_turn_state.session_id_for_commits,
+                    Some(&base_thread_state),
+                    session_turn_state.device_turn_sequence,
+                    &runtime_execution_envelope.idempotency_key,
+                    &self.runtime_node_id,
+                    self.session_lease_ttl_ms,
+                )
+                .map_err(post_session_error)?;
+                let response = VoiceTurnAdapterResponse {
+                    status: "ok".to_string(),
+                    outcome: "FINAL".to_string(),
+                    session_id: runtime_execution_envelope
+                        .session_id
+                        .clone()
+                        .map(session_id_to_string),
+                    turn_id: Some(runtime_execution_envelope.turn_id.0),
+                    session_state: Some(session_state_to_api_value(
+                        session_turn_state.session_snapshot.session_state,
+                    )),
+                    session_attach_outcome: runtime_execution_envelope.session_attach_outcome,
+                    failure_class: None,
+                    reason: None,
+                    next_move: "respond".to_string(),
+                    response_text: response_text.clone(),
+                    reason_code: "PH1M_FRESH_MEMORY_CLARIFICATION".to_string(),
+                    provenance: None,
+                    tts_text: response_text,
+                    source_chips: Vec::new(),
+                    source_cards: Vec::new(),
+                    image_cards: Vec::new(),
+                    answer_class: Some("fresh_memory_clarification".to_string()),
+                    metadata_safe_for_user: true,
+                    trace_id: None,
+                    deep_research: None,
+                    screen_lifecycle_action: None,
+                    session_lifecycle_action: None,
+                };
+                cache_authoritative_turn_response(
+                    &self.session_retry_cache,
+                    &actor_user_id,
+                    &runtime_execution_envelope.idempotency_key,
+                    &response,
+                )
+                .map_err(post_session_error)?;
+                return Ok(response);
+            }
             let h380_understanding_text = active_context_followup_rewrite
                 .as_deref()
+                .or(stage8_fresh_memory_followup_rewrite.as_deref())
                 .or(user_text_final.as_deref())
                 .map(|text| {
                     h380_selene_name_canonical_text_for_assistant_address(text)
@@ -9791,6 +10000,7 @@ impl AdapterRuntime {
                         Some(&response_text),
                         None,
                         false,
+                        stage8_fresh_memory_bridge.as_ref(),
                     )
                     .map_err(post_session_error)?;
                     finalize_session_turn_record(
@@ -9846,7 +10056,10 @@ impl AdapterRuntime {
                     return Ok(response);
                 }
             }
-            if active_context_followup_rewrite.is_none() && !h384_explicit_deep_research {
+            if active_context_followup_rewrite.is_none()
+                && stage8_fresh_memory_followup_rewrite.is_none()
+                && !h384_explicit_deep_research
+            {
                 if let Some((captured_text, h411_response)) =
                     user_text_final.as_deref().and_then(|text| {
                         h411_public_discourse_response(text, &h411_discourse_frame_before)
@@ -9854,6 +10067,8 @@ impl AdapterRuntime {
                     })
                 {
                     let response_text = h411_response.response_text.clone();
+                    let protected_fail_closed = h411_response.reason_code
+                        == "H411_PROTECTED_EXECUTION_FAIL_CLOSED_PRESERVED";
                     self.record_transcript_updates(
                         &mut store,
                         now,
@@ -9868,6 +10083,20 @@ impl AdapterRuntime {
                         selene_text_partial.clone(),
                         selene_text_final.clone().or(Some(response_text.clone())),
                         true,
+                    )
+                    .map_err(post_session_error)?;
+                    append_stage7_runtime_response_evidence(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        session_turn_state.session_id_for_commits,
+                        committed_user_source,
+                        user_text_final.as_deref(),
+                        Some(&response_text),
+                        None,
+                        protected_fail_closed,
+                        stage8_fresh_memory_bridge.as_ref(),
                     )
                     .map_err(post_session_error)?;
                     finalize_session_turn_record(
@@ -9946,6 +10175,7 @@ impl AdapterRuntime {
                 )
             };
             if active_context_followup_rewrite.is_none()
+                && stage8_fresh_memory_followup_rewrite.is_none()
                 && h380_nlp_rewrite.is_none()
                 && !h384_explicit_deep_research
             {
@@ -9956,6 +10186,36 @@ impl AdapterRuntime {
                         None,
                     )
                 }) {
+                    self.record_transcript_updates(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        Some(&runtime_device_id),
+                        session_turn_state.session_id_for_commits,
+                        committed_user_source,
+                        user_text_partial.clone(),
+                        user_text_final.clone(),
+                        selene_text_partial.clone(),
+                        selene_text_final.clone().or(Some(response_text.clone())),
+                        true,
+                    )
+                    .map_err(post_session_error)?;
+                    append_stage7_runtime_response_evidence(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        session_turn_state.session_id_for_commits,
+                        committed_user_source,
+                        user_text_final.as_deref(),
+                        Some(&response_text),
+                        None,
+                        false,
+                        stage8_fresh_memory_bridge.as_ref(),
+                    )
+                    .map_err(post_session_error)?;
                     finalize_session_turn_record(
                         &mut store,
                         now,
@@ -10019,6 +10279,8 @@ impl AdapterRuntime {
                 user_text_final.as_deref(),
             );
             let nlp_transcript_text = active_context_followup_rewrite
+                .clone()
+                .or_else(|| stage8_fresh_memory_followup_rewrite.clone())
                 .or(h380_nlp_rewrite)
                 .or_else(|| {
                     if committed_turn_followup.is_some() {
@@ -10238,6 +10500,7 @@ impl AdapterRuntime {
                 selene_text_final_for_stage7.as_deref(),
                 execution_outcome.tool_response.as_ref(),
                 protected_fail_closed_for_stage7,
+                stage8_fresh_memory_bridge.as_ref(),
             )
             .map_err(post_session_error)?;
             if let Some(ph1c) = ph1c_live_outcome.as_ref() {
@@ -10388,6 +10651,7 @@ impl AdapterRuntime {
                     Some(response.response_text.as_str()),
                     None,
                     protected_fail_closed,
+                    stage8_fresh_memory_bridge_for_fallback.as_ref(),
                 )
                 .map_err(pre_session_error)?;
             }
@@ -11360,10 +11624,12 @@ impl AdapterRuntime {
                 Some("persistence bootstrap entered quarantined local state".to_string()),
             );
         }
+        self.restore_persisted_conversation_turns_into_store(&state)?;
+        self.restore_persisted_internal_history_evidence_into_store(&state)?;
         if parse_bool_env("SELENE_ADAPTER_LEGACY_JOURNAL_REPLAY_ENABLED", true) {
             self.replay_legacy_journal_into_store(&mut state)?;
         }
-        self.restore_persisted_internal_history_evidence_into_store(&state)?;
+        self.merge_store_conversation_turns_into_state(&mut state)?;
         self.merge_store_internal_history_evidence_into_state(&mut state)?;
         {
             let mut guard = persistence
@@ -11375,6 +11641,23 @@ impl AdapterRuntime {
             self.save_persistence_state_to_disk_locked(&guard)?;
         }
         self.reconcile_pending_outbox_records()?;
+        Ok(())
+    }
+
+    fn restore_persisted_conversation_turns_into_store(
+        &self,
+        state: &AdapterPersistenceState,
+    ) -> Result<(), String> {
+        if state.conversation_turn_records.is_empty() {
+            return Ok(());
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        store
+            .replace_conversation_turn_records_from_replay(&state.conversation_turn_records)
+            .map_err(storage_error_to_string)?;
         Ok(())
     }
 
@@ -11397,6 +11680,20 @@ impl AdapterRuntime {
         Ok(())
     }
 
+    fn merge_store_conversation_turns_into_state(
+        &self,
+        state: &mut AdapterPersistenceState,
+    ) -> Result<bool, String> {
+        let records = {
+            let store = self
+                .store
+                .lock()
+                .map_err(|_| "adapter store lock poisoned".to_string())?;
+            store.conversation_ledger().to_vec()
+        };
+        merge_conversation_turn_records_locked(state, records)
+    }
+
     fn merge_store_internal_history_evidence_into_state(
         &self,
         state: &mut AdapterPersistenceState,
@@ -11415,12 +11712,15 @@ impl AdapterRuntime {
         let Some(persistence) = self.persistence.as_ref() else {
             return Ok(());
         };
-        let records = {
+        let (conversation_records, internal_history_records) = {
             let store = self
                 .store
                 .lock()
                 .map_err(|_| "adapter store lock poisoned".to_string())?;
-            store.internal_history_evidence_ledger().to_vec()
+            (
+                store.conversation_ledger().to_vec(),
+                store.internal_history_evidence_ledger().to_vec(),
+            )
         };
         let mut guard = persistence
             .state
@@ -11429,7 +11729,11 @@ impl AdapterRuntime {
         validate_persistence_state_integrity(&guard).map_err(|err| {
             format!("persistence state integrity check failed before evidence sync: {err}")
         })?;
-        let changed = merge_internal_history_evidence_records_locked(&mut guard, records)?;
+        let conversation_changed =
+            merge_conversation_turn_records_locked(&mut guard, conversation_records)?;
+        let evidence_changed =
+            merge_internal_history_evidence_records_locked(&mut guard, internal_history_records)?;
+        let changed = conversation_changed || evidence_changed;
         if changed {
             self.save_persistence_state_to_disk_locked(&guard)?;
         }
@@ -11744,6 +12048,45 @@ fn validate_optional_persistence_ascii_token(
     Ok(())
 }
 
+fn merge_conversation_turn_records_locked(
+    state: &mut AdapterPersistenceState,
+    mut records: Vec<ConversationTurnRecord>,
+) -> Result<bool, String> {
+    records.sort_by_key(|record| record.conversation_turn_id.0);
+    let mut changed = false;
+    for record in records {
+        record
+            .validate()
+            .map_err(|err| format!("invalid conversation turn record: {err:?}"))?;
+        let expected_next = state.conversation_turn_records.len().saturating_add(1) as u64;
+        if record.conversation_turn_id.0 < expected_next {
+            let index = record.conversation_turn_id.0.saturating_sub(1) as usize;
+            let Some(existing) = state.conversation_turn_records.get(index) else {
+                return Err(format!(
+                    "conversation turn_id {} is below next expected {} but missing from durable state",
+                    record.conversation_turn_id.0, expected_next
+                ));
+            };
+            if existing != &record {
+                return Err(format!(
+                    "conversation turn_id {} conflicts with durable append-only state",
+                    record.conversation_turn_id.0
+                ));
+            }
+            continue;
+        }
+        if record.conversation_turn_id.0 != expected_next {
+            return Err(format!(
+                "conversation turn_id {} must append as contiguous turn_id {}",
+                record.conversation_turn_id.0, expected_next
+            ));
+        }
+        state.conversation_turn_records.push(record);
+        changed = true;
+    }
+    Ok(changed)
+}
+
 fn merge_internal_history_evidence_records_locked(
     state: &mut AdapterPersistenceState,
     mut records: Vec<InternalHistoryEvidenceRecord>,
@@ -11987,6 +12330,30 @@ fn validate_persistence_state_integrity(state: &AdapterPersistenceState) -> Resu
             "next_audit_sequence={} must equal contiguous next sequence {}",
             state.next_audit_sequence, expected_audit_sequence
         ));
+    }
+
+    let mut expected_conversation_turn_id = 1_u64;
+    let mut conversation_idempotency = BTreeSet::new();
+    for record in &state.conversation_turn_records {
+        record
+            .validate()
+            .map_err(|err| format!("conversation turn record invalid: {err:?}"))?;
+        if record.conversation_turn_id.0 != expected_conversation_turn_id {
+            return Err(format!(
+                "conversation turn_id {} must equal contiguous next turn_id {}",
+                record.conversation_turn_id.0, expected_conversation_turn_id
+            ));
+        }
+        expected_conversation_turn_id = expected_conversation_turn_id.saturating_add(1);
+        if let Some(idempotency_key) = record.idempotency_key.as_ref() {
+            let key = (record.correlation_id.0.to_string(), idempotency_key.clone());
+            if !conversation_idempotency.insert(key) {
+                return Err(format!(
+                    "conversation turn duplicate idempotency key '{}' for correlation {}",
+                    idempotency_key, record.correlation_id.0
+                ));
+            }
+        }
     }
 
     let mut expected_internal_history_event_id = 1_u64;
@@ -18193,10 +18560,12 @@ fn h411_public_discourse_response(
         });
     }
 
-    if lower.contains("tell me about payroll rules generally") {
+    if lower.contains("tell me about payroll rules generally")
+        || payroll_public_business_knowledge_intent(&lower)
+    {
         return Some(H411PublicDiscourseResponse {
             response_text:
-                "Payroll rules generally cover pay rates, tax withholding, records, leave, and compliance duties. I can discuss them at a public advisory level, but I cannot approve payroll without simulation and authority."
+                "Payroll preparation generally means gathering approved time, salary, leave, deductions, and tax details; checking exceptions; preparing a draft; reviewing it; and only then moving to approval or payment through the authorized workflow."
                     .to_string(),
             reason_code: "H411_PUBLIC_ADVISORY_ANSWER",
         });
@@ -18692,7 +19061,8 @@ fn h411_response_answers_or_safe_degrades(response_text: &str) -> bool {
 }
 
 fn h411_looks_like_protected_execution(lower: &str) -> bool {
-    (lower.contains("approve") && lower.contains("payroll"))
+    payroll_governed_business_intent(lower)
+        || (lower.contains("approve") && lower.contains("payroll"))
         || (lower.contains("approve") && lower.contains("tim"))
         || lower.contains("increase tim's salary")
         || lower.contains("increase tims salary")
@@ -19307,6 +19677,252 @@ fn stage7_tts_should_be_requested(
             .is_some_and(|value| !value.is_empty())
 }
 
+#[derive(Debug, Clone)]
+struct Stage8FreshMemoryBridge {
+    rewritten_query: Option<String>,
+    direct_response_text: Option<String>,
+    memory_refs: MemoryEvidenceRefs,
+    active_context_packet_ref: Option<String>,
+    human_conversation_directive_ref: Option<String>,
+    active_topic_ref: Option<String>,
+    active_intent_ref: Option<String>,
+    continuation_ref: Option<String>,
+}
+
+impl Stage8FreshMemoryBridge {
+    fn from_resolution(
+        correlation_id: CorrelationId,
+        turn_id: TurnId,
+        resolution: EngineFreshMemoryContinuationResolution,
+    ) -> Option<Self> {
+        if matches!(
+            resolution.memory_continuation_decision.decision,
+            MemoryContinuationDecisionKind::NoMemoryMatch
+                | MemoryContinuationDecisionKind::AnswerNormally
+        ) {
+            return None;
+        }
+        let family = resolution
+            .tool_family
+            .as_deref()
+            .map(sanitize_idempotency_token)
+            .unwrap_or_else(|| "fresh".to_string());
+        let mut memory_refs = MemoryEvidenceRefs::none();
+        memory_refs.memory_recall_request_ref = resolution.memory_recall_request_ref.clone();
+        memory_refs.fresh_memory_handoff_ref = resolution.fresh_memory_handoff_ref.clone();
+        memory_refs.memory_evidence_packet_ref = resolution.memory_evidence_packet_ref.clone();
+        memory_refs.memory_continuation_decision_ref =
+            resolution.memory_continuation_decision_ref.clone();
+        if matches!(
+            resolution.memory_continuation_decision.decision,
+            MemoryContinuationDecisionKind::ContinueAutomatically
+        ) {
+            memory_refs.memory_candidate_status = MemoryCandidateStatus::Allowed;
+        }
+        let decision_kind = resolution.memory_continuation_decision.decision;
+        let direct_response_text =
+            if decision_kind == MemoryContinuationDecisionKind::AskClarification {
+                resolution
+                    .memory_continuation_decision
+                    .clarification_prompt
+                    .clone()
+            } else {
+                None
+            };
+        let intent_suffix = match decision_kind {
+            MemoryContinuationDecisionKind::ContinueAutomatically => "fresh_memory_continue",
+            MemoryContinuationDecisionKind::AskClarification => "fresh_memory_clarify",
+            MemoryContinuationDecisionKind::BlockedByPrivacy => "fresh_memory_blocked_privacy",
+            MemoryContinuationDecisionKind::BlockedByStaleness => "fresh_memory_blocked_stale",
+            MemoryContinuationDecisionKind::BlockedByLowConfidence => {
+                "fresh_memory_blocked_low_confidence"
+            }
+            MemoryContinuationDecisionKind::AnswerNormally
+            | MemoryContinuationDecisionKind::NoMemoryMatch => "fresh_memory_no_match",
+        };
+        let continuity_label = match decision_kind {
+            MemoryContinuationDecisionKind::AskClarification => "clarify",
+            MemoryContinuationDecisionKind::ContinueAutomatically => "continuity",
+            MemoryContinuationDecisionKind::BlockedByPrivacy => "blocked_privacy",
+            MemoryContinuationDecisionKind::BlockedByStaleness => "blocked_stale",
+            MemoryContinuationDecisionKind::BlockedByLowConfidence => "blocked_low_confidence",
+            MemoryContinuationDecisionKind::AnswerNormally
+            | MemoryContinuationDecisionKind::NoMemoryMatch => "no_match",
+        };
+        Some(Self {
+            rewritten_query: resolution.rewritten_query,
+            direct_response_text,
+            memory_refs,
+            active_context_packet_ref: Some(format!(
+                "ph1x_active_context:fresh_memory:{}:{}",
+                correlation_id.0, turn_id.0
+            )),
+            human_conversation_directive_ref: Some(format!(
+                "ph1x_directive:fresh_memory:{}:{}",
+                correlation_id.0, turn_id.0
+            )),
+            active_topic_ref: Some(format!("ph1x_topic:{family}:fresh_memory")),
+            active_intent_ref: Some(format!("ph1x_intent:{family}:{intent_suffix}")),
+            continuation_ref: Some(format!(
+                "ph1x_fresh_memory_{}:{}:{}:{}",
+                continuity_label, family, correlation_id.0, turn_id.0
+            )),
+        })
+    }
+}
+
+fn stage8_tool_family_for_turn(
+    store: &Ph1fStore,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+) -> Option<String> {
+    store
+        .internal_history_evidence_ledger()
+        .iter()
+        .rev()
+        .filter(|row| row.correlation_id == correlation_id && row.turn_id == turn_id)
+        .flat_map(|row| row.refs.tool_provider_refs.iter())
+        .find_map(|reference| {
+            if reference.starts_with("ph1e_tool:time") {
+                Some("time".to_string())
+            } else if reference.starts_with("ph1e_tool:weather") {
+                Some("weather".to_string())
+            } else {
+                None
+            }
+        })
+}
+
+fn stage8_evidence_refs_for_turn(
+    store: &Ph1fStore,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    conversation_turn_id: ConversationTurnId,
+) -> Vec<String> {
+    let mut refs = vec![format!("conversation_turn:{}", conversation_turn_id.0)];
+    for row in store
+        .internal_history_evidence_ledger()
+        .iter()
+        .filter(|row| row.correlation_id == correlation_id && row.turn_id == turn_id)
+    {
+        refs.push(format!(
+            "internal_history_event:{}",
+            row.internal_history_event_id.0
+        ));
+        refs.extend(row.refs.tool_provider_refs.iter().take(2).cloned());
+        refs.extend(row.refs.replay_integrity_refs.iter().take(2).cloned());
+        if refs.len() >= 8 {
+            break;
+        }
+    }
+    refs.sort();
+    refs.dedup();
+    refs.into_iter().take(8).collect()
+}
+
+fn stage8_fresh_memory_prior_turns_from_store(
+    store: &Ph1fStore,
+    actor_user_id: &UserId,
+    now: MonotonicTimeNs,
+    current_turn_id: TurnId,
+) -> Vec<EngineFreshMemoryPriorTurnEvidence> {
+    let mut out = Vec::new();
+    for row in store.conversation_ledger().iter().rev() {
+        if row.turn_id == current_turn_id
+            || row.user_id != *actor_user_id
+            || row.role != ConversationRole::User
+            || row.tombstone_of_conversation_turn_id.is_some()
+            || !matches!(
+                row.source,
+                ConversationSource::VoiceTranscript | ConversationSource::TypedText
+            )
+        {
+            continue;
+        }
+        if row.created_at.0 > now.0 {
+            continue;
+        }
+        if now.0.saturating_sub(row.created_at.0) > 10 * 60 * 1_000_000_000 {
+            continue;
+        }
+        let tool_family = stage8_tool_family_for_turn(store, row.correlation_id, row.turn_id);
+        let evidence_refs = stage8_evidence_refs_for_turn(
+            store,
+            row.correlation_id,
+            row.turn_id,
+            row.conversation_turn_id,
+        );
+        out.push(EngineFreshMemoryPriorTurnEvidence {
+            created_at: row.created_at,
+            source_session_id: row.session_id,
+            source_thread_key: None,
+            source_turn_ref: format!("conversation_turn:{}", row.conversation_turn_id.0),
+            user_text: Some(row.text.clone()),
+            response_text: stage8_selene_response_for_turn(store, row).map(ToOwned::to_owned),
+            tool_family,
+            entity_focus: Vec::new(),
+            evidence_refs,
+        });
+        if out.len() >= 12 {
+            break;
+        }
+    }
+    out.reverse();
+    out
+}
+
+fn stage8_selene_response_for_turn<'a>(
+    store: &'a Ph1fStore,
+    user_row: &ConversationTurnRecord,
+) -> Option<&'a str> {
+    store
+        .conversation_ledger()
+        .iter()
+        .find(|row| {
+            row.correlation_id == user_row.correlation_id
+                && row.turn_id == user_row.turn_id
+                && row.role == ConversationRole::Selene
+                && row.source == ConversationSource::SeleneOutput
+                && row.tombstone_of_conversation_turn_id.is_none()
+        })
+        .map(|row| row.text.as_str())
+}
+
+fn stage8_fresh_memory_bridge_from_store(
+    store: &Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    actor_user_id: &UserId,
+    thread_key: &str,
+    user_text: Option<&str>,
+) -> Result<Option<Stage8FreshMemoryBridge>, String> {
+    let Some(user_text) = user_text.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(None);
+    };
+    let prior_turns =
+        stage8_fresh_memory_prior_turns_from_store(store, actor_user_id, now, turn_id);
+    if prior_turns.is_empty() {
+        return Ok(None);
+    }
+    let runtime = EnginePh1mRuntime::new(EnginePh1mConfig::mvp_v1());
+    let resolution = runtime
+        .fresh_memory_continuation(&EngineFreshMemoryContinuationRequest {
+            now,
+            current_text: user_text.to_string(),
+            current_thread_key: Some(thread_key.to_string()),
+            current_turn_ref: format!("{}:{}", correlation_id.0, turn_id.0),
+            evidence_ref_prefix: format!("{}:{}", correlation_id.0, turn_id.0),
+            prior_turns,
+        })
+        .map_err(|err| format!("PH1.M fresh memory continuation failed: {err:?}"))?;
+    Ok(Stage8FreshMemoryBridge::from_resolution(
+        correlation_id,
+        turn_id,
+        resolution,
+    ))
+}
+
 fn stage7_tool_family_label(tool_response: &ToolResponse) -> &'static str {
     match tool_response.tool_result.as_ref() {
         Some(ToolResult::Time { .. }) => "time",
@@ -19376,6 +19992,7 @@ fn append_stage7_runtime_response_evidence(
     selene_text: Option<&str>,
     tool_response: Option<&ToolResponse>,
     protected_fail_closed: bool,
+    stage8_fresh_memory: Option<&Stage8FreshMemoryBridge>,
 ) -> Result<(), String> {
     let Some(selene_text) = selene_text.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(());
@@ -19430,6 +20047,13 @@ fn append_stage7_runtime_response_evidence(
             correlation_id.0, turn_id.0
         ));
     }
+    if let Some(stage8) = stage8_fresh_memory {
+        ph1x.active_context_packet_ref = stage8.active_context_packet_ref.clone();
+        ph1x.human_conversation_directive_ref = stage8.human_conversation_directive_ref.clone();
+        ph1x.active_topic_ref = stage8.active_topic_ref.clone();
+        ph1x.active_intent_ref = stage8.active_intent_ref.clone();
+        ph1x.continuation_ref = stage8.continuation_ref.clone();
+    }
 
     let mut refs = InternalHistoryEvidenceRefs::none();
     refs.presentation_refs
@@ -19471,8 +20095,22 @@ fn append_stage7_runtime_response_evidence(
             correlation_id.0, turn_id.0
         ));
     }
+    if let Some(stage8) = stage8_fresh_memory {
+        refs.audit_refs.push(format!(
+            "ph1m_fresh_memory_bridge:{}:{}",
+            correlation_id.0, turn_id.0
+        ));
+        if let Some(ref value) = stage8.memory_refs.fresh_memory_handoff_ref {
+            refs.replay_integrity_refs.push(value.clone());
+        }
+        if let Some(ref value) = stage8.memory_refs.memory_continuation_decision_ref {
+            refs.replay_integrity_refs.push(value.clone());
+        }
+    }
 
-    let mut memory = MemoryEvidenceRefs::none();
+    let mut memory = stage8_fresh_memory
+        .map(|stage8| stage8.memory_refs.clone())
+        .unwrap_or_else(MemoryEvidenceRefs::none);
     if protected_fail_closed {
         memory.memory_candidate_status = MemoryCandidateStatus::BlockedProtected;
     }
@@ -19514,6 +20152,19 @@ fn append_stage7_runtime_response_evidence(
             Some(selene_turn_id),
             selene_text,
             tool,
+            stage8_fresh_memory,
+        )?;
+    }
+    if let Some(stage8) = stage8_fresh_memory {
+        append_stage8_fresh_memory_evidence(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+            session_id,
+            Some(selene_turn_id),
+            selene_text,
+            stage8,
         )?;
     }
     if protected_fail_closed {
@@ -19541,6 +20192,7 @@ fn append_stage7_tool_evidence(
     conversation_turn_id: Option<ConversationTurnId>,
     selene_text: &str,
     tool_response: &ToolResponse,
+    stage8_fresh_memory: Option<&Stage8FreshMemoryBridge>,
 ) -> Result<(), String> {
     let family = stage7_tool_family_label(tool_response);
     let response_hash = stable_hash_hex_16(selene_text);
@@ -19585,6 +20237,16 @@ fn append_stage7_tool_evidence(
         "ph1x_tool_continuity:{}:{}:{}",
         family, correlation_id.0, turn_id.0
     ));
+    if let Some(stage8) = stage8_fresh_memory {
+        ph1x.active_context_packet_ref = stage8.active_context_packet_ref.clone();
+        ph1x.human_conversation_directive_ref = stage8.human_conversation_directive_ref.clone();
+        ph1x.active_topic_ref = stage8.active_topic_ref.clone();
+        ph1x.active_intent_ref = stage8.active_intent_ref.clone();
+        ph1x.continuation_ref = stage8.continuation_ref.clone();
+        if let Some(ref value) = stage8.memory_refs.memory_continuation_decision_ref {
+            refs.replay_integrity_refs.push(value.clone());
+        }
+    }
 
     let evidence = InternalHistoryEvidenceInput::v1(
         now,
@@ -19601,7 +20263,9 @@ fn append_stage7_tool_evidence(
         InputTranscriptEvidenceRefs::none(),
         response,
         ph1x,
-        MemoryEvidenceRefs::none(),
+        stage8_fresh_memory
+            .map(|stage8| stage8.memory_refs.clone())
+            .unwrap_or_else(MemoryEvidenceRefs::none),
         refs,
         Some(sanitize_idempotency_token(&format!(
             "stage7_tool_evidence:{}:{}:{}",
@@ -19609,6 +20273,119 @@ fn append_stage7_tool_evidence(
         ))),
     )
     .map_err(|err| format!("invalid Stage 7 tool evidence: {err:?}"))?;
+    store
+        .append_internal_history_evidence(evidence)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_stage8_fresh_memory_evidence(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    session_id: Option<SessionId>,
+    conversation_turn_id: Option<ConversationTurnId>,
+    selene_text: &str,
+    stage8: &Stage8FreshMemoryBridge,
+) -> Result<(), String> {
+    let mut refs = InternalHistoryEvidenceRefs::none();
+    refs.audit_refs.push(format!(
+        "ph1m_fresh_memory_decision:{}:{}",
+        correlation_id.0, turn_id.0
+    ));
+    if let Some(ref value) = stage8.memory_refs.fresh_memory_handoff_ref {
+        refs.replay_integrity_refs.push(value.clone());
+    }
+    if let Some(ref value) = stage8.memory_refs.memory_evidence_packet_ref {
+        refs.replay_integrity_refs.push(value.clone());
+    }
+    if let Some(ref value) = stage8.memory_refs.memory_continuation_decision_ref {
+        refs.replay_integrity_refs.push(value.clone());
+    }
+    let mut ph1x = LiveContextEvidenceRefs::none();
+    ph1x.active_context_packet_ref = stage8.active_context_packet_ref.clone();
+    ph1x.human_conversation_directive_ref = stage8.human_conversation_directive_ref.clone();
+    ph1x.active_topic_ref = stage8.active_topic_ref.clone();
+    ph1x.active_intent_ref = stage8.active_intent_ref.clone();
+    ph1x.continuation_ref = stage8.continuation_ref.clone();
+    let response_hash = stable_hash_hex_16(selene_text);
+    let mut response = ResponseSpokenEvidenceRefs::selene_text(response_hash);
+    response.spoken_matches_final_answer = Some(true);
+    let evidence = InternalHistoryEvidenceInput::v1(
+        now,
+        InternalHistoryEventKind::MemoryEvidence,
+        conversation_turn_id,
+        correlation_id,
+        turn_id,
+        session_id,
+        None,
+        Some(ConversationRole::Selene),
+        Some(ConversationSource::SeleneOutput),
+        InternalHistoryModality::System,
+        SpeakerEvidenceRefs::none(),
+        InputTranscriptEvidenceRefs::none(),
+        response,
+        ph1x,
+        stage8.memory_refs.clone(),
+        refs,
+        Some(sanitize_idempotency_token(&format!(
+            "stage8_fresh_memory_evidence:{}:{}",
+            correlation_id.0, turn_id.0
+        ))),
+    )
+    .map_err(|err| format!("invalid Stage 8 fresh memory evidence: {err:?}"))?;
+    store
+        .append_internal_history_evidence(evidence)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
+fn append_stage8_session_sleep_boundary_evidence(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    session_id: SessionId,
+) -> Result<(), String> {
+    let mut memory = MemoryEvidenceRefs::none();
+    memory.fresh_memory_handoff_ref = Some(format!(
+        "ph1m_fresh_handoff_boundary:sleep:{}:{}",
+        correlation_id.0, turn_id.0
+    ));
+    let mut refs = InternalHistoryEvidenceRefs::none();
+    refs.audit_refs.push(format!(
+        "ph1l_idle_sleep_boundary:{}:{}:{}",
+        session_id.0, correlation_id.0, turn_id.0
+    ));
+    refs.replay_integrity_refs.push(format!(
+        "session_sleep_boundary:{}:{}:{}",
+        session_id.0, correlation_id.0, turn_id.0
+    ));
+    let evidence = InternalHistoryEvidenceInput::v1(
+        now,
+        InternalHistoryEventKind::LifecycleBoundary,
+        None,
+        correlation_id,
+        turn_id,
+        Some(session_id),
+        None,
+        None,
+        None,
+        InternalHistoryModality::Lifecycle,
+        SpeakerEvidenceRefs::none(),
+        InputTranscriptEvidenceRefs::none(),
+        ResponseSpokenEvidenceRefs::none(),
+        LiveContextEvidenceRefs::none(),
+        memory,
+        refs,
+        Some(sanitize_idempotency_token(&format!(
+            "stage8_sleep_boundary:{}:{}:{}",
+            session_id.0, correlation_id.0, turn_id.0
+        ))),
+    )
+    .map_err(|err| format!("invalid Stage 8 sleep boundary evidence: {err:?}"))?;
     store
         .append_internal_history_evidence(evidence)
         .map_err(storage_error_to_string)?;
@@ -20642,10 +21419,22 @@ fn current_turn_speech_sufficient_for_identity_prompt(text: &str) -> bool {
     word_count >= 3 || trimmed.chars().filter(|ch| !ch.is_whitespace()).count() >= 12
 }
 
-fn existing_protected_or_private_classification_for_identity_prompt(text: &str) -> bool {
+fn existing_protected_execution_for_identity_prompt(text: &str) -> bool {
     let lower = text.trim().to_ascii_lowercase();
     h411_looks_like_protected_execution(&lower)
         || committed_voice_has_protected_latin_action(&lower)
+        || h380_detects_protected_intent(&lower, text)
+}
+
+fn existing_private_classification_for_identity_prompt(text: &str) -> bool {
+    let lower = text.trim().to_ascii_lowercase();
+    payroll_private_business_read_intent(&lower)
+        || lower.contains("my private")
+        || lower.contains("my personal")
+        || lower.contains("personal file")
+        || lower.contains("private file")
+        || lower.contains("my account")
+        || lower.contains("my records")
 }
 
 fn continuing_speech_identity_prompt_reason(
@@ -20655,7 +21444,10 @@ fn continuing_speech_identity_prompt_reason(
     if text.is_empty() {
         return None;
     }
-    if existing_protected_or_private_classification_for_identity_prompt(text) {
+    if existing_protected_execution_for_identity_prompt(text) {
+        return None;
+    }
+    if existing_private_classification_for_identity_prompt(text) {
         return Some(WakeUnknownSpeakerPromptReason::ProtectedOrPersonalRequest);
     }
     if current_turn_speech_sufficient_for_identity_prompt(text) {
@@ -21166,7 +21958,9 @@ fn continuing_speech_identity_prompt_response(
     else {
         return Ok(None);
     };
-    if !existing_protected_or_private_classification_for_identity_prompt(text) {
+    if existing_protected_execution_for_identity_prompt(text)
+        || !existing_private_classification_for_identity_prompt(text)
+    {
         return Ok(None);
     }
 
@@ -27645,6 +28439,171 @@ mod tests {
         cleanup_persistence_files_for_test(&journal_path);
     }
 
+    #[test]
+    fn stage8_fresh_memory_time_followup_survives_sleep_and_adapter_restart() {
+        let journal_path = temp_persistence_journal_path("stage8_fresh_memory_restart");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("first runtime with persistence must construct");
+
+        let mut first = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut first);
+        first.app_platform = "DESKTOP".to_string();
+        first.correlation_id = 8_008_001;
+        first.turn_id = 8_008_001;
+        first.device_turn_sequence = Some(8_008_001);
+        first.now_ns = Some(10_000_000_000);
+        first.thread_key = Some("stage8-fresh-memory-restart".to_string());
+        first.user_text_final = Some("What time is it in New York?".to_string());
+        let first_out = runtime_one
+            .run_voice_turn(first.clone())
+            .expect("New York time turn should complete");
+        assert_h363_clean_time_answer(&first_out, "New York");
+
+        let actor_user_id = UserId::new(first.actor_user_id.clone()).expect("actor id must parse");
+        let device_id = DeviceId::new(first.device_id.clone().expect("device id must exist"))
+            .expect("device id must parse");
+        let idle = runtime_one
+            .run_session_idle_close_check_at(
+                SessionIdleCloseCheckAdapterRequest {
+                    correlation_id: 8_008_002,
+                    idempotency_key: "stage8_fresh_memory_idle_close".to_string(),
+                    actor_user_id: first.actor_user_id,
+                    device_id: first.device_id.expect("device id remains available"),
+                    tts_playback_active: false,
+                },
+                actor_user_id.clone(),
+                device_id,
+                CorrelationId(8_008_002),
+                MonotonicTimeNs(45_000_000_000),
+            )
+            .expect("idle close should succeed");
+        assert_eq!(idle.outcome, "SESSION_IDLE_CLOSED");
+
+        let before = runtime_one.ui_internal_history_evidence_report(Some(45_000_000_000));
+        assert!(before.events.iter().any(|row| {
+            row.event_kind == "LifecycleBoundary"
+                && row.ph1m.fresh_memory_handoff_ref.is_some()
+                && row
+                    .refs
+                    .audit_refs
+                    .iter()
+                    .any(|value| value.starts_with("ph1l_idle_sleep_boundary:"))
+        }));
+        drop(runtime_one);
+
+        let runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("second runtime should restore durable evidence");
+        let mut followup = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut followup);
+        followup.app_platform = "DESKTOP".to_string();
+        followup.correlation_id = 8_008_003;
+        followup.turn_id = 8_008_003;
+        followup.device_turn_sequence = Some(8_008_003);
+        followup.now_ns = Some(46_000_000_000);
+        followup.thread_key = Some("stage8-fresh-memory-restart".to_string());
+        followup.user_text_final = Some("What about Sydney?".to_string());
+        let followup_out = runtime_two
+            .run_voice_turn(followup)
+            .expect("fresh-memory Sydney follow-up should complete");
+        assert_h363_clean_time_answer(&followup_out, "Sydney");
+        assert!(!followup_out.response_text.contains("archive"));
+        assert!(!followup_out.response_text.contains("session"));
+        assert!(!followup_out.response_text.contains("retrieval"));
+        assert!(!followup_out.response_text.contains("evidence"));
+
+        let after = runtime_two.ui_internal_history_evidence_report(Some(46_000_000_000));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "MemoryEvidence"
+                && row.ph1m.fresh_memory_handoff_ref.is_some()
+                && row.ph1m.memory_evidence_packet_ref.is_some()
+                && row.ph1m.memory_continuation_decision_ref.is_some()
+        }));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "ToolEvidence"
+                && row.ph1m.memory_continuation_decision_ref.is_some()
+                && row
+                    .refs
+                    .tool_provider_refs
+                    .iter()
+                    .any(|value| value.starts_with("ph1e_tool:time"))
+        }));
+
+        cleanup_persistence_files_for_test(&journal_path);
+    }
+
+    #[test]
+    fn stage8_fresh_memory_after_sleep_does_not_steal_name_or_bare_place() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "stage8-fresh-memory-negative";
+        let first = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            8_108_001,
+            "What time is it in New York?",
+        );
+        assert_h363_clean_time_answer(&first, "New York");
+
+        let mut close = base_request();
+        close.app_platform = "DESKTOP".to_string();
+        close.audio_capture_ref = None;
+        close.correlation_id = 8_108_002;
+        close.turn_id = 8_108_002;
+        close.device_turn_sequence = Some(8_108_002);
+        close.now_ns = Some(45_000_000_000);
+        close.thread_key = Some(thread_key.to_string());
+        close.user_text_final = Some("we're finished".to_string());
+        let closed = runtime
+            .run_voice_turn(close)
+            .expect("manual close should clear active PH1.X context");
+        assert_eq!(closed.outcome, "SESSION_LIFECYCLE");
+
+        let identity = h363_run_desktop_typed_time_query_on_thread(
+            &runtime,
+            thread_key,
+            8_108_003,
+            "What is your name?",
+        );
+        assert_eq!(identity.response_text, "I’m Selene.");
+        assert_eq!(identity.reason_code, "SELENE_SELF_IDENTITY_PASS");
+
+        let mut close_again = base_request();
+        close_again.app_platform = "DESKTOP".to_string();
+        close_again.audio_capture_ref = None;
+        close_again.correlation_id = 8_108_004;
+        close_again.turn_id = 8_108_004;
+        close_again.device_turn_sequence = Some(8_108_004);
+        close_again.now_ns = Some(46_000_000_000);
+        close_again.thread_key = Some(thread_key.to_string());
+        close_again.user_text_final = Some("we're finished".to_string());
+        runtime
+            .run_voice_turn(close_again)
+            .expect("second close should remain safe");
+
+        let bare =
+            h363_run_desktop_typed_time_query_on_thread(&runtime, thread_key, 8_108_005, "Sydney");
+        assert!(
+            bare.response_text.contains("Do you mean the time question"),
+            "{}",
+            bare.response_text
+        );
+        let report = runtime.ui_internal_history_evidence_report(Some(46_000_000_001));
+        assert!(report.events.iter().any(|row| {
+            row.turn_id == "8108005"
+                && row.ph1m.memory_continuation_decision_ref.is_some()
+                && row.ph1m.memory_candidate_status != "Allowed"
+        }));
+    }
+
     fn base_tablet_request() -> VoiceTurnAdapterRequest {
         let mut request = base_request();
         request.app_platform = "TABLET".to_string();
@@ -30743,6 +31702,24 @@ mod tests {
         assert!(out.metadata_safe_for_user);
     }
 
+    fn assert_protected_fail_closed_response(out: &VoiceTurnAdapterResponse) {
+        assert_eq!(out.status, "ok", "{out:?}");
+        assert_eq!(out.outcome, "FINAL", "{out:?}");
+        assert_ne!(out.next_move, "identity_name_prompt", "{out:?}");
+        assert!(
+            out.response_text
+                .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+            "{out:?}"
+        );
+        assert_eq!(out.response_text, out.tts_text, "{out:?}");
+        assert!(out.source_chips.is_empty(), "{out:?}");
+        assert!(out.source_cards.is_empty(), "{out:?}");
+        assert!(out.image_cards.is_empty(), "{out:?}");
+        assert!(out.provenance.is_none(), "{out:?}");
+        assert!(out.deep_research.is_none(), "{out:?}");
+        assert!(out.metadata_safe_for_user);
+    }
+
     fn assert_public_answer_without_unknown_speaker_prompt(out: &VoiceTurnAdapterResponse) {
         assert_eq!(out.status, "ok", "{out:?}");
         assert_eq!(out.outcome, "FINAL", "{out:?}");
@@ -30944,16 +31921,16 @@ mod tests {
             stage34m_activation_only_wake_request("slice3_protected_unknown_identity");
         runtime
             .run_voice_turn(wake_req.clone())
-            .expect("wake should open active session before protected request");
+            .expect("wake should open active session before personal request");
 
         let req = continuing_speech_request_from_wake(
             &wake_req,
             "slice3_protected_unknown_identity",
-            "Approve this payroll change.",
+            "Open my private file.",
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown protected request should require identity before anything else");
+            .expect("unknown personal request should require identity before anything else");
 
         assert_unknown_speaker_identity_prompt(&out);
         assert_eq!(
@@ -31049,9 +32026,9 @@ mod tests {
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown protected request should prompt before downstream work");
+            .expect("unknown protected request should fail closed before downstream work");
 
-        assert_unknown_speaker_identity_prompt(&out);
+        assert_protected_fail_closed_response(&out);
         assert!(out.source_chips.is_empty(), "{out:?}");
         assert!(out.source_cards.is_empty(), "{out:?}");
         assert!(out.image_cards.is_empty(), "{out:?}");
@@ -31311,11 +32288,11 @@ mod tests {
         let req = continuing_speech_request_from_wake(
             &wake_req,
             "slice4_preserves_slice3",
-            "Approve this payroll change.",
+            "Open my private file.",
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown protected speech should still prompt for identity posture");
+            .expect("unknown personal speech should still prompt for identity posture");
 
         assert_unknown_speaker_identity_prompt(&out);
     }
@@ -31333,9 +32310,9 @@ mod tests {
         );
         let out = runtime
             .run_voice_turn(req)
-            .expect("unknown protected request should remain an identity prompt");
+            .expect("unknown protected request should fail closed");
 
-        assert_unknown_speaker_identity_prompt(&out);
+        assert_protected_fail_closed_response(&out);
         assert!(out.source_chips.is_empty(), "{out:?}");
         assert!(out.source_cards.is_empty(), "{out:?}");
         assert!(out.image_cards.is_empty(), "{out:?}");
@@ -31373,7 +32350,7 @@ mod tests {
         let prompt_req = continuing_speech_request_from_wake(
             &wake_req,
             &format!("{label}_prompt"),
-            "Approve this payroll change.",
+            "Open my private file.",
         );
         let prompt = runtime
             .run_voice_turn(prompt_req.clone())
@@ -31420,13 +32397,9 @@ mod tests {
         );
         let out = runtime
             .run_voice_turn(protected_req)
-            .expect("anonymous protected request should stay blocked by identity prompt");
+            .expect("anonymous protected request should fail closed");
 
-        assert_unknown_speaker_identity_prompt(&out);
-        assert_eq!(
-            out.reason_code, "WAKE_UNKNOWN_SPEAKER_PROTECTED_IDENTITY_REQUIRED",
-            "{out:?}"
-        );
+        assert_protected_fail_closed_response(&out);
     }
 
     #[test]
@@ -31534,14 +32507,7 @@ mod tests {
             .run_voice_turn(protected_req)
             .expect("claimed name must not authorize protected work");
 
-        assert_eq!(out.outcome, "IDENTITY_REQUIRED", "{out:?}");
-        assert_eq!(
-            out.reason_code, "WAKE_GUEST_LANE_VERIFIED_IDENTITY_REQUIRED",
-            "{out:?}"
-        );
-        assert!(out.response_text.contains("JD"), "{out:?}");
-        assert!(out.response_text.contains("verified identity"), "{out:?}");
-        assert!(out.response_text.contains("authority"), "{out:?}");
+        assert_protected_fail_closed_response(&out);
         assert_guest_lane_local_response(&out);
     }
 
@@ -31824,11 +32790,7 @@ mod tests {
         let out = runtime
             .run_voice_turn(protected_req)
             .expect("claimed profile-adjacent posture must not authorize protected work");
-        assert_eq!(out.outcome, "IDENTITY_REQUIRED", "{out:?}");
-        assert_eq!(
-            out.reason_code, "WAKE_GUEST_LANE_VERIFIED_IDENTITY_REQUIRED",
-            "{out:?}"
-        );
+        assert_protected_fail_closed_response(&out);
     }
 
     #[test]
@@ -32143,7 +33105,7 @@ mod tests {
         let out = _guest_runtime
             .run_voice_turn(protected_req)
             .expect("protected guest request should remain blocked");
-        assert_unknown_speaker_identity_prompt(&out);
+        assert_protected_fail_closed_response(&out);
     }
 
     #[test]
@@ -48832,6 +49794,32 @@ mod tests {
     }
 
     #[test]
+    fn h412_payroll_lane_detection_separates_public_read_and_protected_execution() {
+        assert!(payroll_governed_business_intent("prepare payroll"));
+        assert!(payroll_governed_business_intent(
+            "organize the payroll for tim"
+        ));
+        assert!(payroll_governed_business_intent(
+            "please run this week's payroll"
+        ));
+        assert!(!payroll_governed_business_intent(
+            "how do i prepare payroll?"
+        ));
+        assert!(!payroll_governed_business_intent(
+            "check this week's payroll"
+        ));
+        assert!(payroll_private_business_read_intent(
+            "check this week's payroll"
+        ));
+        assert!(payroll_private_business_read_intent(
+            "show the payroll report"
+        ));
+        assert!(payroll_public_business_knowledge_intent(
+            "tell me about payroll rules generally"
+        ));
+    }
+
+    #[test]
     fn h412_trace_driven_public_brain_regression_corpus_preserves_live_routes() {
         let endpoint = h373_spawn_tomorrow_weather_endpoint_sequence(vec![
             r#"{
@@ -49172,7 +50160,6 @@ mod tests {
                 assert!(protected_payroll
                     .response_text
                     .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
-
                 let payroll_context = h411_run_desktop_typed_turn(
                     &runtime,
                     "h412-protected-pronoun",
@@ -49210,6 +50197,37 @@ mod tests {
                 );
                 assert_eq!(official_pnl.status, "ok", "{official_pnl:?}");
                 assert!(official_pnl
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+
+                let prepare_payroll = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected",
+                    412_026,
+                    "Prepare payroll.",
+                );
+                assert_eq!(prepare_payroll.status, "ok", "{prepare_payroll:?}");
+                assert!(prepare_payroll
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+                let organise_payroll = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected",
+                    412_027,
+                    "Organise payroll for Tim.",
+                );
+                assert_eq!(organise_payroll.status, "ok", "{organise_payroll:?}");
+                assert!(organise_payroll
+                    .response_text
+                    .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+                let payroll_explain = h411_run_desktop_typed_turn(
+                    &runtime,
+                    "h412-protected-public-knowledge",
+                    412_028,
+                    "How do I prepare payroll?",
+                );
+                assert_h412_public_answer_clean(&payroll_explain);
+                assert!(!payroll_explain
                     .response_text
                     .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
 

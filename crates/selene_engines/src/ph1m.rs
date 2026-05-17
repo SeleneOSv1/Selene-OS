@@ -3,15 +3,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use selene_kernel_contracts::ph1_voice_id::Ph1VoiceIdResponse;
+use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1m::{
-    MemoryArchiveExcerpt, MemoryBundleItem, MemoryCandidate, MemoryCommitDecision,
-    MemoryCommitStatus, MemoryConfidence, MemoryConsent, MemoryEmotionalThreadState,
-    MemoryExposureLevel, MemoryGraphEdgeInput, MemoryGraphNodeInput, MemoryHintEntry,
-    MemoryItemTag, MemoryKey, MemoryLayer, MemoryLedgerEvent, MemoryLedgerEventKind,
-    MemoryMetricPayload, MemoryProposedItem, MemoryProvenance, MemoryProvenanceTier,
-    MemoryRecentArchiveMatch, MemoryResumeAction, MemoryResumeDeliveryMode, MemoryResumeTier,
-    MemoryRetentionMode, MemorySafeSummaryItem, MemorySensitivityFlag, MemorySuppressionRule,
-    MemorySuppressionRuleKind, MemorySuppressionTargetType, MemoryUsePolicy, PendingWorkItem,
+    FreshMemoryHandoff, FreshMemoryHandoffReason, MemoryAgeLabel, MemoryArchiveExcerpt,
+    MemoryBundleItem, MemoryCandidate, MemoryCommitDecision, MemoryCommitStatus, MemoryConfidence,
+    MemoryConflictStatus, MemoryConsent, MemoryContinuationDecision,
+    MemoryContinuationDecisionKind, MemoryEmotionalThreadState, MemoryEvidencePacket,
+    MemoryEvidenceType, MemoryExposureLevel, MemoryGraphEdgeInput, MemoryGraphNodeInput,
+    MemoryHintEntry, MemoryItemTag, MemoryKey, MemoryLayer, MemoryLedgerEvent,
+    MemoryLedgerEventKind, MemoryMetricPayload, MemoryPrivacyStatus, MemoryProposedItem,
+    MemoryProvenance, MemoryProvenanceTier, MemoryRecallStyle, MemoryRecentArchiveMatch,
+    MemoryResumeAction, MemoryResumeDeliveryMode, MemoryResumeTier, MemoryRetentionMode,
+    MemorySafeSummaryItem, MemorySensitivityFlag, MemorySuppressionRule, MemorySuppressionRuleKind,
+    MemorySuppressionTargetType, MemoryTrustLevel, MemoryUsePolicy, PendingWorkItem,
     Ph1mContextBundleBuildRequest, Ph1mContextBundleBuildResponse,
     Ph1mEmotionalThreadUpdateRequest, Ph1mEmotionalThreadUpdateResponse, Ph1mForgetRequest,
     Ph1mForgetResponse, Ph1mGraphUpdateRequest, Ph1mGraphUpdateResponse,
@@ -24,7 +28,7 @@ use selene_kernel_contracts::ph1m::{
     Ph1mThreadDigestUpsertResponse, MEMORY_CONTEXT_BUNDLE_MAX_BYTES, MEMORY_RESUME_HOT_WINDOW_MS,
     MEMORY_RESUME_WARM_WINDOW_MS, MEMORY_UNRESOLVED_DECAY_WINDOW_MS,
 };
-use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, Validate};
+use selene_kernel_contracts::{ContractViolation, MonotonicTimeNs, ReasonCodeId, Validate};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -54,6 +58,9 @@ pub mod reason_codes {
     pub const M_CLARIFY_REQUIRED: ReasonCodeId = ReasonCodeId(0x4D00_0016);
     pub const M_RECENT_ARCHIVE_RECALL_READY: ReasonCodeId = ReasonCodeId(0x4D00_0017);
     pub const M_RECENT_ARCHIVE_RECALL_EMPTY: ReasonCodeId = ReasonCodeId(0x4D00_0018);
+    pub const M_FRESH_CONTINUATION_READY: ReasonCodeId = ReasonCodeId(0x4D00_0019);
+    pub const M_FRESH_CONTINUATION_CLARIFY: ReasonCodeId = ReasonCodeId(0x4D00_001A);
+    pub const M_FRESH_CONTINUATION_NO_MATCH: ReasonCodeId = ReasonCodeId(0x4D00_001B);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,6 +114,45 @@ struct ThreadEntry {
 
 const NS_PER_MS: u64 = 1_000_000;
 const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+const FRESH_MEMORY_CONTINUATION_WINDOW_NS: u64 = 10 * 60 * 1_000_000_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FreshMemoryPriorTurnEvidence {
+    pub created_at: MonotonicTimeNs,
+    pub source_session_id: Option<SessionId>,
+    pub source_thread_key: Option<String>,
+    pub source_turn_ref: String,
+    pub user_text: Option<String>,
+    pub response_text: Option<String>,
+    pub tool_family: Option<String>,
+    pub entity_focus: Vec<String>,
+    pub evidence_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FreshMemoryContinuationRequest {
+    pub now: MonotonicTimeNs,
+    pub current_text: String,
+    pub current_thread_key: Option<String>,
+    pub current_turn_ref: String,
+    pub evidence_ref_prefix: String,
+    pub prior_turns: Vec<FreshMemoryPriorTurnEvidence>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FreshMemoryContinuationResolution {
+    pub rewritten_query: Option<String>,
+    pub tool_family: Option<String>,
+    pub current_entity_focus: Vec<String>,
+    pub previous_entity_focus: Vec<String>,
+    pub memory_recall_request_ref: Option<String>,
+    pub fresh_memory_handoff_ref: Option<String>,
+    pub memory_evidence_packet_ref: Option<String>,
+    pub memory_continuation_decision_ref: Option<String>,
+    pub handoff: Option<FreshMemoryHandoff>,
+    pub memory_evidence_packet: Option<MemoryEvidencePacket>,
+    pub memory_continuation_decision: MemoryContinuationDecision,
+}
 
 fn recent_archive_query_terms(text: &str) -> BTreeSet<String> {
     let raw_tokens = recent_archive_raw_tokens(text);
@@ -325,6 +371,421 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
     text.chars().take(max_chars).collect()
 }
 
+fn fresh_memory_normalized_text(text: &str) -> String {
+    let mut out = String::new();
+    let mut last_space = false;
+    for ch in text.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+            last_space = false;
+        } else if ch.is_whitespace() || matches!(ch, '?' | '？' | '.' | ',' | '!' | ';' | ':') {
+            if !last_space && !out.is_empty() {
+                out.push(' ');
+                last_space = true;
+            }
+        }
+    }
+    out.trim().to_string()
+}
+
+fn fresh_memory_clean_place_candidate(raw: &str) -> Option<String> {
+    let mut text = raw
+        .trim()
+        .trim_matches(|ch: char| matches!(ch, '?' | '？' | '.' | ',' | '!' | ';' | ':'))
+        .trim()
+        .to_string();
+    for prefix in ["in ", "for ", "at "] {
+        if text.to_ascii_lowercase().starts_with(prefix) {
+            text = text[prefix.len()..].trim().to_string();
+        }
+    }
+    while text.to_ascii_lowercase().ends_with(" please") {
+        let keep = text.len().saturating_sub(" please".len());
+        text = text[..keep].trim().to_string();
+    }
+    if text.is_empty() || text.len() > 96 {
+        return None;
+    }
+    let normalized = fresh_memory_normalized_text(&text);
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || tokens.len() > 5 {
+        return None;
+    }
+    if tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "what"
+                | "who"
+                | "why"
+                | "how"
+                | "name"
+                | "story"
+                | "joke"
+                | "write"
+                | "tell"
+                | "explain"
+                | "approve"
+                | "payroll"
+                | "session"
+                | "archive"
+                | "search"
+                | "memory"
+                | "evidence"
+                | "result"
+        )
+    }) {
+        return None;
+    }
+    Some(fresh_memory_title_case_place(&text))
+}
+
+fn fresh_memory_title_case_place(text: &str) -> String {
+    text.split_whitespace()
+        .map(|word| {
+            let mut chars = word.chars();
+            let Some(first) = chars.next() else {
+                return String::new();
+            };
+            let rest = chars.collect::<String>();
+            format!("{}{}", first.to_uppercase(), rest.to_ascii_lowercase())
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn fresh_memory_followup_location(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.len() > 160 {
+        return None;
+    }
+    let normalized = fresh_memory_normalized_text(trimmed);
+    for prefix in [
+        "and what about in ",
+        "also what about in ",
+        "what about in ",
+        "and what about ",
+        "also what about ",
+        "what about ",
+        "same question for ",
+        "same for ",
+        "do the same for ",
+    ] {
+        if let Some(rest) = normalized.strip_prefix(prefix) {
+            return fresh_memory_clean_place_candidate(rest);
+        }
+    }
+    None
+}
+
+fn fresh_memory_bare_place_fragment(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.contains('?') || trimmed.contains('？') || trimmed.len() > 96 {
+        return None;
+    }
+    let normalized = fresh_memory_normalized_text(trimmed);
+    let tokens = normalized.split_whitespace().collect::<Vec<_>>();
+    if tokens.is_empty() || tokens.len() > 4 {
+        return None;
+    }
+    if tokens.iter().any(|token| {
+        matches!(
+            *token,
+            "and"
+                | "also"
+                | "same"
+                | "what"
+                | "about"
+                | "time"
+                | "weather"
+                | "name"
+                | "story"
+                | "joke"
+                | "approve"
+                | "payroll"
+                | "yes"
+                | "no"
+                | "do"
+                | "it"
+                | "you"
+        )
+    }) {
+        return None;
+    }
+    fresh_memory_clean_place_candidate(trimmed)
+}
+
+fn fresh_memory_extract_time_place(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    let normalized = fresh_memory_normalized_text(trimmed);
+    if !(normalized.contains("time")
+        || normalized.contains("clock")
+        || normalized.contains("what s it in")
+        || normalized.contains("whats it in"))
+    {
+        return None;
+    }
+    for marker in [" in ", " for ", " at "] {
+        if let Some(idx) = normalized.rfind(marker) {
+            let raw_start = trimmed
+                .to_ascii_lowercase()
+                .rfind(marker.trim())
+                .unwrap_or(idx)
+                .saturating_add(marker.trim().len());
+            return fresh_memory_clean_place_candidate(&trimmed[raw_start..]);
+        }
+    }
+    None
+}
+
+fn fresh_memory_prior_tool_family(prior: &FreshMemoryPriorTurnEvidence) -> Option<&str> {
+    prior.tool_family.as_deref().or_else(|| {
+        prior
+            .user_text
+            .as_deref()
+            .and_then(|text| fresh_memory_extract_time_place(text).map(|_| "time"))
+    })
+}
+
+fn fresh_memory_latest_prior_tool_turn<'a>(
+    req: &'a FreshMemoryContinuationRequest,
+    tool_family: &str,
+) -> Option<(&'a FreshMemoryPriorTurnEvidence, String)> {
+    req.prior_turns.iter().rev().find_map(|prior| {
+        let within_window =
+            req.now.0.saturating_sub(prior.created_at.0) <= FRESH_MEMORY_CONTINUATION_WINDOW_NS;
+        if !within_window || fresh_memory_prior_tool_family(prior) != Some(tool_family) {
+            return None;
+        }
+        let entity = prior.entity_focus.first().cloned().or_else(|| {
+            prior
+                .user_text
+                .as_deref()
+                .and_then(fresh_memory_extract_time_place)
+        })?;
+        Some((prior, entity))
+    })
+}
+
+fn fresh_memory_ref(prefix: &str, suffix: &str) -> String {
+    let compact = suffix
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, ':' | '_' | '-') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    truncate_chars(&format!("{prefix}:{compact}"), 128)
+}
+
+fn fresh_memory_compact_refs(
+    prior: &FreshMemoryPriorTurnEvidence,
+    current_turn_ref: &str,
+) -> Vec<String> {
+    let mut refs = Vec::new();
+    refs.push(truncate_chars(&prior.source_turn_ref, 128));
+    refs.push(fresh_memory_ref("current_turn", current_turn_ref));
+    for value in &prior.evidence_refs {
+        let value = truncate_chars(value, 128);
+        if !refs.contains(&value) {
+            refs.push(value);
+        }
+        if refs.len() >= 8 {
+            break;
+        }
+    }
+    refs
+}
+
+fn fresh_memory_no_match_resolution(
+    decision: MemoryContinuationDecisionKind,
+    confidence: MemoryConfidence,
+    reason_code: ReasonCodeId,
+    clarification_prompt: Option<String>,
+) -> Result<FreshMemoryContinuationResolution, ContractViolation> {
+    Ok(FreshMemoryContinuationResolution {
+        rewritten_query: None,
+        tool_family: None,
+        current_entity_focus: Vec::new(),
+        previous_entity_focus: Vec::new(),
+        memory_recall_request_ref: None,
+        fresh_memory_handoff_ref: None,
+        memory_evidence_packet_ref: None,
+        memory_continuation_decision_ref: None,
+        handoff: None,
+        memory_evidence_packet: None,
+        memory_continuation_decision: MemoryContinuationDecision::v1(
+            decision,
+            confidence,
+            reason_code,
+            None,
+            None,
+            clarification_prompt,
+        )?,
+    })
+}
+
+pub fn resolve_fresh_memory_continuation(
+    req: &FreshMemoryContinuationRequest,
+) -> Result<FreshMemoryContinuationResolution, ContractViolation> {
+    let current = req.current_text.trim();
+    if current.is_empty() {
+        return fresh_memory_no_match_resolution(
+            MemoryContinuationDecisionKind::NoMemoryMatch,
+            MemoryConfidence::Low,
+            reason_codes::M_FRESH_CONTINUATION_NO_MATCH,
+            None,
+        );
+    }
+
+    let followup_location = fresh_memory_followup_location(current);
+    let bare_fragment = fresh_memory_bare_place_fragment(current);
+    if followup_location.is_none() && bare_fragment.is_none() {
+        return fresh_memory_no_match_resolution(
+            MemoryContinuationDecisionKind::AnswerNormally,
+            MemoryConfidence::Low,
+            reason_codes::M_FRESH_CONTINUATION_NO_MATCH,
+            None,
+        );
+    }
+
+    let Some((prior, previous_place)) = fresh_memory_latest_prior_tool_turn(req, "time") else {
+        return fresh_memory_no_match_resolution(
+            MemoryContinuationDecisionKind::NoMemoryMatch,
+            MemoryConfidence::Low,
+            reason_codes::M_FRESH_CONTINUATION_NO_MATCH,
+            None,
+        );
+    };
+
+    if let Some(fragment) = bare_fragment.filter(|_| followup_location.is_none()) {
+        let decision_ref = fresh_memory_ref(
+            "ph1m_continuation_decision",
+            &format!("clarify:{}", req.evidence_ref_prefix),
+        );
+        let packet_ref = fresh_memory_ref(
+            "ph1m_memory_evidence",
+            &format!("fresh:{}", req.evidence_ref_prefix),
+        );
+        let evidence_refs = fresh_memory_compact_refs(prior, &req.current_turn_ref);
+        let packet = MemoryEvidencePacket::v1(
+            MemoryEvidenceType::Fresh,
+            Some("time lookup".to_string()),
+            MemoryAgeLabel::BeforeSleep,
+            MemoryConfidence::Med,
+            evidence_refs.clone(),
+            false,
+            true,
+            Some(format!("We were checking the time for {previous_place}.")),
+            true,
+            MemoryRecallStyle::IRemember,
+            MemoryTrustLevel::InferredSummary,
+            MemoryPrivacyStatus::Allowed,
+            MemoryConflictStatus::Current,
+        )?;
+        let prompt = format!("Do you mean the time question, or something else about {fragment}?");
+        return Ok(FreshMemoryContinuationResolution {
+            rewritten_query: None,
+            tool_family: Some("time".to_string()),
+            current_entity_focus: vec![fragment],
+            previous_entity_focus: vec![previous_place],
+            memory_recall_request_ref: Some(fresh_memory_ref(
+                "ph1m_recall_request",
+                &format!("fresh:{}", req.evidence_ref_prefix),
+            )),
+            fresh_memory_handoff_ref: None,
+            memory_evidence_packet_ref: Some(packet_ref.clone()),
+            memory_continuation_decision_ref: Some(decision_ref.clone()),
+            handoff: None,
+            memory_evidence_packet: Some(packet),
+            memory_continuation_decision: MemoryContinuationDecision::v1(
+                MemoryContinuationDecisionKind::AskClarification,
+                MemoryConfidence::Med,
+                reason_codes::M_FRESH_CONTINUATION_CLARIFY,
+                Some(packet_ref),
+                Some("fresh time topic was available but the fragment was too vague".to_string()),
+                Some(prompt),
+            )?,
+        });
+    }
+
+    let current_place = followup_location.expect("checked above");
+    let evidence_refs = fresh_memory_compact_refs(prior, &req.current_turn_ref);
+    let handoff_ref = fresh_memory_ref(
+        "ph1m_fresh_handoff",
+        &format!("sleep:{}", req.evidence_ref_prefix),
+    );
+    let packet_ref = fresh_memory_ref(
+        "ph1m_memory_evidence",
+        &format!("fresh:{}", req.evidence_ref_prefix),
+    );
+    let decision_ref = fresh_memory_ref(
+        "ph1m_continuation_decision",
+        &format!("continue:{}", req.evidence_ref_prefix),
+    );
+    let recall_ref = fresh_memory_ref(
+        "ph1m_recall_request",
+        &format!("fresh:{}", req.evidence_ref_prefix),
+    );
+    let handoff = FreshMemoryHandoff::v1(
+        handoff_ref.clone(),
+        prior.source_session_id,
+        prior
+            .source_thread_key
+            .clone()
+            .or_else(|| req.current_thread_key.clone()),
+        Some(prior.source_turn_ref.clone()),
+        Some("time lookup".to_string()),
+        Some("answer local time".to_string()),
+        Some("time".to_string()),
+        vec![previous_place.clone()],
+        Some("time_answer".to_string()),
+        MemoryAgeLabel::BeforeSleep,
+        MemoryConfidence::High,
+        evidence_refs.clone(),
+        true,
+        FreshMemoryHandoffReason::SessionSleep,
+        None,
+    )?;
+    let packet = MemoryEvidencePacket::v1(
+        MemoryEvidenceType::Fresh,
+        Some("time lookup".to_string()),
+        MemoryAgeLabel::BeforeSleep,
+        MemoryConfidence::High,
+        evidence_refs,
+        true,
+        false,
+        Some(format!("We were checking the time for {previous_place}.")),
+        true,
+        MemoryRecallStyle::IRemember,
+        MemoryTrustLevel::InferredSummary,
+        MemoryPrivacyStatus::Allowed,
+        MemoryConflictStatus::Current,
+    )?;
+    Ok(FreshMemoryContinuationResolution {
+        rewritten_query: Some(format!("what is the time in {current_place}")),
+        tool_family: Some("time".to_string()),
+        current_entity_focus: vec![current_place],
+        previous_entity_focus: vec![previous_place],
+        memory_recall_request_ref: Some(recall_ref),
+        fresh_memory_handoff_ref: Some(handoff_ref),
+        memory_evidence_packet_ref: Some(packet_ref.clone()),
+        memory_continuation_decision_ref: Some(decision_ref),
+        handoff: Some(handoff),
+        memory_evidence_packet: Some(packet),
+        memory_continuation_decision: MemoryContinuationDecision::v1(
+            MemoryContinuationDecisionKind::ContinueAutomatically,
+            MemoryConfidence::High,
+            reason_codes::M_FRESH_CONTINUATION_READY,
+            Some(packet_ref),
+            Some("same time question with a new place".to_string()),
+            None,
+        )?,
+    })
+}
+
 #[derive(Debug, Clone)]
 struct SuppressionEntry {
     rule: MemorySuppressionRule,
@@ -378,6 +839,14 @@ impl Ph1mRuntime {
             metrics_ledger: vec![],
             retention_mode: MemoryRetentionMode::Default,
         }
+    }
+
+    pub fn fresh_memory_continuation(
+        &self,
+        req: &FreshMemoryContinuationRequest,
+    ) -> Result<FreshMemoryContinuationResolution, ContractViolation> {
+        let _ = self.config;
+        resolve_fresh_memory_continuation(req)
     }
 
     pub fn propose(
@@ -3689,5 +4158,102 @@ mod tests {
             )
             .unwrap();
         assert_eq!(graph.reason_code, reason_codes::M_GRAPH_UPDATED);
+    }
+
+    fn stage8_prior_new_york_time_turn() -> FreshMemoryPriorTurnEvidence {
+        FreshMemoryPriorTurnEvidence {
+            created_at: MonotonicTimeNs(8_000_000_000),
+            source_session_id: Some(SessionId(8_001)),
+            source_thread_key: Some("stage8-fresh-memory".to_string()),
+            source_turn_ref: "conversation_turn:8001".to_string(),
+            user_text: Some("What time is it in New York?".to_string()),
+            response_text: Some("It's 5:00 AM in New York.".to_string()),
+            tool_family: Some("time".to_string()),
+            entity_focus: vec!["New York".to_string()],
+            evidence_refs: vec![
+                "internal_history_event:8001".to_string(),
+                "ph1e_tool:time".to_string(),
+            ],
+        }
+    }
+
+    #[test]
+    fn fresh_memory_continues_time_after_sleep_for_explicit_followup() {
+        let rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let out = rt
+            .fresh_memory_continuation(&FreshMemoryContinuationRequest {
+                now: MonotonicTimeNs(40_000_000_000),
+                current_text: "What about Sydney?".to_string(),
+                current_thread_key: Some("stage8-fresh-memory".to_string()),
+                current_turn_ref: "turn:8002".to_string(),
+                evidence_ref_prefix: "8002:8002".to_string(),
+                prior_turns: vec![stage8_prior_new_york_time_turn()],
+            })
+            .unwrap();
+
+        assert_eq!(
+            out.memory_continuation_decision.decision,
+            MemoryContinuationDecisionKind::ContinueAutomatically
+        );
+        assert_eq!(
+            out.rewritten_query.as_deref(),
+            Some("what is the time in Sydney")
+        );
+        assert_eq!(out.tool_family.as_deref(), Some("time"));
+        assert_eq!(out.current_entity_focus, vec!["Sydney".to_string()]);
+        assert!(out.fresh_memory_handoff_ref.is_some());
+        assert!(out.memory_evidence_packet_ref.is_some());
+        assert!(out.memory_continuation_decision_ref.is_some());
+        assert!(out.handoff.is_some());
+        assert!(out.memory_evidence_packet.is_some());
+    }
+
+    #[test]
+    fn fresh_memory_does_not_steal_unrelated_name_question() {
+        let rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let out = rt
+            .fresh_memory_continuation(&FreshMemoryContinuationRequest {
+                now: MonotonicTimeNs(40_000_000_000),
+                current_text: "What is your name?".to_string(),
+                current_thread_key: Some("stage8-fresh-memory".to_string()),
+                current_turn_ref: "turn:8003".to_string(),
+                evidence_ref_prefix: "8003:8003".to_string(),
+                prior_turns: vec![stage8_prior_new_york_time_turn()],
+            })
+            .unwrap();
+
+        assert_eq!(
+            out.memory_continuation_decision.decision,
+            MemoryContinuationDecisionKind::AnswerNormally
+        );
+        assert!(out.rewritten_query.is_none());
+        assert!(out.memory_evidence_packet_ref.is_none());
+    }
+
+    #[test]
+    fn fresh_memory_bare_place_fragment_asks_clarification_not_auto_continue() {
+        let rt = Ph1mRuntime::new(Ph1mConfig::mvp_v1());
+        let out = rt
+            .fresh_memory_continuation(&FreshMemoryContinuationRequest {
+                now: MonotonicTimeNs(40_000_000_000),
+                current_text: "Sydney".to_string(),
+                current_thread_key: Some("stage8-fresh-memory".to_string()),
+                current_turn_ref: "turn:8004".to_string(),
+                evidence_ref_prefix: "8004:8004".to_string(),
+                prior_turns: vec![stage8_prior_new_york_time_turn()],
+            })
+            .unwrap();
+
+        assert_eq!(
+            out.memory_continuation_decision.decision,
+            MemoryContinuationDecisionKind::AskClarification
+        );
+        assert!(out.rewritten_query.is_none());
+        assert!(out
+            .memory_continuation_decision
+            .clarification_prompt
+            .as_deref()
+            .unwrap_or_default()
+            .contains("time question"));
     }
 }
