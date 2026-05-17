@@ -6428,6 +6428,69 @@ impl Ph1fStore {
         Ok(internal_history_event_id)
     }
 
+    pub fn restore_internal_history_evidence_record(
+        &mut self,
+        record: InternalHistoryEvidenceRecord,
+    ) -> Result<InternalHistoryEventId, StorageError> {
+        record.validate()?;
+
+        // Replay restores previously validated immutable evidence as the durable truth. The
+        // supporting conversation/session projections may be rebuilt later or may differ after
+        // deterministic request replay, so replay preserves refs without re-authoring them.
+        if let Some(existing) = self
+            .internal_history_evidence_ledger
+            .iter()
+            .find(|row| row.internal_history_event_id == record.internal_history_event_id)
+        {
+            if existing == &record {
+                return Ok(record.internal_history_event_id);
+            }
+            return Err(StorageError::AppendOnlyViolation {
+                table: "internal_history_evidence_ledger",
+            });
+        }
+
+        if let Some(k) = &record.idempotency_key {
+            if let Some(existing) = self
+                .internal_history_idempotency_index
+                .get(&(record.correlation_id, k.clone()))
+            {
+                if *existing == record.internal_history_event_id {
+                    return Ok(*existing);
+                }
+                return Err(StorageError::AppendOnlyViolation {
+                    table: "internal_history_evidence_ledger",
+                });
+            }
+        }
+
+        let restored_event_id = record.internal_history_event_id;
+        if let Some(k) = &record.idempotency_key {
+            self.internal_history_idempotency_index
+                .insert((record.correlation_id, k.clone()), restored_event_id);
+        }
+        self.next_internal_history_event_id = self
+            .next_internal_history_event_id
+            .max(restored_event_id.0.saturating_add(1));
+        self.internal_history_evidence_ledger.push(record);
+        self.internal_history_evidence_ledger
+            .sort_by_key(|row| row.internal_history_event_id.0);
+        Ok(restored_event_id)
+    }
+
+    pub fn replace_internal_history_evidence_records_from_replay(
+        &mut self,
+        records: &[InternalHistoryEvidenceRecord],
+    ) -> Result<(), StorageError> {
+        self.internal_history_evidence_ledger.clear();
+        self.internal_history_idempotency_index.clear();
+        self.next_internal_history_event_id = 1;
+        for record in records {
+            self.restore_internal_history_evidence_record(record.clone())?;
+        }
+        Ok(())
+    }
+
     pub fn internal_history_evidence_ledger(&self) -> &[InternalHistoryEvidenceRecord] {
         &self.internal_history_evidence_ledger
     }
@@ -26695,6 +26758,130 @@ mod tests {
             s.attempt_overwrite_internal_history_evidence(id),
             Err(StorageError::AppendOnlyViolation { .. })
         ));
+    }
+
+    #[test]
+    fn at_f_stage7_1_internal_history_evidence_restores_after_store_reload() {
+        let mut s = store_with_user_device_and_session();
+        let corr = CorrelationId(930_101);
+        let turn = TurnId(101);
+        let conversation_turn_id = s
+            .append_conversation_turn(
+                ConversationTurnInput::v1(
+                    MonotonicTimeNs(101),
+                    corr,
+                    turn,
+                    Some(SessionId(1)),
+                    user(),
+                    Some(device()),
+                    ConversationRole::User,
+                    ConversationSource::TypedText,
+                    "what time is it in Sydney".to_string(),
+                    "hash_sydney_time".to_string(),
+                    PrivacyScope::PublicChat,
+                    Some("stage7_1_typed_turn".to_string()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut refs = InternalHistoryEvidenceRefs::none();
+        refs.tool_provider_refs
+            .push("ph1e_tool:time:provider:deterministic".to_string());
+        refs.replay_integrity_refs
+            .push("stage7_1_replay_integrity:typed_time".to_string());
+        let evidence_id = s
+            .append_internal_history_evidence(
+                InternalHistoryEvidenceInput::v1(
+                    MonotonicTimeNs(102),
+                    InternalHistoryEventKind::ToolEvidence,
+                    Some(conversation_turn_id),
+                    corr,
+                    turn,
+                    Some(SessionId(1)),
+                    Some("stage7_1_storage_replay".to_string()),
+                    Some(ConversationRole::Selene),
+                    Some(ConversationSource::SeleneOutput),
+                    InternalHistoryModality::System,
+                    SpeakerEvidenceRefs::none(),
+                    InputTranscriptEvidenceRefs::none(),
+                    ResponseSpokenEvidenceRefs::selene_text("hash_sydney_answer".to_string()),
+                    LiveContextEvidenceRefs::none(),
+                    MemoryEvidenceRefs::none(),
+                    refs,
+                    Some("stage7_1_tool_evidence".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let evidence = s
+            .internal_history_evidence_ledger()
+            .iter()
+            .find(|row| row.internal_history_event_id == evidence_id)
+            .cloned()
+            .unwrap();
+
+        let mut reloaded = store_with_user_device_and_session();
+        let restored_conversation_turn_id = reloaded
+            .append_conversation_turn(
+                ConversationTurnInput::v1(
+                    MonotonicTimeNs(101),
+                    corr,
+                    turn,
+                    Some(SessionId(1)),
+                    user(),
+                    Some(device()),
+                    ConversationRole::User,
+                    ConversationSource::TypedText,
+                    "what time is it in Sydney".to_string(),
+                    "hash_sydney_time".to_string(),
+                    PrivacyScope::PublicChat,
+                    Some("stage7_1_typed_turn".to_string()),
+                    None,
+                    None,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(restored_conversation_turn_id, conversation_turn_id);
+        let restored_id = reloaded
+            .restore_internal_history_evidence_record(evidence.clone())
+            .unwrap();
+        assert_eq!(restored_id, evidence_id);
+        assert!(reloaded
+            .internal_history_evidence_ledger()
+            .iter()
+            .any(|row| row == &evidence));
+        let duplicate_id = reloaded
+            .restore_internal_history_evidence_record(evidence.clone())
+            .unwrap();
+        assert_eq!(duplicate_id, evidence_id);
+        let next_id = reloaded
+            .append_internal_history_evidence(
+                InternalHistoryEvidenceInput::v1(
+                    MonotonicTimeNs(103),
+                    InternalHistoryEventKind::LifecycleBoundary,
+                    None,
+                    corr,
+                    TurnId(102),
+                    Some(SessionId(1)),
+                    None,
+                    Some(ConversationRole::Selene),
+                    Some(ConversationSource::SeleneOutput),
+                    InternalHistoryModality::Lifecycle,
+                    SpeakerEvidenceRefs::none(),
+                    InputTranscriptEvidenceRefs::none(),
+                    ResponseSpokenEvidenceRefs::none(),
+                    LiveContextEvidenceRefs::none(),
+                    MemoryEvidenceRefs::none(),
+                    InternalHistoryEvidenceRefs::none(),
+                    Some("stage7_1_after_replay".to_string()),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        assert_eq!(next_id.0, evidence_id.0 + 1);
     }
 
     #[test]

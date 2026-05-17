@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::{self, File, OpenOptions};
 use std::hash::{Hash, Hasher};
@@ -388,6 +388,21 @@ pub struct DesktopOpenAiTtsEvidenceInput {
     pub voice: String,
     pub status: DesktopOpenAiTtsEvidenceStatus,
     pub failure_reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopRejectedVoiceEvidenceInput {
+    pub correlation_id: u64,
+    pub turn_id: Option<u64>,
+    pub actor_user_id: String,
+    pub tenant_id: Option<String>,
+    pub device_id: String,
+    pub session_id: Option<String>,
+    pub transcript_hash: Option<String>,
+    pub rejected_reason: String,
+    pub source: String,
+    pub evidence_class: Option<String>,
+    pub request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -881,6 +896,8 @@ struct AdapterPersistenceState {
     operation_journal: Vec<AdapterOperationJournalEntry>,
     authoritative_outcomes: BTreeMap<String, AdapterAuthoritativeOutcomeRecord>,
     audit_trail: Vec<AdapterPersistenceAuditEntry>,
+    #[serde(default)]
+    internal_history_evidence_records: Vec<InternalHistoryEvidenceRecord>,
     next_journal_sequence: u64,
     next_audit_sequence: u64,
     last_reconciled_at_ns: Option<u64>,
@@ -895,6 +912,7 @@ impl Default for AdapterPersistenceState {
             operation_journal: Vec::new(),
             authoritative_outcomes: BTreeMap::new(),
             audit_trail: Vec::new(),
+            internal_history_evidence_records: Vec::new(),
             next_journal_sequence: 1,
             next_audit_sequence: 1,
             last_reconciled_at_ns: None,
@@ -5948,20 +5966,43 @@ impl AdapterRuntime {
         now_ns: Option<u64>,
     ) -> UiInternalHistoryEvidenceResponse {
         let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
-        let rows = match self.store.lock() {
-            Ok(store) => store
-                .internal_history_evidence_ledger()
+        if let Err(err) = self.sync_internal_history_evidence_to_persistence() {
+            return UiInternalHistoryEvidenceResponse {
+                status: "error".to_string(),
+                generated_at_ns: now_ns,
+                note: Some(err),
+                total_events: 0,
+                events: Vec::new(),
+            };
+        }
+        let durable_records = self.persistence.as_ref().and_then(|persistence| {
+            persistence
+                .state
+                .lock()
+                .ok()
+                .map(|state| state.internal_history_evidence_records.clone())
+        });
+        let rows = if let Some(records) = durable_records {
+            records
                 .iter()
                 .map(ui_internal_history_evidence_row_from_record)
-                .collect::<Vec<_>>(),
-            Err(_) => {
-                return UiInternalHistoryEvidenceResponse {
-                    status: "error".to_string(),
-                    generated_at_ns: now_ns,
-                    note: Some("adapter store lock poisoned".to_string()),
-                    total_events: 0,
-                    events: Vec::new(),
-                };
+                .collect::<Vec<_>>()
+        } else {
+            match self.store.lock() {
+                Ok(store) => store
+                    .internal_history_evidence_ledger()
+                    .iter()
+                    .map(ui_internal_history_evidence_row_from_record)
+                    .collect::<Vec<_>>(),
+                Err(_) => {
+                    return UiInternalHistoryEvidenceResponse {
+                        status: "error".to_string(),
+                        generated_at_ns: now_ns,
+                        note: Some("adapter store lock poisoned".to_string()),
+                        total_events: 0,
+                        events: Vec::new(),
+                    };
+                }
             }
         };
         let note = if rows.is_empty() {
@@ -6085,6 +6126,123 @@ impl AdapterRuntime {
         store
             .append_internal_history_evidence(evidence)
             .map_err(storage_error_to_string)?;
+        drop(store);
+        self.sync_internal_history_evidence_to_persistence()?;
+        Ok(())
+    }
+
+    pub fn record_desktop_rejected_voice_evidence(
+        &self,
+        input: DesktopRejectedVoiceEvidenceInput,
+    ) -> Result<(), String> {
+        if input.correlation_id == 0
+            || input.actor_user_id.trim().is_empty()
+            || input.device_id.trim().is_empty()
+        {
+            return Err("invalid_desktop_rejected_voice_evidence_identity".to_string());
+        }
+
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let correlation_id = CorrelationId(input.correlation_id.into());
+        let turn_id = TurnId(
+            input
+                .turn_id
+                .unwrap_or_else(|| input.correlation_id.saturating_add(1))
+                .into(),
+        );
+        let actor_user_id = UserId::new(input.actor_user_id.trim().to_string())
+            .map_err(|err| format!("invalid desktop rejected voice actor_user_id: {err:?}"))?;
+        let device_id = DeviceId::new(input.device_id.trim().to_string())
+            .map_err(|err| format!("invalid desktop rejected voice device_id: {err:?}"))?;
+        let session_id = input
+            .session_id
+            .as_deref()
+            .and_then(|value| value.trim().parse::<u128>().ok())
+            .filter(|value| *value > 0)
+            .map(SessionId);
+        let tenant_id =
+            resolve_tenant_scope(input.tenant_id.clone(), &actor_user_id, Some(&device_id))
+                .unwrap_or_else(|| "tenant_default".to_string());
+        let source = sanitize_idempotency_token(&input.source);
+        let reason = sanitize_idempotency_token(&input.rejected_reason);
+        let evidence_class = input
+            .evidence_class
+            .as_deref()
+            .map(sanitize_idempotency_token)
+            .unwrap_or_else(|| "class_not_provided".to_string());
+        let request_ref = input
+            .request_id
+            .as_deref()
+            .map(sanitize_idempotency_token)
+            .unwrap_or_else(|| format!("{}:{}", correlation_id.0, turn_id.0));
+        let idempotency_key = sanitize_idempotency_token(&format!(
+            "ph1c_desktop_reject_{}_{}",
+            correlation_id.0, turn_id.0
+        ));
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        ensure_actor_identity_and_device(
+            &mut store,
+            &actor_user_id,
+            Some(&device_id),
+            AppPlatform::Desktop,
+            now,
+            true,
+        )?;
+        store
+            .ph1c_transcript_reject_commit(
+                now,
+                tenant_id,
+                correlation_id,
+                turn_id,
+                session_id,
+                actor_user_id,
+                device_id,
+                ph1c_reason_codes::STT_FAIL_LOW_CONFIDENCE,
+                Ph1cRetryAdvice::Repeat,
+                input.transcript_hash,
+                idempotency_key,
+            )
+            .map_err(storage_error_to_string)?;
+        let mut refs = InternalHistoryEvidenceRefs::none();
+        refs.audit_refs.push(format!(
+            "desktop_rejected_voice_reason:{source}:{reason}:{evidence_class}"
+        ));
+        refs.replay_integrity_refs.push(format!(
+            "desktop_rejected_voice_request:{}",
+            truncate_ascii(&request_ref, 96)
+        ));
+        let note = InternalHistoryEvidenceInput::v1(
+            now,
+            InternalHistoryEventKind::LifecycleBoundary,
+            None,
+            correlation_id,
+            turn_id,
+            session_id,
+            None,
+            Some(ConversationRole::Selene),
+            Some(ConversationSource::Tombstone),
+            InternalHistoryModality::System,
+            SpeakerEvidenceRefs::none(),
+            InputTranscriptEvidenceRefs::none(),
+            ResponseSpokenEvidenceRefs::none(),
+            LiveContextEvidenceRefs::none(),
+            MemoryEvidenceRefs::none(),
+            refs,
+            Some(sanitize_idempotency_token(&format!(
+                "stage7_desktop_voice_reject_note_{}_{}",
+                correlation_id.0, turn_id.0
+            ))),
+        )
+        .map_err(|err| format!("invalid desktop rejected voice evidence note: {err:?}"))?;
+        store
+            .append_internal_history_evidence(note)
+            .map_err(storage_error_to_string)?;
+        drop(store);
+        self.sync_internal_history_evidence_to_persistence()?;
         Ok(())
     }
 
@@ -9149,6 +9307,9 @@ impl AdapterRuntime {
                                     .map_err(post_session_error)?;
                             }
                         }
+                        drop(store);
+                        self.sync_internal_history_evidence_to_persistence()
+                            .map_err(post_session_error)?;
                         return Ok(response);
                     }
                 }
@@ -10230,6 +10391,10 @@ impl AdapterRuntime {
                 )
                 .map_err(pre_session_error)?;
             }
+            if persistence_mode != PersistenceInvocationMode::LegacyJournalReplay {
+                self.sync_internal_history_evidence_to_persistence()
+                    .map_err(pre_session_error)?;
+            }
         }
 
         execution_result
@@ -11198,6 +11363,8 @@ impl AdapterRuntime {
         if parse_bool_env("SELENE_ADAPTER_LEGACY_JOURNAL_REPLAY_ENABLED", true) {
             self.replay_legacy_journal_into_store(&mut state)?;
         }
+        self.restore_persisted_internal_history_evidence_into_store(&state)?;
+        self.merge_store_internal_history_evidence_into_state(&mut state)?;
         {
             let mut guard = persistence
                 .state
@@ -11208,6 +11375,64 @@ impl AdapterRuntime {
             self.save_persistence_state_to_disk_locked(&guard)?;
         }
         self.reconcile_pending_outbox_records()?;
+        Ok(())
+    }
+
+    fn restore_persisted_internal_history_evidence_into_store(
+        &self,
+        state: &AdapterPersistenceState,
+    ) -> Result<(), String> {
+        if state.internal_history_evidence_records.is_empty() {
+            return Ok(());
+        }
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        store
+            .replace_internal_history_evidence_records_from_replay(
+                &state.internal_history_evidence_records,
+            )
+            .map_err(storage_error_to_string)?;
+        Ok(())
+    }
+
+    fn merge_store_internal_history_evidence_into_state(
+        &self,
+        state: &mut AdapterPersistenceState,
+    ) -> Result<bool, String> {
+        let records = {
+            let store = self
+                .store
+                .lock()
+                .map_err(|_| "adapter store lock poisoned".to_string())?;
+            store.internal_history_evidence_ledger().to_vec()
+        };
+        merge_internal_history_evidence_records_locked(state, records)
+    }
+
+    fn sync_internal_history_evidence_to_persistence(&self) -> Result<(), String> {
+        let Some(persistence) = self.persistence.as_ref() else {
+            return Ok(());
+        };
+        let records = {
+            let store = self
+                .store
+                .lock()
+                .map_err(|_| "adapter store lock poisoned".to_string())?;
+            store.internal_history_evidence_ledger().to_vec()
+        };
+        let mut guard = persistence
+            .state
+            .lock()
+            .map_err(|_| "adapter persistence state lock poisoned".to_string())?;
+        validate_persistence_state_integrity(&guard).map_err(|err| {
+            format!("persistence state integrity check failed before evidence sync: {err}")
+        })?;
+        let changed = merge_internal_history_evidence_records_locked(&mut guard, records)?;
+        if changed {
+            self.save_persistence_state_to_disk_locked(&guard)?;
+        }
         Ok(())
     }
 
@@ -11519,6 +11744,48 @@ fn validate_optional_persistence_ascii_token(
     Ok(())
 }
 
+fn merge_internal_history_evidence_records_locked(
+    state: &mut AdapterPersistenceState,
+    mut records: Vec<InternalHistoryEvidenceRecord>,
+) -> Result<bool, String> {
+    records.sort_by_key(|record| record.internal_history_event_id.0);
+    let mut changed = false;
+    for record in records {
+        record
+            .validate()
+            .map_err(|err| format!("invalid internal history evidence record: {err:?}"))?;
+        let expected_next = state
+            .internal_history_evidence_records
+            .len()
+            .saturating_add(1) as u64;
+        if record.internal_history_event_id.0 < expected_next {
+            let index = record.internal_history_event_id.0.saturating_sub(1) as usize;
+            let Some(existing) = state.internal_history_evidence_records.get(index) else {
+                return Err(format!(
+                    "internal history evidence event_id {} is below next expected {} but missing from durable state",
+                    record.internal_history_event_id.0, expected_next
+                ));
+            };
+            if existing != &record {
+                return Err(format!(
+                    "internal history evidence event_id {} conflicts with durable append-only state",
+                    record.internal_history_event_id.0
+                ));
+            }
+            continue;
+        }
+        if record.internal_history_event_id.0 != expected_next {
+            return Err(format!(
+                "internal history evidence event_id {} must append as contiguous event_id {}",
+                record.internal_history_event_id.0, expected_next
+            ));
+        }
+        state.internal_history_evidence_records.push(record);
+        changed = true;
+    }
+    Ok(changed)
+}
+
 fn validate_persistence_state_integrity(state: &AdapterPersistenceState) -> Result<(), String> {
     if state.schema_version != 2 {
         return Err(format!(
@@ -11720,6 +11987,30 @@ fn validate_persistence_state_integrity(state: &AdapterPersistenceState) -> Resu
             "next_audit_sequence={} must equal contiguous next sequence {}",
             state.next_audit_sequence, expected_audit_sequence
         ));
+    }
+
+    let mut expected_internal_history_event_id = 1_u64;
+    let mut internal_history_idempotency = BTreeSet::new();
+    for record in &state.internal_history_evidence_records {
+        record
+            .validate()
+            .map_err(|err| format!("internal_history_evidence record invalid: {err:?}"))?;
+        if record.internal_history_event_id.0 != expected_internal_history_event_id {
+            return Err(format!(
+                "internal_history_evidence event_id {} must equal contiguous next event_id {}",
+                record.internal_history_event_id.0, expected_internal_history_event_id
+            ));
+        }
+        expected_internal_history_event_id = expected_internal_history_event_id.saturating_add(1);
+        if let Some(idempotency_key) = record.idempotency_key.as_ref() {
+            let key = (record.correlation_id.0.to_string(), idempotency_key.clone());
+            if !internal_history_idempotency.insert(key) {
+                return Err(format!(
+                    "internal_history_evidence duplicate idempotency key '{}' for correlation {}",
+                    idempotency_key, record.correlation_id.0
+                ));
+            }
+        }
     }
 
     for (lookup_key, outcome) in &state.authoritative_outcomes {
@@ -27103,6 +27394,255 @@ mod tests {
                 .any(|r| r.starts_with("conversation_turn:")),
             "{report:?}"
         );
+    }
+
+    #[test]
+    fn stage7_1_durable_evidence_report_survives_adapter_restart() {
+        let journal_path = temp_persistence_journal_path("stage7_1_durable_evidence");
+        let runtime_one = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("first runtime with persistence must construct");
+
+        let mut voice_request = base_request();
+        voice_request.app_platform = "DESKTOP".to_string();
+        voice_request.correlation_id = 7_107_001;
+        voice_request.turn_id = 7_107_001;
+        voice_request.device_turn_sequence = Some(7_107_001);
+        voice_request.now_ns = Some(7_107_001_000_000);
+        voice_request.thread_key = Some("stage7-1-durable-evidence".to_string());
+        voice_request.user_text_final = Some("what is the time in Sydney".to_string());
+        let voice_out = runtime_one
+            .run_voice_turn(voice_request)
+            .expect("voice time turn should complete");
+        runtime_one
+            .record_desktop_openai_tts_evidence(DesktopOpenAiTtsEvidenceInput {
+                correlation_id: 7_107_001,
+                turn_id: Some(7_107_001),
+                session_id: voice_out.session_id.clone(),
+                actor_user_id: "tenant_a:user_adapter_test".to_string(),
+                device_id: "adapter_device_1".to_string(),
+                request_id: Some("stage7_1_tts_ready_7_107_001".to_string()),
+                answer_text_hash: Some(stable_hash_hex_16(&voice_out.response_text)),
+                audio_sha256: Some("stage7_1_ready_audio_sha".to_string()),
+                audio_byte_len: Some(256),
+                model: "gpt-4o-mini-tts".to_string(),
+                voice: "alloy".to_string(),
+                status: DesktopOpenAiTtsEvidenceStatus::Ready,
+                failure_reason: None,
+            })
+            .expect("TTS ready evidence should persist");
+
+        let mut typed_request = base_request();
+        typed_request.app_platform = "DESKTOP".to_string();
+        typed_request.correlation_id = 7_107_002;
+        typed_request.turn_id = 7_107_002;
+        typed_request.device_turn_sequence = Some(7_107_002);
+        typed_request.now_ns = Some(7_107_002_000_000);
+        typed_request.thread_key = Some("stage7-1-durable-evidence".to_string());
+        typed_request.audio_capture_ref = None;
+        typed_request.user_text_final = Some("Write me a short story.".to_string());
+        runtime_one
+            .run_voice_turn(typed_request)
+            .expect("typed story turn should complete");
+
+        let mut protected_request = base_request();
+        protected_request.app_platform = "DESKTOP".to_string();
+        protected_request.correlation_id = 7_107_003;
+        protected_request.turn_id = 7_107_003;
+        protected_request.device_turn_sequence = Some(7_107_003);
+        protected_request.now_ns = Some(7_107_003_000_000);
+        protected_request.thread_key = Some("stage7-1-durable-evidence".to_string());
+        protected_request.audio_capture_ref = None;
+        protected_request.user_text_final = Some("Approve payroll for Tim.".to_string());
+        let protected_out = runtime_one
+            .run_voice_turn(protected_request)
+            .expect("protected request should fail closed");
+        assert!(
+            protected_out
+                .response_text
+                .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+            "{protected_out:?}"
+        );
+
+        let mut rejected_noise_request = base_request();
+        mark_request_as_live_desktop_capture_for_h417_tests(&mut rejected_noise_request);
+        rejected_noise_request.app_platform = "DESKTOP".to_string();
+        rejected_noise_request.correlation_id = 7_107_004;
+        rejected_noise_request.turn_id = 7_107_004;
+        rejected_noise_request.device_turn_sequence = Some(7_107_004);
+        rejected_noise_request.now_ns = Some(7_107_004_000_000);
+        rejected_noise_request.thread_key = Some("stage7-1-durable-evidence".to_string());
+        rejected_noise_request.user_text_final = Some("So".to_string());
+        if let Some(capture) = rejected_noise_request.audio_capture_ref.as_mut() {
+            capture.locale_tag = Some("en-US".to_string());
+            capture.acoustic_confidence_bp = Some(9_000);
+            capture.vad_confidence_bp = Some(9_000);
+            capture.speech_likeness_bp = Some(9_000);
+            capture.capture_degraded = Some(false);
+            capture.stream_gap_detected = Some(false);
+        }
+        let rejected_noise_out = runtime_one
+            .run_voice_turn(rejected_noise_request)
+            .expect("rejected noise artifact should be filed without becoming a user turn");
+        assert_eq!(rejected_noise_out.status, "ok");
+        assert_eq!(rejected_noise_out.outcome, "IGNORED");
+        assert_eq!(rejected_noise_out.next_move, "listening_window_open");
+        assert!(rejected_noise_out.response_text.is_empty());
+        assert!(rejected_noise_out.tts_text.is_empty());
+
+        runtime_one
+            .record_desktop_rejected_voice_evidence(DesktopRejectedVoiceEvidenceInput {
+                correlation_id: 1_779_000_950_148_000_000,
+                turn_id: Some(1_779_000_950_148_000_001),
+                actor_user_id: "tenant_a:user_adapter_test".to_string(),
+                tenant_id: Some("tenant_a".to_string()),
+                device_id: "adapter_device_1".to_string(),
+                session_id: voice_out.session_id.clone(),
+                transcript_hash: None,
+                rejected_reason: "idle_close_active_capture_no_committed_transcript".to_string(),
+                source: "realtime".to_string(),
+                evidence_class: Some("safe_user_speech".to_string()),
+                request_id: Some(
+                    "desktop_rejected_voice_evidence_transport_request_with_real_epoch_ids"
+                        .to_string(),
+                ),
+            })
+            .expect("Desktop rejected voice evidence should persist with live-sized IDs");
+
+        let before = runtime_one.ui_internal_history_evidence_report(Some(7_107_004_000_000));
+        assert_eq!(before.status, "ok");
+        assert!(
+            before.events.iter().any(|row| {
+                row.event_kind == "LifecycleBoundary"
+                    && row.response.tts_status == "Ready"
+                    && row.response.has_audio_generation_ref
+            }),
+            "{before:?}"
+        );
+        assert!(before.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.modality == "Typed"
+                && row.speaker.has_typed_actor_identity
+                && !row.speaker.has_voice_identity_evidence
+        }));
+        assert!(before.events.iter().any(|row| {
+            row.event_kind == "ToolEvidence" && !row.refs.tool_provider_refs.is_empty()
+        }));
+        assert!(before.events.iter().any(|row| {
+            row.event_kind == "ProtectedFailClosed"
+                && row.ph1m.memory_candidate_status == "BlockedProtected"
+                && !row.refs.protected_execution_refs.is_empty()
+        }));
+        assert!(before.events.iter().any(|row| {
+            row.event_kind == "RejectedInput"
+                && row.modality == "Voice"
+                && row.input.ph1c_status == "Rejected"
+                && row.input.rejected_reason_ref.is_some()
+                && row.ph1m.memory_candidate_status == "BlockedRejectedTranscript"
+                && row.response.tts_status == "NotRequested"
+        }));
+        assert!(before.events.iter().any(|row| {
+            row.event_kind == "RejectedInput"
+                && row.modality == "Voice"
+                && row.input.ph1c_status == "Rejected"
+                && row.correlation_id == "1779000950148000000"
+                && row.turn_id == "1779000950148000001"
+                && row.ph1m.memory_candidate_status == "BlockedRejectedTranscript"
+                && row.response.tts_status == "NotRequested"
+        }));
+        assert!(!before.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.role.as_deref() == Some("User")
+                && row.correlation_id == "7107004"
+        }));
+        assert!(!before.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.role.as_deref() == Some("User")
+                && row.correlation_id == "1779000950148000000"
+        }));
+        let before_event_ids = before
+            .events
+            .iter()
+            .map(|row| row.internal_history_event_id)
+            .collect::<Vec<_>>();
+
+        drop(runtime_one);
+        let runtime_two = AdapterRuntime::new_with_persistence(
+            AppServerIngressRuntime::default(),
+            Arc::new(Mutex::new(Ph1fStore::new_in_memory())),
+            journal_path.clone(),
+            true,
+        )
+        .expect("second runtime should restore durable evidence");
+        let after = runtime_two.ui_internal_history_evidence_report(Some(7_107_005_000_000));
+        assert_eq!(after.status, "ok", "{after:?}");
+        assert_eq!(
+            after
+                .events
+                .iter()
+                .map(|row| row.internal_history_event_id)
+                .collect::<Vec<_>>(),
+            before_event_ids,
+            "{after:?}"
+        );
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.modality == "Voice"
+                && row.input.ph1c_status == "Accepted"
+        }));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "LifecycleBoundary"
+                && row.response.tts_status == "Ready"
+                && row.response.has_audio_generation_ref
+        }));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.modality == "Typed"
+                && row.speaker.has_typed_actor_identity
+                && !row.speaker.has_voice_identity_evidence
+        }));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "ToolEvidence" && !row.refs.tool_provider_refs.is_empty()
+        }));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "ProtectedFailClosed"
+                && row.ph1x.protected_risk_ref.is_some()
+                && row.ph1m.memory_candidate_status == "BlockedProtected"
+                && !row.refs.protected_execution_refs.is_empty()
+        }));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "RejectedInput"
+                && row.modality == "Voice"
+                && row.input.ph1c_status == "Rejected"
+                && row.input.rejected_reason_ref.is_some()
+                && row.ph1m.memory_candidate_status == "BlockedRejectedTranscript"
+                && row.response.tts_status == "NotRequested"
+        }));
+        assert!(after.events.iter().any(|row| {
+            row.event_kind == "RejectedInput"
+                && row.modality == "Voice"
+                && row.input.ph1c_status == "Rejected"
+                && row.correlation_id == "1779000950148000000"
+                && row.turn_id == "1779000950148000001"
+                && row.ph1m.memory_candidate_status == "BlockedRejectedTranscript"
+                && row.response.tts_status == "NotRequested"
+        }));
+        assert!(!after.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.role.as_deref() == Some("User")
+                && row.correlation_id == "7107004"
+        }));
+        assert!(!after.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.role.as_deref() == Some("User")
+                && row.correlation_id == "1779000950148000000"
+        }));
+
+        cleanup_persistence_files_for_test(&journal_path);
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {

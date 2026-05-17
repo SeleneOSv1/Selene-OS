@@ -9,7 +9,9 @@ use crate::{
 
 pub const PH1L_CONTRACT_VERSION: SchemaVersion = SchemaVersion(1);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct SessionId(pub u128);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

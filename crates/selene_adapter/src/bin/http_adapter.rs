@@ -20,18 +20,18 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
     AdapterProcessProvenance, AdapterRuntime, AdapterSyncHealth, DesktopOpenAiTtsEvidenceInput,
-    DesktopOpenAiTtsEvidenceStatus, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
-    OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
-    PublicBrainTraceReportResponse, SessionAttachAdapterRequest, SessionAttachAdapterResponse,
-    SessionIdleCloseCheckAdapterRequest, SessionIdleCloseCheckAdapterResponse,
-    SessionPostureEvidenceAdapterRequest, SessionPostureEvidenceAdapterResponse,
-    SessionRecentListAdapterRequest, SessionRecentListAdapterResponse,
-    SessionRecoverAdapterRequest, SessionRecoverAdapterResponse, SessionResumeAdapterRequest,
-    SessionResumeAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
-    UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
-    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging,
-    UiInternalHistoryEvidenceResponse, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
-    VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
+    DesktopOpenAiTtsEvidenceStatus, DesktopRejectedVoiceEvidenceInput,
+    InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
+    OnboardingContinueAdapterResponse, PublicBrainTraceReportResponse, SessionAttachAdapterRequest,
+    SessionAttachAdapterResponse, SessionIdleCloseCheckAdapterRequest,
+    SessionIdleCloseCheckAdapterResponse, SessionPostureEvidenceAdapterRequest,
+    SessionPostureEvidenceAdapterResponse, SessionRecentListAdapterRequest,
+    SessionRecentListAdapterResponse, SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
+    SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
+    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
+    UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
+    UiHealthTimelinePaging, UiInternalHistoryEvidenceResponse, VoiceTurnAdapterRequest,
+    VoiceTurnAdapterResponse, VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
     WakeProfileAvailabilityRefreshAdapterResponse,
 };
 use selene_engines::device_vault;
@@ -123,6 +123,32 @@ struct DesktopOpenAiTtsSpeechResponse {
     request_id: Option<String>,
     fallback_allowed: bool,
     ai_voice_disclosure: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct DesktopRejectedVoiceEvidenceRequest {
+    correlation_id: u64,
+    turn_id: Option<u64>,
+    actor_user_id: String,
+    tenant_id: Option<String>,
+    device_id: String,
+    session_id: Option<String>,
+    transcript_hash: Option<String>,
+    rejected_reason: String,
+    source: String,
+    evidence_class: Option<String>,
+    request_id: Option<String>,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+struct DesktopRejectedVoiceEvidenceResponse {
+    status: String,
+    outcome: String,
+    ok: bool,
+    safe_failure_reason: Option<String>,
+    correlation_id: u64,
+    turn_id: Option<u64>,
+    request_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -314,6 +340,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route(
             "/v1/desktop/openai-tts/speech",
             post(run_desktop_openai_tts_speech),
+        )
+        .route(
+            "/v1/desktop/voice/rejected-evidence",
+            post(record_desktop_rejected_voice_evidence),
         )
         .route("/v1/invite/click", post(run_invite_click))
         .route("/v1/onboarding/continue", post(run_onboarding_continue))
@@ -1098,6 +1128,113 @@ async fn run_desktop_openai_tts_speech(
             )
         }
     }
+}
+
+async fn record_desktop_rejected_voice_evidence(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<DesktopRejectedVoiceEvidenceRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return desktop_rejected_voice_security_reject_response(reject, &request),
+    };
+    let idempotency_key =
+        match required_header_token(&headers, "idempotency-key", "missing_idempotency_key") {
+            Ok(v) => v,
+            Err(reject) => {
+                return desktop_rejected_voice_security_reject_response(reject, &request)
+            }
+        };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return desktop_rejected_voice_security_reject_response(reject, &request),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return desktop_rejected_voice_security_reject_response(reject, &request),
+    };
+    if request.correlation_id == 0
+        || request.actor_user_id.trim().is_empty()
+        || request.device_id.trim().is_empty()
+        || request.rejected_reason.trim().is_empty()
+        || request.source.trim().is_empty()
+    {
+        return desktop_rejected_voice_error_response(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &request,
+            "invalid_desktop_rejected_voice_evidence",
+        );
+    }
+
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/desktop/voice/rejected-evidence",
+        expected_subject: request.actor_user_id.clone(),
+        expected_device: request.device_id.clone(),
+        request_id,
+        idempotency_key,
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return desktop_rejected_voice_security_reject_response(reject, &request);
+    }
+
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return desktop_rejected_voice_error_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                &request,
+                "adapter_runtime_lock_poisoned",
+            )
+        }
+    };
+    if let Err(err) =
+        runtime.record_desktop_rejected_voice_evidence(DesktopRejectedVoiceEvidenceInput {
+            correlation_id: request.correlation_id,
+            turn_id: request.turn_id,
+            actor_user_id: request.actor_user_id.clone(),
+            tenant_id: request.tenant_id.clone(),
+            device_id: request.device_id.clone(),
+            session_id: request.session_id.clone(),
+            transcript_hash: request.transcript_hash.clone(),
+            rejected_reason: request.rejected_reason.clone(),
+            source: request.source.clone(),
+            evidence_class: request.evidence_class.clone(),
+            request_id: request.request_id.clone(),
+        })
+    {
+        return desktop_rejected_voice_error_response(
+            StatusCode::BAD_REQUEST,
+            &request,
+            err.as_str(),
+        );
+    }
+
+    (
+        StatusCode::OK,
+        Json(DesktopRejectedVoiceEvidenceResponse {
+            status: "ok".to_string(),
+            outcome: "DESKTOP_REJECTED_VOICE_EVIDENCE_RECORDED".to_string(),
+            ok: true,
+            safe_failure_reason: None,
+            correlation_id: request.correlation_id,
+            turn_id: request.turn_id,
+            request_id: request.request_id,
+        }),
+    )
+        .into_response()
 }
 
 fn reserve_openai_tts_request_count(
@@ -2485,6 +2622,47 @@ fn desktop_openai_tts_security_reject_response(
     let status = status_for_security_reject(reject.kind);
     let response = desktop_openai_tts_failure_response(request, "REJECTED", reject.reason);
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
+fn desktop_rejected_voice_security_reject_response(
+    reject: SecurityReject,
+    request: &DesktopRejectedVoiceEvidenceRequest,
+) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let response = desktop_rejected_voice_failure_response(request, "REJECTED", reject.reason);
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
+fn desktop_rejected_voice_error_response(
+    status: StatusCode,
+    request: &DesktopRejectedVoiceEvidenceRequest,
+    reason: &str,
+) -> Response {
+    (
+        status,
+        Json(desktop_rejected_voice_failure_response(
+            request,
+            "FAILED_CLOSED",
+            reason.to_string(),
+        )),
+    )
+        .into_response()
+}
+
+fn desktop_rejected_voice_failure_response(
+    request: &DesktopRejectedVoiceEvidenceRequest,
+    outcome: &str,
+    reason: String,
+) -> DesktopRejectedVoiceEvidenceResponse {
+    DesktopRejectedVoiceEvidenceResponse {
+        status: "error".to_string(),
+        outcome: outcome.to_string(),
+        ok: false,
+        safe_failure_reason: Some(reason),
+        correlation_id: request.correlation_id,
+        turn_id: request.turn_id,
+        request_id: request.request_id.clone(),
+    }
 }
 
 fn desktop_openai_tts_error_response(

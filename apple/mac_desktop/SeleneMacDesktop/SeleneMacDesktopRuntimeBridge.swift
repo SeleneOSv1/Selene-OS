@@ -3883,6 +3883,16 @@ private func desktopPlatformSetupReceiptRef(receiptKind: String, payloadHash: St
     "receipt:desktop-local:\(receiptKind):\(payloadHash.prefix(16))"
 }
 
+struct DesktopRejectedVoiceEvidenceTransportResult: Equatable {
+    let ok: Bool
+    let statusCode: Int
+    let outcome: String?
+    let safeFailureReason: String?
+    let correlationID: UInt64
+    let turnID: UInt64?
+    let requestID: String?
+}
+
 final class DesktopCanonicalRuntimeBridge: ObservableObject {
     private enum BridgeError: LocalizedError {
         case invalidPreparedRequest(String)
@@ -4767,6 +4777,54 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             case requestID = "request_id"
             case fallbackAllowed = "fallback_allowed"
             case aiVoiceDisclosure = "ai_voice_disclosure"
+        }
+    }
+
+    private struct DesktopRejectedVoiceEvidenceRequestPayload: Encodable {
+        let correlationID: UInt64
+        let turnID: UInt64?
+        let actorUserID: String
+        let tenantID: String?
+        let deviceID: String
+        let sessionID: String?
+        let transcriptHash: String?
+        let rejectedReason: String
+        let source: String
+        let evidenceClass: String?
+        let requestID: String?
+
+        enum CodingKeys: String, CodingKey {
+            case correlationID = "correlation_id"
+            case turnID = "turn_id"
+            case actorUserID = "actor_user_id"
+            case tenantID = "tenant_id"
+            case deviceID = "device_id"
+            case sessionID = "session_id"
+            case transcriptHash = "transcript_hash"
+            case rejectedReason = "rejected_reason"
+            case source
+            case evidenceClass = "evidence_class"
+            case requestID = "request_id"
+        }
+    }
+
+    private struct DesktopRejectedVoiceEvidenceResponsePayload: Decodable {
+        let status: String
+        let outcome: String
+        let ok: Bool
+        let safeFailureReason: String?
+        let correlationID: UInt64
+        let turnID: UInt64?
+        let requestID: String?
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case outcome
+            case ok
+            case safeFailureReason = "safe_failure_reason"
+            case correlationID = "correlation_id"
+            case turnID = "turn_id"
+            case requestID = "request_id"
         }
     }
 
@@ -5807,6 +5865,92 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             aiVoiceDisclosure: payloadResponse.aiVoiceDisclosure,
             audioData: audioData
         )
+    }
+
+    func recordDesktopRejectedVoiceEvidence(
+        _ evidence: DesktopRejectedVoiceEvidenceState
+    ) async -> DesktopRejectedVoiceEvidenceTransportResult {
+        do {
+            try await ensureAdapterAvailable()
+
+            let timestampMS = Self.systemTimeNowMS()
+            let monotonicNowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
+            let ingressIdentity = Self.boundedRuntimeIngressIdentity(
+                prefix: "drv",
+                monotonicNowNS: monotonicNowNS
+            )
+            let payload = DesktopRejectedVoiceEvidenceRequestPayload(
+                correlationID: evidence.correlationID,
+                turnID: evidence.turnID,
+                actorUserID: actorUserID,
+                tenantID: tenantID,
+                deviceID: deviceID,
+                sessionID: evidence.sessionID,
+                transcriptHash: evidence.transcriptHash,
+                rejectedReason: evidence.rejectedReason,
+                source: evidence.source,
+                evidenceClass: evidence.evidenceClass,
+                requestID: evidence.id
+            )
+            let encoder = JSONEncoder()
+            let body = try encoder.encode(payload)
+            let endpointURL = adapterBaseURL
+                .appendingPathComponent("v1/desktop/voice/rejected-evidence")
+            var urlRequest = URLRequest(url: endpointURL)
+            urlRequest.httpMethod = "POST"
+            urlRequest.httpBody = body
+            urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            urlRequest.setValue(ingressIdentity.requestID, forHTTPHeaderField: "x-request-id")
+            urlRequest.setValue(ingressIdentity.idempotencyKey, forHTTPHeaderField: "idempotency-key")
+            urlRequest.setValue(String(timestampMS), forHTTPHeaderField: "x-selene-timestamp-ms")
+            urlRequest.setValue(ingressIdentity.nonce, forHTTPHeaderField: "x-selene-nonce")
+            urlRequest.setValue(
+                Self.bearerToken(subject: actorUserID, device: deviceID),
+                forHTTPHeaderField: "Authorization"
+            )
+
+            let (data, response) = try await urlSession.data(for: urlRequest)
+            let decoder = JSONDecoder()
+            let httpResponse = response as? HTTPURLResponse
+            let statusCode = httpResponse?.statusCode ?? 0
+            let payloadResponse = try decoder.decode(
+                DesktopRejectedVoiceEvidenceResponsePayload.self,
+                from: data
+            )
+            guard statusCode == 200,
+                  payloadResponse.status == "ok",
+                  payloadResponse.ok else {
+                return DesktopRejectedVoiceEvidenceTransportResult(
+                    ok: false,
+                    statusCode: statusCode,
+                    outcome: payloadResponse.outcome,
+                    safeFailureReason: payloadResponse.safeFailureReason ?? "desktop_rejected_voice_evidence_failed",
+                    correlationID: payloadResponse.correlationID,
+                    turnID: payloadResponse.turnID,
+                    requestID: payloadResponse.requestID
+                )
+            }
+
+            return DesktopRejectedVoiceEvidenceTransportResult(
+                ok: true,
+                statusCode: statusCode,
+                outcome: payloadResponse.outcome,
+                safeFailureReason: nil,
+                correlationID: payloadResponse.correlationID,
+                turnID: payloadResponse.turnID,
+                requestID: payloadResponse.requestID
+            )
+        } catch {
+            return DesktopRejectedVoiceEvidenceTransportResult(
+                ok: false,
+                statusCode: 0,
+                outcome: nil,
+                safeFailureReason: Self.boundedTransportFailureReason(error.localizedDescription),
+                correlationID: evidence.correlationID,
+                turnID: evidence.turnID,
+                requestID: evidence.id
+            )
+        }
     }
 
     func dispatchPreparedTypedTurnRequest(
@@ -9491,6 +9635,12 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
             .absoluteString
     }
 
+    var desktopRejectedVoiceEvidenceEndpoint: String {
+        adapterBaseURL
+            .appendingPathComponent("v1/desktop/voice/rejected-evidence")
+            .absoluteString
+    }
+
     var inviteClickEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/invite/click").absoluteString
     }
@@ -10098,6 +10248,18 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         }
 
         return String(format: "%016llx", hash)
+    }
+
+    private static func boundedTransportFailureReason(_ rawValue: String) -> String {
+        let allowedScalars = rawValue.unicodeScalars.map { scalar -> Character in
+            if CharacterSet.alphanumerics.contains(scalar) || scalar == "_" || scalar == "-" || scalar == "." {
+                return Character(scalar)
+            }
+            return "_"
+        }
+        let sanitized = String(allowedScalars)
+        let bounded = sanitized.prefix(96)
+        return bounded.isEmpty ? "desktop_rejected_voice_evidence_transport_failed" : String(bounded)
     }
 
     private static func fnv1a64(bytes: [UInt8]) -> UInt64 {

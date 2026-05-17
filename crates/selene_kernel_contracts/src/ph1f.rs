@@ -87,7 +87,9 @@ fn validate_optional_confidence_bp(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct ConversationTurnId(pub u64);
 
 impl Validate for ConversationTurnId {
@@ -102,13 +104,13 @@ impl Validate for ConversationTurnId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ConversationRole {
     User,
     Selene,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum ConversationSource {
     VoiceTranscript,
     TypedText,
@@ -116,13 +118,15 @@ pub enum ConversationSource {
     Tombstone,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum PrivacyScope {
     PublicChat,
     PrivateDelivery,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct InternalHistoryEventId(pub u64);
 
 impl Validate for InternalHistoryEventId {
@@ -137,7 +141,7 @@ impl Validate for InternalHistoryEventId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum InternalHistoryEventKind {
     CommittedTurn,
     RejectedInput,
@@ -149,7 +153,7 @@ pub enum InternalHistoryEventKind {
     MultimodalEvidence,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum InternalHistoryModality {
     Voice,
     Typed,
@@ -160,7 +164,7 @@ pub enum InternalHistoryModality {
     Multimodal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum SpeakerIdentityPosture {
     Known,
     Unknown,
@@ -168,7 +172,7 @@ pub enum SpeakerIdentityPosture {
     NotApplicable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TranscriptEvidenceStatus {
     Accepted,
     Rejected,
@@ -179,7 +183,7 @@ pub enum TranscriptEvidenceStatus {
     NotApplicable,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum TtsEvidenceStatus {
     NotRequested,
     Requested,
@@ -189,7 +193,7 @@ pub enum TtsEvidenceStatus {
     FailedClosed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MemoryCandidateStatus {
     Allowed,
     BlockedRejectedTranscript,
@@ -200,7 +204,7 @@ pub enum MemoryCandidateStatus {
     NotApplicable,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SpeakerEvidenceRefs {
     pub user_id: Option<UserId>,
     pub actor_id: Option<String>,
@@ -358,7 +362,7 @@ impl Validate for SpeakerEvidenceRefs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InputTranscriptEvidenceRefs {
     pub committed_text_hash: Option<String>,
     pub transcript_confidence_bp: Option<u16>,
@@ -467,7 +471,7 @@ impl Validate for InputTranscriptEvidenceRefs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ResponseSpokenEvidenceRefs {
     pub final_response_text_hash: Option<String>,
     pub approved_tts_text_hash: Option<String>,
@@ -580,7 +584,7 @@ impl Validate for ResponseSpokenEvidenceRefs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LiveContextEvidenceRefs {
     pub active_context_packet_ref: Option<String>,
     pub human_conversation_directive_ref: Option<String>,
@@ -638,7 +642,7 @@ impl Validate for LiveContextEvidenceRefs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MemoryEvidenceRefs {
     pub memory_evidence_packet_ref: Option<String>,
     pub memory_recall_request_ref: Option<String>,
@@ -712,7 +716,7 @@ impl Validate for MemoryEvidenceRefs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InternalHistoryEvidenceRefs {
     pub tool_provider_refs: Vec<String>,
     pub source_refs: Vec<String>,
@@ -776,7 +780,7 @@ impl Validate for InternalHistoryEvidenceRefs {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InternalHistoryEvidenceInput {
     pub schema_version: SchemaVersion,
     pub created_at: MonotonicTimeNs,
@@ -1031,7 +1035,7 @@ impl Validate for InternalHistoryEvidenceInput {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct InternalHistoryEvidenceRecord {
     pub schema_version: SchemaVersion,
     pub internal_history_event_id: InternalHistoryEventId,

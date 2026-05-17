@@ -2085,6 +2085,17 @@ struct ExplicitVoiceTurnRequestState: Identifiable {
     }
 }
 
+struct DesktopRejectedVoiceEvidenceState: Identifiable, Equatable {
+    let id: String
+    let correlationID: UInt64
+    let turnID: UInt64
+    let sessionID: String?
+    let transcriptHash: String?
+    let rejectedReason: String
+    let source: String
+    let evidenceClass: String?
+}
+
 struct DesktopTypedTurnRequestState: Identifiable {
     let id: String
     let origin: DesktopTypedTurnRequestOrigin
@@ -2969,6 +2980,8 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
     @Published private(set) var pendingRequest: ExplicitVoiceTurnRequestState?
     @Published private(set) var failedRequest: InterruptContinuityResponseFailureState?
     @Published private(set) var failedRequestSequence: UInt64 = 0
+    @Published private(set) var rejectedVoiceEvidence: DesktopRejectedVoiceEvidenceState?
+    @Published private(set) var rejectedVoiceEvidenceSequence: UInt64 = 0
 
     private let maxVoiceTurnBytes = 16_384
     private let autoPrepareAfterSilenceDelay: TimeInterval = 1.8
@@ -3142,6 +3155,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
 
         let trimmedTranscript = transcriptPreview.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {
+            recordRejectedVoiceEvidence(
+                transcript: nil,
+                source: "explicit_voice",
+                reason: "empty_transcript",
+                evidenceClass: nil
+            )
             completeStoppedCaptureSession()
             recordFailure(
                 id: "failed_explicit_voice_empty_transcript",
@@ -3187,6 +3206,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         guard !shouldRejectCommittedUserTurnEvidence(audioCaptureRefState) else {
+            recordRejectedVoiceEvidence(
+                transcript: trimmedTranscript,
+                source: "explicit_voice",
+                reason: "unsafe_audio_evidence",
+                evidenceClass: "desktop_audio_evidence_gate"
+            )
             completeStoppedCaptureSession()
             recordFailure(
                 id: "failed_explicit_voice_unsafe_audio_evidence",
@@ -3243,6 +3268,30 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         pendingRequest = nil
         transcriptPreview = ""
         failedRequest = nil
+    }
+
+    func recordRejectedEvidenceForIdleClosedCaptureIfNeeded(reason: String) {
+        guard pendingRequest == nil,
+              realtimeWebSocketTask != nil || isListening || activeCaptureContext != nil else {
+            return
+        }
+
+        let trimmedTranscript = realtimePartialTranscript
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let heardCaptureEvidence =
+            realtimeFirstAudioFrameNS != nil
+            || realtimeSpeechStartedNS != nil
+            || !trimmedTranscript.isEmpty
+        guard heardCaptureEvidence else {
+            return
+        }
+
+        recordRejectedVoiceEvidence(
+            transcript: trimmedTranscript.isEmpty ? nil : trimmedTranscript,
+            source: "realtime",
+            reason: reason,
+            evidenceClass: "stage6_idle_close_active_capture"
+        )
     }
 
     func discardPreparedRealtimeTransportIfIdle() {
@@ -3691,6 +3740,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         cancelRealtimeCompletionTimeout()
         let trimmedTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTranscript.isEmpty else {
+            recordRejectedVoiceEvidence(
+                transcript: nil,
+                source: "realtime",
+                reason: "empty_transcript",
+                evidenceClass: nil
+            )
             clearTransientTranscriptPreview()
             recordFailure(
                 id: "failed_realtime_transcription_empty_transcript",
@@ -3743,6 +3798,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         }
 
         guard !shouldRejectCommittedUserTurnEvidence(audioCaptureRefState) else {
+            recordRejectedVoiceEvidence(
+                transcript: trimmedTranscript,
+                source: "realtime",
+                reason: "unsafe_audio_evidence",
+                evidenceClass: "desktop_audio_evidence_gate"
+            )
             clearTransientTranscriptPreview()
             recordFailure(
                 id: "failed_realtime_transcription_unsafe_audio_evidence",
@@ -3829,6 +3890,12 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         keepRealtimeTransport: Bool
     ) {
         let finalChars = transcript.trimmingCharacters(in: .whitespacesAndNewlines).count
+        recordRejectedVoiceEvidence(
+            transcript: transcript,
+            source: source,
+            reason: "text_artifact",
+            evidenceClass: "committed_voice_transcript_artifact"
+        )
         clearTransientTranscriptPreview()
         pendingRequest = nil
         failedRequest = nil
@@ -3856,6 +3923,14 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
                 return
             }
 
+            let timeoutTranscript = self.realtimePartialTranscript
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            self.recordRejectedVoiceEvidence(
+                transcript: timeoutTranscript.isEmpty ? nil : timeoutTranscript,
+                source: "realtime",
+                reason: "transcription_timeout",
+                evidenceClass: "realtime_transcription_timeout"
+            )
             self.recordFailure(
                 id: "failed_realtime_transcription_timeout",
                 title: "Failed explicit voice request",
@@ -4053,6 +4128,33 @@ private final class ExplicitVoiceCaptureController: ObservableObject {
         failedRequestSequence &+= 1
     }
 
+    private func recordRejectedVoiceEvidence(
+        transcript: String?,
+        source: String,
+        reason: String,
+        evidenceClass: String?
+    ) {
+        let deviceTurnSequence = nextDeviceTurnSequence()
+        let trimmedTranscript = transcript?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcriptHash = trimmedTranscript.flatMap { value in
+            value.isEmpty ? nil : desktopSessionSHA256Hex(Data(value.utf8))
+        }
+        rejectedVoiceEvidence = DesktopRejectedVoiceEvidenceState(
+            id: "desktop_rejected_voice_evidence_\(deviceTurnSequence)",
+            correlationID: deviceTurnSequence,
+            turnID: deviceTurnSequence,
+            sessionID: nil,
+            transcriptHash: transcriptHash,
+            rejectedReason: reason,
+            source: source,
+            evidenceClass: evidenceClass
+        )
+        rejectedVoiceEvidenceSequence &+= 1
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop rejected voice evidence staged source=\(boundedFailureLogToken(source)) reason=\(boundedFailureLogToken(reason)) transcript_hash_present=\(transcriptHash != nil)"
+        )
+    }
+
     private func refreshPermissionState() {
         microphonePermission = Self.currentMicrophonePermission()
         transcriptionPermission = Self.currentTranscriptionPermission()
@@ -4230,6 +4332,8 @@ private final class DesktopWakeListenerController: ObservableObject {
     @Published private(set) var transcriptPreview = ""
     @Published private(set) var pendingRequest: WakeTriggeredVoiceTurnRequestState?
     @Published private(set) var failedRequest: InterruptContinuityResponseFailureState?
+    @Published private(set) var rejectedVoiceEvidence: DesktopRejectedVoiceEvidenceState?
+    @Published private(set) var rejectedVoiceEvidenceSequence: UInt64 = 0
     @Published private(set) var activePromptStateID: String?
 
     private let wakeTriggerPhrase = "Selene"
@@ -4564,6 +4668,12 @@ private final class DesktopWakeListenerController: ObservableObject {
                     desktopAppendRuntimeBridgeDebugLog(
                         "\(desktopTraceClockFields()) desktop local wake final rejected reason=low_confidence confidence_bp=\(confidenceBP) provider=openai_prewake=false remote_stt=false ph1w_authority=pending"
                     )
+                    self.recordRejectedVoiceEvidence(
+                        transcript: transcript,
+                        source: "wake_listener",
+                        reason: "low_confidence_wake_candidate",
+                        evidenceClass: "local_wake_listener"
+                    )
                     return
                 }
 
@@ -4810,6 +4920,33 @@ private final class DesktopWakeListenerController: ObservableObject {
             title: title,
             summary: summary,
             detail: detail
+        )
+    }
+
+    private func recordRejectedVoiceEvidence(
+        transcript: String?,
+        source: String,
+        reason: String,
+        evidenceClass: String?
+    ) {
+        let deviceTurnSequence = nextDeviceTurnSequence()
+        let trimmedTranscript = transcript?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let transcriptHash = trimmedTranscript.flatMap { value in
+            value.isEmpty ? nil : desktopSessionSHA256Hex(Data(value.utf8))
+        }
+        rejectedVoiceEvidence = DesktopRejectedVoiceEvidenceState(
+            id: "desktop_rejected_voice_evidence_\(deviceTurnSequence)",
+            correlationID: deviceTurnSequence,
+            turnID: deviceTurnSequence,
+            sessionID: nil,
+            transcriptHash: transcriptHash,
+            rejectedReason: reason,
+            source: source,
+            evidenceClass: evidenceClass
+        )
+        rejectedVoiceEvidenceSequence &+= 1
+        desktopAppendRuntimeBridgeDebugLog(
+            "\(desktopTraceClockFields()) desktop rejected voice evidence staged source=\(boundedFailureLogToken(source)) reason=\(boundedFailureLogToken(reason)) transcript_hash_present=\(transcriptHash != nil)"
         )
     }
 
@@ -7772,6 +7909,34 @@ struct DesktopSessionShellView: View {
             )
             await synchronizeDesktopWakeListenerLifecycleState()
         }
+        .onReceive(explicitVoiceController.$rejectedVoiceEvidence) { rejectedVoiceEvidence in
+            guard let rejectedVoiceEvidence else {
+                return
+            }
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop rejected voice evidence transport scheduled source=\(boundedFailureLogToken(rejectedVoiceEvidence.source)) reason=\(boundedFailureLogToken(rejectedVoiceEvidence.rejectedReason))"
+            )
+            Task {
+                let result = await desktopCanonicalRuntimeBridge.recordDesktopRejectedVoiceEvidence(rejectedVoiceEvidence)
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop rejected voice evidence transport result ok=\(result.ok) status=\(result.statusCode) outcome=\(boundedFailureLogToken(result.outcome ?? "none")) reason=\(boundedFailureLogToken(result.safeFailureReason ?? "none")) correlation_id=\(result.correlationID)"
+                )
+            }
+        }
+        .onReceive(desktopWakeListenerController.$rejectedVoiceEvidence) { rejectedVoiceEvidence in
+            guard let rejectedVoiceEvidence else {
+                return
+            }
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop rejected voice evidence transport scheduled source=\(boundedFailureLogToken(rejectedVoiceEvidence.source)) reason=\(boundedFailureLogToken(rejectedVoiceEvidence.rejectedReason))"
+            )
+            Task {
+                let result = await desktopCanonicalRuntimeBridge.recordDesktopRejectedVoiceEvidence(rejectedVoiceEvidence)
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop rejected voice evidence transport result ok=\(result.ok) status=\(result.statusCode) outcome=\(boundedFailureLogToken(result.outcome ?? "none")) reason=\(boundedFailureLogToken(result.safeFailureReason ?? "none")) correlation_id=\(result.correlationID)"
+                )
+            }
+        }
         .onReceive(desktopWakeListenerController.$pendingRequest) { pendingRequest in
             desktopAppendRuntimeBridgeDebugLog(
                 "desktop wake pending subscriber observed pending=\(pendingRequest != nil)"
@@ -10723,6 +10888,11 @@ struct DesktopSessionShellView: View {
         desktopSubmittedUserContinuityPreviewState = nil
         desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
+        if validCloseSeal {
+            explicitVoiceController.recordRejectedEvidenceForIdleClosedCaptureIfNeeded(
+                reason: "idle_close_active_capture_no_committed_transcript"
+            )
+        }
         desktopDeactivateComposerVoiceMode(
             preserveTranscriptPreview: false,
             clearPostWakeAuthorization: true

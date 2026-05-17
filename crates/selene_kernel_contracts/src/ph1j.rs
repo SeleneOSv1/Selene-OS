@@ -125,7 +125,9 @@ fn append_canonical_field(buf: &mut String, key: &str, value: &str) {
     buf.push('\n');
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct CorrelationId(pub u128);
 
 impl Validate for CorrelationId {
@@ -140,7 +142,9 @@ impl Validate for CorrelationId {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct TurnId(pub u64);
 
 impl Validate for TurnId {
@@ -225,7 +229,9 @@ pub fn artifact_trust_proof_entry_ref_for_event_id_and_ordinal(
     Ok(value)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
 pub struct DeviceId(String);
 
 impl DeviceId {
