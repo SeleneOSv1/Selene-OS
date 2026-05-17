@@ -194,7 +194,10 @@ use selene_os::ph1srl::{
 use selene_os::ph1vision::{
     Ph1VisionEngine, Ph1VisionWiring, Ph1VisionWiringConfig, VisionTurnInput, VisionWiringOutcome,
 };
-use selene_os::ph1x::{resolve_report_display_target, ReportDisplayResolution};
+use selene_os::ph1x::{
+    ph1x_universal_active_context_followup_query, ph1x_update_universal_active_context_after_turn,
+    resolve_report_display_target, ReportDisplayResolution,
+};
 use selene_os::runtime_governance::{
     governance_failure_class_for_response, governance_reason_to_session_state,
     governance_runtime_reason, RuntimeGovernanceDecision,
@@ -9751,10 +9754,16 @@ impl AdapterRuntime {
                 &thread_key,
             )
             .map_err(post_session_error)?;
-            let active_context_followup_rewrite = deterministic_active_context_followup_query(
+            let active_context_followup_rewrite = ph1x_universal_active_context_followup_query(
                 &base_thread_state,
                 user_text_final.as_deref(),
-            );
+            )
+            .or_else(|| {
+                deterministic_active_context_followup_query(
+                    &base_thread_state,
+                    user_text_final.as_deref(),
+                )
+            });
             let stage8_fresh_memory_bridge = if active_context_followup_rewrite.is_none() {
                 stage8_fresh_memory_bridge_from_store(
                     &store,
@@ -10056,12 +10065,18 @@ impl AdapterRuntime {
                     return Ok(response);
                 }
             }
-            if active_context_followup_rewrite.is_none()
+            let ph1x_protected_followup_rewrite =
+                active_context_followup_rewrite.as_deref().filter(|text| {
+                    h411_looks_like_protected_execution(&h411_normalize_public_discourse_text(text))
+                });
+            if (active_context_followup_rewrite.is_none()
+                || ph1x_protected_followup_rewrite.is_some())
                 && stage8_fresh_memory_followup_rewrite.is_none()
                 && !h384_explicit_deep_research
             {
-                if let Some((captured_text, h411_response)) =
-                    user_text_final.as_deref().and_then(|text| {
+                if let Some((captured_text, h411_response)) = ph1x_protected_followup_rewrite
+                    .or(user_text_final.as_deref())
+                    .and_then(|text| {
                         h411_public_discourse_response(text, &h411_discourse_frame_before)
                             .map(|response| (text, response))
                     })
@@ -10069,6 +10084,25 @@ impl AdapterRuntime {
                     let response_text = h411_response.response_text.clone();
                     let protected_fail_closed = h411_response.reason_code
                         == "H411_PROTECTED_EXECUTION_FAIL_CLOSED_PRESERVED";
+                    let h411_thread_state = ph1x_update_universal_active_context_after_turn(
+                        base_thread_state.clone(),
+                        user_text_final.as_deref(),
+                        Some(&response_text),
+                        Some(h411_response.reason_code),
+                    );
+                    persist_ph1x_thread_state(
+                        &mut store,
+                        now,
+                        PersistPh1xThreadStateInput {
+                            actor_user_id: &actor_user_id,
+                            thread_key: &thread_key,
+                            thread_state: h411_thread_state.clone(),
+                            reason_code: ReasonCodeId(0x5800_0852),
+                            correlation_id,
+                            turn_id,
+                        },
+                    )
+                    .map_err(post_session_error)?;
                     self.record_transcript_updates(
                         &mut store,
                         now,
@@ -10106,7 +10140,7 @@ impl AdapterRuntime {
                         turn_id,
                         &runtime_device_id,
                         session_turn_state.session_id_for_commits,
-                        Some(&base_thread_state),
+                        Some(&h411_thread_state),
                         session_turn_state.device_turn_sequence,
                         &runtime_execution_envelope.idempotency_key,
                         &self.runtime_node_id,
@@ -10186,6 +10220,25 @@ impl AdapterRuntime {
                         None,
                     )
                 }) {
+                    let h380_direct_thread_state = ph1x_update_universal_active_context_after_turn(
+                        base_thread_state.clone(),
+                        user_text_final.as_deref(),
+                        Some(&response_text),
+                        Some("H381_H380_LIVE_RESPONSE"),
+                    );
+                    persist_ph1x_thread_state(
+                        &mut store,
+                        now,
+                        PersistPh1xThreadStateInput {
+                            actor_user_id: &actor_user_id,
+                            thread_key: &thread_key,
+                            thread_state: h380_direct_thread_state.clone(),
+                            reason_code: ReasonCodeId(0x5800_0851),
+                            correlation_id,
+                            turn_id,
+                        },
+                    )
+                    .map_err(post_session_error)?;
                     self.record_transcript_updates(
                         &mut store,
                         now,
@@ -10223,7 +10276,7 @@ impl AdapterRuntime {
                         turn_id,
                         &runtime_device_id,
                         session_turn_state.session_id_for_commits,
-                        Some(&base_thread_state),
+                        Some(&h380_direct_thread_state),
                         session_turn_state.device_turn_sequence,
                         &runtime_execution_envelope.idempotency_key,
                         &self.runtime_node_id,
@@ -10354,10 +10407,64 @@ impl AdapterRuntime {
                 user_text_final.as_deref(),
                 &mut execution_outcome,
             );
+            self.commit_ph1d_runtime_outcome(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                &actor_user_id,
+                tenant_id_for_ph1c.as_deref(),
+                Some(&runtime_device_id),
+                session_turn_state.session_id_for_commits,
+                session_turn_state.session_snapshot.session_state,
+                user_text_final.as_deref(),
+                &execution_outcome.voice_outcome,
+                language_packet.as_ref(),
+            )
+            .map_err(post_session_error)?;
+            let mut ph1d_public_answer_text =
+                if persistence_mode == PersistenceInvocationMode::LegacyJournalReplay {
+                    None
+                } else {
+                    let ph1d_public_user_text = active_context_followup_rewrite
+                        .as_deref()
+                        .or(stage8_fresh_memory_followup_rewrite.as_deref())
+                        .or(user_text_final.as_deref());
+                    self.maybe_run_ph1d_public_answer(
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        &thread_key,
+                        tenant_id_for_ph1c.as_deref(),
+                        session_turn_state.session_snapshot.session_state,
+                        ph1d_public_user_text,
+                        &mut execution_outcome,
+                        language_packet.as_ref(),
+                    )
+                };
+            apply_language_continuity_to_execution_outcome(
+                language_packet.as_ref(),
+                user_text_final.as_deref(),
+                &mut execution_outcome,
+            );
+            if language_packet
+                .as_ref()
+                .and_then(|packet| {
+                    language_switch_ack_for_build1c(packet, user_text_final.as_deref())
+                })
+                .is_some()
+            {
+                ph1d_public_answer_text = execution_outcome.response_text.clone();
+            }
             if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
-                let persisted_thread_state = decorate_thread_state_with_last_turn_context(
-                    ph1x_response.thread_state.clone(),
-                    &execution_outcome,
+                let persisted_thread_state = ph1x_update_universal_active_context_after_turn(
+                    decorate_thread_state_with_last_turn_context(
+                        ph1x_response.thread_state.clone(),
+                        &execution_outcome,
+                    ),
+                    user_text_final.as_deref(),
+                    execution_outcome.response_text.as_deref(),
+                    Some(outcome_label(&execution_outcome)),
                 );
                 persist_ph1x_thread_state(
                     &mut store,
@@ -10379,51 +10486,6 @@ impl AdapterRuntime {
                     execution_outcome.tool_response.as_ref(),
                 )
                 .map_err(post_session_error)?;
-            }
-            self.commit_ph1d_runtime_outcome(
-                &mut store,
-                now,
-                correlation_id,
-                turn_id,
-                &actor_user_id,
-                tenant_id_for_ph1c.as_deref(),
-                Some(&runtime_device_id),
-                session_turn_state.session_id_for_commits,
-                session_turn_state.session_snapshot.session_state,
-                user_text_final.as_deref(),
-                &execution_outcome.voice_outcome,
-                language_packet.as_ref(),
-            )
-            .map_err(post_session_error)?;
-            let mut ph1d_public_answer_text =
-                if persistence_mode == PersistenceInvocationMode::LegacyJournalReplay {
-                    None
-                } else {
-                    self.maybe_run_ph1d_public_answer(
-                        correlation_id,
-                        turn_id,
-                        &actor_user_id,
-                        &thread_key,
-                        tenant_id_for_ph1c.as_deref(),
-                        session_turn_state.session_snapshot.session_state,
-                        user_text_final.as_deref(),
-                        &mut execution_outcome,
-                        language_packet.as_ref(),
-                    )
-                };
-            apply_language_continuity_to_execution_outcome(
-                language_packet.as_ref(),
-                user_text_final.as_deref(),
-                &mut execution_outcome,
-            );
-            if language_packet
-                .as_ref()
-                .and_then(|packet| {
-                    language_switch_ack_for_build1c(packet, user_text_final.as_deref())
-                })
-                .is_some()
-            {
-                ph1d_public_answer_text = execution_outcome.response_text.clone();
             }
             if let Err(err) = self.emit_read_only_lane_incidents_and_maybe_run_builder(
                 &mut store,
@@ -49817,6 +49879,32 @@ mod tests {
         assert!(payroll_public_business_knowledge_intent(
             "tell me about payroll rules generally"
         ));
+    }
+
+    #[test]
+    fn stage8_5_protected_do_it_continuation_stays_fail_closed() {
+        let runtime = AdapterRuntime::default();
+        let seed = h411_run_desktop_typed_turn(
+            &runtime,
+            "stage8-5-protected-continuation",
+            880_001,
+            "Organize payroll for Tim.",
+        );
+        assert_eq!(seed.status, "ok", "{seed:?}");
+        assert!(seed
+            .response_text
+            .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
+
+        let followup = h411_run_desktop_typed_turn(
+            &runtime,
+            "stage8-5-protected-continuation",
+            880_002,
+            "Yes, do it.",
+        );
+        assert_eq!(followup.status, "ok", "{followup:?}");
+        assert!(followup
+            .response_text
+            .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"));
     }
 
     #[test]

@@ -268,6 +268,26 @@ pub struct ActiveContextPacket {
     pub protected_risk: ProtectedRisk,
     pub memory_handoff_needed: bool,
     pub suggested_next_engine: SuggestedNextEngine,
+    pub user_goal: Option<String>,
+    pub current_plan: Option<String>,
+    pub open_question: Option<String>,
+    pub unresolved_decision: Option<String>,
+    pub prior_options_presented: Vec<String>,
+    pub selected_option: Option<String>,
+    pub rejected_option: Option<String>,
+    pub comparison_set: Vec<String>,
+    pub constraints: Vec<String>,
+    pub user_preference_in_turn: Option<String>,
+    pub expected_answer_type: Option<String>,
+    pub last_clarification_question: Option<String>,
+    pub clarification_answer_target: Option<String>,
+    pub discourse_state: Option<String>,
+    pub topic_depth: u16,
+    pub returnable_topic: Option<String>,
+    pub interruption_state: Option<String>,
+    pub speaker_continuity: Option<String>,
+    pub confidence_reason: Option<String>,
+    pub why_not_continue_reason: Option<String>,
     pub evidence_refs: Vec<String>,
 }
 
@@ -299,6 +319,26 @@ impl ActiveContextPacket {
             protected_risk: ProtectedRisk::default(),
             memory_handoff_needed: false,
             suggested_next_engine: SuggestedNextEngine::default(),
+            user_goal: None,
+            current_plan: None,
+            open_question: None,
+            unresolved_decision: None,
+            prior_options_presented: Vec::new(),
+            selected_option: None,
+            rejected_option: None,
+            comparison_set: Vec::new(),
+            constraints: Vec::new(),
+            user_preference_in_turn: None,
+            expected_answer_type: None,
+            last_clarification_question: None,
+            clarification_answer_target: None,
+            discourse_state: None,
+            topic_depth: 0,
+            returnable_topic: None,
+            interruption_state: None,
+            speaker_continuity: None,
+            confidence_reason: None,
+            why_not_continue_reason: None,
             evidence_refs: Vec::new(),
         }
     }
@@ -345,11 +385,83 @@ impl ActiveContextPacket {
             protected_risk,
             memory_handoff_needed,
             suggested_next_engine,
+            user_goal: None,
+            current_plan: None,
+            open_question: None,
+            unresolved_decision: None,
+            prior_options_presented: Vec::new(),
+            selected_option: None,
+            rejected_option: None,
+            comparison_set: Vec::new(),
+            constraints: Vec::new(),
+            user_preference_in_turn: None,
+            expected_answer_type: None,
+            last_clarification_question: None,
+            clarification_answer_target: None,
+            discourse_state: None,
+            topic_depth: 0,
+            returnable_topic: None,
+            interruption_state: None,
+            speaker_continuity: None,
+            confidence_reason: None,
+            why_not_continue_reason: None,
             evidence_refs,
         };
         packet.validate()?;
         Ok(packet)
     }
+
+    pub fn with_universal_frame(
+        mut self,
+        fields: UniversalActiveFrameFields,
+    ) -> Result<Self, ContractViolation> {
+        self.user_goal = fields.user_goal;
+        self.current_plan = fields.current_plan;
+        self.open_question = fields.open_question;
+        self.unresolved_decision = fields.unresolved_decision;
+        self.prior_options_presented = fields.prior_options_presented;
+        self.selected_option = fields.selected_option;
+        self.rejected_option = fields.rejected_option;
+        self.comparison_set = fields.comparison_set;
+        self.constraints = fields.constraints;
+        self.user_preference_in_turn = fields.user_preference_in_turn;
+        self.expected_answer_type = fields.expected_answer_type;
+        self.last_clarification_question = fields.last_clarification_question;
+        self.clarification_answer_target = fields.clarification_answer_target;
+        self.discourse_state = fields.discourse_state;
+        self.topic_depth = fields.topic_depth;
+        self.returnable_topic = fields.returnable_topic;
+        self.interruption_state = fields.interruption_state;
+        self.speaker_continuity = fields.speaker_continuity;
+        self.confidence_reason = fields.confidence_reason;
+        self.why_not_continue_reason = fields.why_not_continue_reason;
+        self.validate()?;
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UniversalActiveFrameFields {
+    pub user_goal: Option<String>,
+    pub current_plan: Option<String>,
+    pub open_question: Option<String>,
+    pub unresolved_decision: Option<String>,
+    pub prior_options_presented: Vec<String>,
+    pub selected_option: Option<String>,
+    pub rejected_option: Option<String>,
+    pub comparison_set: Vec<String>,
+    pub constraints: Vec<String>,
+    pub user_preference_in_turn: Option<String>,
+    pub expected_answer_type: Option<String>,
+    pub last_clarification_question: Option<String>,
+    pub clarification_answer_target: Option<String>,
+    pub discourse_state: Option<String>,
+    pub topic_depth: u16,
+    pub returnable_topic: Option<String>,
+    pub interruption_state: Option<String>,
+    pub speaker_continuity: Option<String>,
+    pub confidence_reason: Option<String>,
+    pub why_not_continue_reason: Option<String>,
 }
 
 impl Validate for ActiveContextPacket {
@@ -409,6 +521,110 @@ impl Validate for ActiveContextPacket {
             PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
         )?;
         validate_context_confidence("active_context_packet.confidence", self.confidence)?;
+        validate_optional_context_text(
+            "active_context_packet.user_goal",
+            &self.user_goal,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.current_plan",
+            &self.current_plan,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.open_question",
+            &self.open_question,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.unresolved_decision",
+            &self.unresolved_decision,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "active_context_packet.prior_options_presented",
+            &self.prior_options_presented,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.selected_option",
+            &self.selected_option,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.rejected_option",
+            &self.rejected_option,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "active_context_packet.comparison_set",
+            &self.comparison_set,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "active_context_packet.constraints",
+            &self.constraints,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.user_preference_in_turn",
+            &self.user_preference_in_turn,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.expected_answer_type",
+            &self.expected_answer_type,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.last_clarification_question",
+            &self.last_clarification_question,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.clarification_answer_target",
+            &self.clarification_answer_target,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.discourse_state",
+            &self.discourse_state,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        if self.topic_depth > 32 {
+            return Err(ContractViolation::InvalidValue {
+                field: "active_context_packet.topic_depth",
+                reason: "must be <= 32",
+            });
+        }
+        validate_optional_context_text(
+            "active_context_packet.returnable_topic",
+            &self.returnable_topic,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.interruption_state",
+            &self.interruption_state,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.speaker_continuity",
+            &self.speaker_continuity,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.confidence_reason",
+            &self.confidence_reason,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.why_not_continue_reason",
+            &self.why_not_continue_reason,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
         validate_context_text_list(
             "active_context_packet.evidence_refs",
             &self.evidence_refs,
@@ -2953,6 +3169,76 @@ mod tests {
         );
         assert_eq!(packet.entity_focus, vec!["city_alpha".to_string()]);
         assert_eq!(packet.suggested_next_engine, SuggestedNextEngine::Ph1E);
+    }
+
+    #[test]
+    fn ph1x_canonical_active_context_packet_carries_universal_frame_fields() {
+        let packet = ActiveContextPacket::v1(
+            Some("Japan travel planning".to_string()),
+            Some("recommend ski and food area".to_string()),
+            InteractionPosture::Continuation,
+            ConversationRhythm::StructuredAnswer,
+            ContinuationType::ContinueCurrentTopic,
+            Some("Japan trip constraints".to_string()),
+            vec!["Japan".to_string(), "skiing".to_string()],
+            None,
+            None,
+            vec![],
+            None,
+            vec!["Japan travel planning".to_string()],
+            ResponseShape::StructuredAnswer,
+            9_400,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+            false,
+            SuggestedNextEngine::Ph1Write,
+            vec!["turn:user:japan_trip".to_string()],
+        )
+        .unwrap()
+        .with_universal_frame(UniversalActiveFrameFields {
+            user_goal: Some("plan Japan trip".to_string()),
+            current_plan: Some("Japan skiing plus Japanese restaurants".to_string()),
+            open_question: Some("which area should JD choose".to_string()),
+            unresolved_decision: Some("best Japanese city or ski area".to_string()),
+            prior_options_presented: vec![
+                "Niseko".to_string(),
+                "Hakuba".to_string(),
+                "Sapporo".to_string(),
+            ],
+            selected_option: None,
+            rejected_option: None,
+            comparison_set: vec![
+                "Japanese ski cities".to_string(),
+                "Japanese food destinations".to_string(),
+            ],
+            constraints: vec!["skiing".to_string(), "Japanese restaurants".to_string()],
+            user_preference_in_turn: Some("great Japanese restaurants".to_string()),
+            expected_answer_type: Some("recommendation".to_string()),
+            last_clarification_question: None,
+            clarification_answer_target: None,
+            discourse_state: Some("continuing_planning_topic".to_string()),
+            topic_depth: 2,
+            returnable_topic: Some("Japan travel planning".to_string()),
+            interruption_state: None,
+            speaker_continuity: Some("same_or_nullable".to_string()),
+            confidence_reason: Some(
+                "explicit Japan plus skiing and restaurant constraints".to_string(),
+            ),
+            why_not_continue_reason: None,
+        })
+        .unwrap();
+
+        assert_eq!(packet.user_goal.as_deref(), Some("plan Japan trip"));
+        assert_eq!(
+            packet.unresolved_decision.as_deref(),
+            Some("best Japanese city or ski area")
+        );
+        assert_eq!(
+            packet.expected_answer_type.as_deref(),
+            Some("recommendation")
+        );
+        assert!(packet.constraints.iter().any(|item| item == "skiing"));
+        assert_eq!(packet.topic_depth, 2);
     }
 
     #[test]

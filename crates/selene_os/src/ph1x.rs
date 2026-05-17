@@ -16,9 +16,9 @@ use selene_kernel_contracts::ph1tts::{AnswerId, TtsControl};
 use selene_kernel_contracts::ph1x::{
     ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
     IdentityPromptState, InterruptContinuityOutcome, InterruptResumePolicy,
-    InterruptSubjectRelation, PendingState, Ph1xDirective, Ph1xRequest, Ph1xResponse, ResumeBuffer,
-    StepUpActionClass, StepUpCapabilities, StepUpChallengeMethod, StepUpOutcome, StepUpResult,
-    ThreadState, WaitDirective,
+    InterruptSubjectRelation, LastTurnRouteClass, PendingState, Ph1xDirective, Ph1xRequest,
+    Ph1xResponse, ResumeBuffer, StepUpActionClass, StepUpCapabilities, StepUpChallengeMethod,
+    StepUpOutcome, StepUpResult, ThreadState, WaitDirective,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{
@@ -3806,6 +3806,974 @@ pub fn resolve_report_display_target(
     )
 }
 
+const STAGE8_5_PLANNING_SUBJECT: &str = "ph1x:frame:planning";
+const STAGE8_5_WRITING_SUBJECT: &str = "ph1x:frame:writing";
+const STAGE8_5_TOOL_CHOICE_PREFIX: &str = "ph1x:frame:clarify:";
+const STAGE8_5_PROTECTED_PREFIX: &str = "ph1x:frame:protected_boundary:";
+
+const STAGE8_5_FRAME_PLANNING_REF: &str = "ph1x:frame_ref:planning";
+const STAGE8_5_FRAME_WRITING_REF: &str = "ph1x:frame_ref:writing";
+const STAGE8_5_EXPECT_RECOMMENDATION_REF: &str = "ph1x:expected:recommendation";
+const STAGE8_5_EXPECT_REWRITE_REF: &str = "ph1x:expected:rewrite";
+const STAGE8_5_EXPECT_TOOL_CHOICE_REF: &str = "ph1x:expected:tool_choice";
+const STAGE8_5_REFERENCE_PREVIOUS_REF: &str = "ph1x:reference:previous_output";
+const STAGE8_5_OPEN_SELECTION_REF: &str = "ph1x:open:selection";
+const STAGE8_5_COMPARISON_SET_REF: &str = "ph1x:comparison:options";
+const STAGE8_5_PROTECTED_RISK_REF: &str = "ph1x:protected_risk:business_workflow";
+const STAGE8_5_FAIL_CLOSED_REF: &str = "ph1x:directive:fail_closed";
+
+const STAGE8_5_PLANNING_MARKERS: &[&str] = &[
+    "plan",
+    "planning",
+    "trip",
+    "travel",
+    "visit",
+    "visiting",
+    "holiday",
+    "vacation",
+    "itinerary",
+    "destination",
+    "destinations",
+];
+const STAGE8_5_ACTIVITY_MARKERS: &[&str] = &[
+    "ski",
+    "skiing",
+    "snow",
+    "restaurant",
+    "restaurants",
+    "food",
+    "dining",
+    "hiking",
+    "beach",
+    "museum",
+    "museums",
+    "gallery",
+    "galleries",
+    "art",
+    "culture",
+    "history",
+    "shopping",
+    "nightlife",
+    "nature",
+    "wine",
+    "temple",
+    "temples",
+];
+const STAGE8_5_SELECTION_TARGETS: &[&str] = &[
+    "city",
+    "cities",
+    "area",
+    "areas",
+    "region",
+    "regions",
+    "place",
+    "places",
+    "destination",
+    "destinations",
+    "option",
+    "options",
+    "one",
+    "where",
+];
+const STAGE8_5_TIMING_TARGETS: &[&str] = &[
+    "when", "season", "seasons", "month", "months", "year", "years", "timing",
+];
+const STAGE8_5_TOOL_TIME_TERMS: &[&str] = &["time", "clock", "hour", "hours"];
+const STAGE8_5_TOOL_WEATHER_TERMS: &[&str] =
+    &["weather", "forecast", "temperature", "rain", "raining"];
+const STAGE8_5_ARTIFACT_MARKERS: &[&str] = &[
+    "write", "draft", "compose", "rewrite", "story", "message", "email", "note", "report",
+    "summary", "letter",
+];
+const STAGE8_5_ARTIFACT_MODIFIERS: &[&str] = &[
+    "shorter",
+    "shorten",
+    "tighten",
+    "longer",
+    "warmer",
+    "colder",
+    "friendlier",
+    "professional",
+    "formal",
+    "casual",
+    "darker",
+    "lighter",
+    "clearer",
+    "simpler",
+    "add",
+    "remove",
+    "include",
+    "mention",
+    "tone",
+];
+const STAGE8_5_REFERENCE_TERMS: &[&str] = &[
+    "it", "that", "this", "same", "again", "previous", "prior", "first", "other",
+];
+const STAGE8_5_CONFIRMATION_TERMS: &[&str] = &[
+    "yes",
+    "yep",
+    "yeah",
+    "confirm",
+    "confirmed",
+    "approve",
+    "proceed",
+    "continue",
+    "go",
+    "ahead",
+    "please",
+];
+const STAGE8_5_STOP_TOKENS: &[&str] = &[
+    "and", "or", "but", "with", "for", "because", "that", "which", "what", "where", "when", "who",
+    "how", "do", "does", "did", "should", "would", "could", "can", "i", "we", "you", "me", "my",
+    "our", "the", "a", "an", "some", "great", "nice", "good", "best", "doing", "saying", "tell",
+    "joke",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Stage8_5ToolFamily {
+    Time,
+    Weather,
+}
+
+impl Stage8_5ToolFamily {
+    fn from_token(token: &str) -> Option<Self> {
+        if STAGE8_5_TOOL_TIME_TERMS.contains(&token) {
+            Some(Self::Time)
+        } else if STAGE8_5_TOOL_WEATHER_TERMS.contains(&token) {
+            Some(Self::Weather)
+        } else {
+            None
+        }
+    }
+
+    fn prompt_noun(self) -> &'static str {
+        match self {
+            Self::Time => "time",
+            Self::Weather => "weather",
+        }
+    }
+
+    fn ref_id(self) -> &'static str {
+        match self {
+            Self::Time => "time",
+            Self::Weather => "weather",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Stage8_5Features {
+    normalized: String,
+    tokens: Vec<String>,
+    explicit_tool_family: Option<Stage8_5ToolFamily>,
+    selected_tool_family: Option<Stage8_5ToolFamily>,
+    entity_fragment: Option<String>,
+    destination: Option<String>,
+    constraints: Vec<String>,
+    selection_followup: bool,
+    timing_followup: bool,
+    prior_options_followup: bool,
+    writing_seed: bool,
+    writing_modifier: Option<String>,
+    correction_target: Option<Stage8_5ToolFamily>,
+    confirmation_followup: bool,
+    new_topic: bool,
+}
+
+pub fn ph1x_universal_active_context_followup_query(
+    thread_state: &ThreadState,
+    transcript_text: Option<&str>,
+) -> Option<String> {
+    let text = transcript_text?.trim();
+    if text.is_empty() || text.len() > 2048 {
+        return None;
+    }
+    let features = ph1x_stage8_5_features(text);
+    if features.normalized.is_empty() {
+        return None;
+    }
+
+    if let Some(prior_request) = ph1x_stage8_5_protected_request_from_subject(thread_state) {
+        if features.confirmation_followup {
+            return Some(prior_request);
+        }
+    }
+
+    if let Some(target) = ph1x_stage8_5_tool_choice_target(thread_state) {
+        if let Some(tool_family) = features.selected_tool_family {
+            return Some(ph1x_stage8_5_tool_prompt(tool_family, &target));
+        }
+    }
+
+    if let Some(target) = thread_state
+        .last_turn_context
+        .as_ref()
+        .and_then(|context| ph1x_stage8_5_tool_choice_from_response(&context.answer_text))
+        .map(|choice| choice.target)
+    {
+        if let Some(tool_family) = features.selected_tool_family {
+            return Some(ph1x_stage8_5_tool_prompt(tool_family, &target));
+        }
+    }
+
+    if let Some(tool_family) = features.correction_target {
+        if let Some(place) = ph1x_stage8_5_last_tool_entity(thread_state) {
+            return Some(ph1x_stage8_5_tool_prompt(tool_family, &place));
+        }
+    }
+
+    if ph1x_stage8_5_has_planning_frame(thread_state)
+        && (features.selection_followup
+            || features.prior_options_followup
+            || features.timing_followup)
+    {
+        return Some(ph1x_stage8_5_planning_prompt(
+            thread_state,
+            text,
+            features.timing_followup,
+            features.prior_options_followup,
+        ));
+    }
+
+    if features.new_topic {
+        return None;
+    }
+
+    if let Some(entity) = &features.entity_fragment {
+        if let Some(route_tool) = thread_state
+            .last_turn_context
+            .as_ref()
+            .and_then(|context| ph1x_stage8_5_tool_family_from_route(context.route_class))
+        {
+            return Some(ph1x_stage8_5_tool_prompt(route_tool, entity));
+        }
+    }
+
+    if ph1x_stage8_5_has_writing_frame(thread_state) {
+        if let Some(modifier) = &features.writing_modifier {
+            return Some(ph1x_stage8_5_rewrite_previous_artifact_prompt(
+                thread_state,
+                text,
+                modifier,
+            ));
+        }
+    }
+
+    None
+}
+
+pub fn ph1x_update_universal_active_context_after_turn(
+    thread_state: ThreadState,
+    user_text: Option<&str>,
+    response_text: Option<&str>,
+    route_label: Option<&str>,
+) -> ThreadState {
+    let user = user_text.unwrap_or_default().trim();
+    let response = response_text.unwrap_or_default().trim();
+    let route = route_label.unwrap_or_default();
+    let features = ph1x_stage8_5_features(user);
+
+    if let Some(choice) = ph1x_stage8_5_tool_choice_from_response(response) {
+        return ph1x_stage8_5_set_subject_refs(
+            thread_state,
+            &format!(
+                "{STAGE8_5_TOOL_CHOICE_PREFIX}{}",
+                ph1x_stage8_5_slug(&choice.target)
+            ),
+            ph1x_stage8_5_tool_choice_refs(&choice),
+        );
+    }
+
+    if response.contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION") {
+        return ph1x_stage8_5_set_subject_refs(
+            thread_state,
+            &format!("{STAGE8_5_PROTECTED_PREFIX}{}", ph1x_stage8_5_slug(user)),
+            vec![
+                STAGE8_5_PROTECTED_RISK_REF.to_string(),
+                STAGE8_5_FAIL_CLOSED_REF.to_string(),
+                "ph1x:why_not_continue:no_simulation_no_authority".to_string(),
+                "ph1x:discourse:protected_boundary".to_string(),
+            ],
+        );
+    }
+
+    if features.writing_seed {
+        return ph1x_stage8_5_set_subject_refs(
+            thread_state,
+            STAGE8_5_WRITING_SUBJECT,
+            ph1x_stage8_5_writing_refs(&features),
+        );
+    }
+
+    if ph1x_stage8_5_planning_seed(&features) {
+        return ph1x_stage8_5_set_subject_refs(
+            thread_state,
+            STAGE8_5_PLANNING_SUBJECT,
+            ph1x_stage8_5_planning_refs(&features, response),
+        );
+    }
+
+    if ph1x_stage8_5_has_planning_frame(&thread_state)
+        && (!features.constraints.is_empty()
+            || features.selection_followup
+            || features.timing_followup
+            || features.prior_options_followup)
+    {
+        return ph1x_stage8_5_set_subject_refs(
+            thread_state,
+            STAGE8_5_PLANNING_SUBJECT,
+            ph1x_stage8_5_planning_refs(&features, response),
+        );
+    }
+
+    if features.new_topic || features.explicit_tool_family.is_some() {
+        return ph1x_stage8_5_suspend_stage8_5_context(thread_state);
+    }
+
+    if route == "H381_H380_LIVE_RESPONSE" {
+        return thread_state;
+    }
+
+    thread_state
+}
+
+fn ph1x_stage8_5_set_subject_refs(
+    mut thread_state: ThreadState,
+    subject: &str,
+    refs: Vec<String>,
+) -> ThreadState {
+    let original = thread_state.clone();
+    thread_state.active_subject_ref = Some(ph1x_stage8_5_clean_context_fragment(subject, 256));
+    for context_ref in refs {
+        if thread_state.pinned_context_refs.len() >= 16 {
+            break;
+        }
+        let context_ref = ph1x_stage8_5_clean_ref(&context_ref);
+        if context_ref.is_empty() {
+            continue;
+        }
+        if !thread_state
+            .pinned_context_refs
+            .iter()
+            .any(|existing| existing == &context_ref)
+        {
+            thread_state.pinned_context_refs.push(context_ref);
+        }
+    }
+    if thread_state.validate().is_ok() {
+        thread_state
+    } else {
+        original
+    }
+}
+
+fn ph1x_stage8_5_suspend_stage8_5_context(mut thread_state: ThreadState) -> ThreadState {
+    if thread_state
+        .active_subject_ref
+        .as_deref()
+        .is_some_and(|subject| subject.starts_with("ph1x:"))
+        && thread_state.interrupted_subject_ref.is_none()
+    {
+        thread_state.interrupted_subject_ref = thread_state.active_subject_ref.clone();
+    }
+    if thread_state
+        .active_subject_ref
+        .as_deref()
+        .is_some_and(|subject| subject.starts_with("ph1x:"))
+    {
+        thread_state.active_subject_ref = None;
+    }
+    thread_state
+}
+
+fn ph1x_stage8_5_normalized(text: &str) -> String {
+    text.chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                ' '
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn ph1x_stage8_5_features(text: &str) -> Stage8_5Features {
+    let normalized = ph1x_stage8_5_normalized(text);
+    let tokens = normalized
+        .split_whitespace()
+        .map(|token| token.to_string())
+        .collect::<Vec<_>>();
+    let explicit_tool_family = tokens
+        .iter()
+        .find_map(|token| Stage8_5ToolFamily::from_token(token));
+    let selected_tool_family = ph1x_stage8_5_selected_tool_family(&tokens);
+    let destination = ph1x_stage8_5_extract_destination(&tokens);
+    let constraints = ph1x_stage8_5_extract_constraints(&tokens);
+    let selection_followup = ph1x_stage8_5_selection_followup(&tokens);
+    let timing_followup = ph1x_stage8_5_timing_followup(&tokens);
+    let prior_options_followup = ph1x_stage8_5_prior_options_followup(&tokens);
+    let writing_seed = ph1x_stage8_5_writing_seed(&tokens);
+    let writing_modifier = ph1x_stage8_5_writing_modifier(&tokens);
+    let correction_target = ph1x_stage8_5_correction_target(&tokens);
+    let confirmation_followup = ph1x_stage8_5_confirmation_followup(&tokens);
+    let entity_fragment = ph1x_stage8_5_entity_fragment(text, &tokens);
+    let new_topic = ph1x_stage8_5_new_topic(&tokens, explicit_tool_family, writing_seed);
+    Stage8_5Features {
+        normalized,
+        tokens,
+        explicit_tool_family,
+        selected_tool_family,
+        entity_fragment,
+        destination,
+        constraints,
+        selection_followup,
+        timing_followup,
+        prior_options_followup,
+        writing_seed,
+        writing_modifier,
+        correction_target,
+        confirmation_followup,
+        new_topic,
+    }
+}
+
+fn ph1x_stage8_5_has_any(tokens: &[String], values: &[&str]) -> bool {
+    tokens
+        .iter()
+        .any(|token| values.iter().any(|value| token == value))
+}
+
+fn ph1x_stage8_5_planning_seed(features: &Stage8_5Features) -> bool {
+    features.destination.is_some()
+        && (ph1x_stage8_5_has_any(&features.tokens, STAGE8_5_PLANNING_MARKERS)
+            || !features.constraints.is_empty())
+}
+
+fn ph1x_stage8_5_selection_followup(tokens: &[String]) -> bool {
+    let has_selector = ph1x_stage8_5_has_any(tokens, &["which", "what", "where"]);
+    has_selector
+        && (ph1x_stage8_5_has_any(tokens, STAGE8_5_SELECTION_TARGETS)
+            || ph1x_stage8_5_has_any(tokens, &["suggest", "recommend", "choose", "pick"]))
+}
+
+fn ph1x_stage8_5_timing_followup(tokens: &[String]) -> bool {
+    ph1x_stage8_5_has_any(tokens, STAGE8_5_TIMING_TARGETS)
+        && ph1x_stage8_5_has_any(tokens, &["which", "what", "best", "go", "visit", "travel"])
+}
+
+fn ph1x_stage8_5_prior_options_followup(tokens: &[String]) -> bool {
+    ph1x_stage8_5_has_any(
+        tokens,
+        &["suggest", "suggested", "recommend", "recommended"],
+    ) && ph1x_stage8_5_has_any(tokens, &["where", "what", "which", "did", "were"])
+}
+
+fn ph1x_stage8_5_writing_seed(tokens: &[String]) -> bool {
+    ph1x_stage8_5_has_any(tokens, STAGE8_5_ARTIFACT_MARKERS)
+        && !ph1x_stage8_5_has_any(tokens, STAGE8_5_ARTIFACT_MODIFIERS)
+}
+
+fn ph1x_stage8_5_writing_modifier(tokens: &[String]) -> Option<String> {
+    let modifier = tokens
+        .iter()
+        .find(|token| STAGE8_5_ARTIFACT_MODIFIERS.contains(&token.as_str()))
+        .cloned();
+    if modifier.is_some()
+        && (ph1x_stage8_5_has_any(tokens, STAGE8_5_REFERENCE_TERMS)
+            || !ph1x_stage8_5_has_any(tokens, STAGE8_5_ARTIFACT_MARKERS)
+            || tokens.len() <= 5)
+    {
+        modifier
+    } else {
+        None
+    }
+}
+
+fn ph1x_stage8_5_confirmation_followup(tokens: &[String]) -> bool {
+    tokens.len() <= 5 && ph1x_stage8_5_has_any(tokens, STAGE8_5_CONFIRMATION_TERMS)
+}
+
+fn ph1x_stage8_5_correction_target(tokens: &[String]) -> Option<Stage8_5ToolFamily> {
+    let correction_marker = ph1x_stage8_5_has_any(tokens, &["not", "instead", "meant", "mean"]);
+    if !correction_marker {
+        return None;
+    }
+    tokens.iter().enumerate().rev().find_map(|(idx, token)| {
+        let tool_family = Stage8_5ToolFamily::from_token(token)?;
+        let prev = idx.checked_sub(1).and_then(|i| tokens.get(i));
+        let prev2 = idx.checked_sub(2).and_then(|i| tokens.get(i));
+        let negated = prev.is_some_and(|candidate| candidate == "not")
+            || (prev.is_some_and(|candidate| candidate == "the")
+                && prev2.is_some_and(|candidate| candidate == "not"));
+        if negated {
+            None
+        } else {
+            Some(tool_family)
+        }
+    })
+}
+
+fn ph1x_stage8_5_selected_tool_family(tokens: &[String]) -> Option<Stage8_5ToolFamily> {
+    let compact = tokens
+        .iter()
+        .filter(|token| !STAGE8_5_REFERENCE_TERMS.contains(&token.as_str()))
+        .collect::<Vec<_>>();
+    if compact.len() <= 4 {
+        compact
+            .iter()
+            .find_map(|token| Stage8_5ToolFamily::from_token(token))
+    } else {
+        None
+    }
+}
+
+fn ph1x_stage8_5_new_topic(
+    tokens: &[String],
+    explicit_tool_family: Option<Stage8_5ToolFamily>,
+    writing_seed: bool,
+) -> bool {
+    if explicit_tool_family.is_some() || writing_seed {
+        return true;
+    }
+    let has_question_lead = ph1x_stage8_5_has_any(tokens, &["what", "who", "how", "why", "tell"]);
+    let has_reference = ph1x_stage8_5_has_any(tokens, STAGE8_5_REFERENCE_TERMS);
+    let identity_like = ph1x_stage8_5_has_any(tokens, &["name", "identity", "called"])
+        && ph1x_stage8_5_has_any(tokens, &["what", "who", "your"]);
+    let origin_like = ph1x_stage8_5_has_any(tokens, &["from", "origin"])
+        && ph1x_stage8_5_has_any(tokens, &["you", "your"]);
+    let social_request = ph1x_stage8_5_has_any(tokens, &["joke"]);
+    let broad_explain = (ph1x_stage8_5_has_any(tokens, &["explain", "define"])
+        || (ph1x_stage8_5_has_any(tokens, &["tell"]) && ph1x_stage8_5_has_any(tokens, &["about"])))
+        && !ph1x_stage8_5_has_any(tokens, &["our", "previous", "prior"]);
+    identity_like
+        || origin_like
+        || social_request
+        || (has_question_lead && !has_reference && broad_explain)
+}
+
+fn ph1x_stage8_5_extract_constraints(tokens: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for token in tokens {
+        if STAGE8_5_ACTIVITY_MARKERS.contains(&token.as_str())
+            && !out.iter().any(|existing| existing == token)
+        {
+            out.push(token.clone());
+        }
+    }
+    out
+}
+
+fn ph1x_stage8_5_extract_destination(tokens: &[String]) -> Option<String> {
+    for (idx, token) in tokens.iter().enumerate() {
+        if matches!(
+            token.as_str(),
+            "to" | "in" | "for" | "around" | "through" | "across"
+        ) {
+            let mut collected = Vec::new();
+            for next in tokens.iter().skip(idx + 1).take(4) {
+                if STAGE8_5_STOP_TOKENS.contains(&next.as_str())
+                    || STAGE8_5_ACTIVITY_MARKERS.contains(&next.as_str())
+                {
+                    break;
+                }
+                collected.push(next.clone());
+            }
+            if !collected.is_empty() {
+                return Some(collected.join(" "));
+            }
+        }
+    }
+    tokens
+        .iter()
+        .find(|token| {
+            !STAGE8_5_STOP_TOKENS.contains(&token.as_str())
+                && !STAGE8_5_PLANNING_MARKERS.contains(&token.as_str())
+                && !STAGE8_5_ACTIVITY_MARKERS.contains(&token.as_str())
+                && token.len() > 3
+        })
+        .cloned()
+}
+
+fn ph1x_stage8_5_entity_fragment(text: &str, tokens: &[String]) -> Option<String> {
+    if tokens.is_empty() || tokens.len() > 5 {
+        return None;
+    }
+    if ph1x_stage8_5_has_any(tokens, STAGE8_5_TOOL_TIME_TERMS)
+        || ph1x_stage8_5_has_any(tokens, STAGE8_5_TOOL_WEATHER_TERMS)
+        || ph1x_stage8_5_has_any(tokens, STAGE8_5_CONFIRMATION_TERMS)
+    {
+        return None;
+    }
+    if ph1x_stage8_5_has_any(
+        tokens,
+        &[
+            "you", "your", "yours", "me", "my", "mine", "meaning", "proof", "evidence", "source",
+            "sources",
+        ],
+    ) {
+        return None;
+    }
+    if ph1x_stage8_5_has_any(tokens, &["like"])
+        && ph1x_stage8_5_has_any(tokens, &["in", "at", "for"])
+    {
+        return None;
+    }
+    let trimmed = text.trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace());
+    let lower = trimmed.to_ascii_lowercase();
+    for marker in [
+        "what about ",
+        "same for ",
+        "same question ",
+        "and ",
+        "also ",
+    ] {
+        if lower.starts_with(marker) {
+            let tail = trimmed.get(marker.len()..).unwrap_or_default();
+            let candidate = ph1x_stage8_5_clean_entity_fragment(tail)?;
+            return Some(candidate);
+        }
+    }
+    if ph1x_stage8_5_has_any(
+        tokens,
+        &[
+            "what", "where", "who", "why", "how", "with", "for", "from", "there", "here",
+        ],
+    ) {
+        return None;
+    }
+    ph1x_stage8_5_clean_entity_fragment(trimmed)
+}
+
+fn ph1x_stage8_5_clean_entity_fragment(fragment: &str) -> Option<String> {
+    let words = fragment
+        .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace())
+        .split_whitespace()
+        .take(4)
+        .collect::<Vec<_>>();
+    if words.is_empty() {
+        return None;
+    }
+    let normalized_words = words
+        .iter()
+        .map(|word| ph1x_stage8_5_normalized(word))
+        .collect::<Vec<_>>();
+    if normalized_words.iter().any(|word| {
+        word.is_empty()
+            || STAGE8_5_STOP_TOKENS.contains(&word.as_str())
+            || STAGE8_5_REFERENCE_TERMS.contains(&word.as_str())
+    }) {
+        return None;
+    }
+    Some(words.join(" "))
+}
+
+fn ph1x_stage8_5_tool_family_from_route(route: LastTurnRouteClass) -> Option<Stage8_5ToolFamily> {
+    match route {
+        LastTurnRouteClass::ToolTime => Some(Stage8_5ToolFamily::Time),
+        LastTurnRouteClass::ToolWeather => Some(Stage8_5ToolFamily::Weather),
+        _ => None,
+    }
+}
+
+fn ph1x_stage8_5_tool_prompt(tool_family: Stage8_5ToolFamily, target: &str) -> String {
+    format!("what is the {} in {}", tool_family.prompt_noun(), target)
+}
+
+fn ph1x_stage8_5_rewrite_previous_artifact_prompt(
+    thread_state: &ThreadState,
+    user_instruction: &str,
+    modifier: &str,
+) -> String {
+    let previous = thread_state
+        .last_turn_context
+        .as_ref()
+        .map(|context| ph1x_stage8_5_truncate_chars(context.answer_text.trim(), 1200))
+        .filter(|text| !text.trim().is_empty());
+    let instruction = format!(
+        "Modify the active writing artifact according to this user instruction: {user_instruction}. Preserve the existing subject, recipient, commitments, and purpose unless the user explicitly changes them. Detected modification signal: {modifier}."
+    );
+    match previous {
+        Some(previous) => format!("{instruction}\n\nPrevious draft:\n{previous}"),
+        None => instruction.to_string(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Stage8_5ToolChoice {
+    target: String,
+    alternatives: Vec<Stage8_5ToolFamily>,
+}
+
+fn ph1x_stage8_5_tool_choice_target(thread_state: &ThreadState) -> Option<String> {
+    let subject = thread_state.active_subject_ref.as_deref()?;
+    let target = subject.strip_prefix(STAGE8_5_TOOL_CHOICE_PREFIX)?;
+    let clean = target.trim();
+    if clean.is_empty() {
+        None
+    } else {
+        Some(clean.replace('_', " "))
+    }
+}
+
+fn ph1x_stage8_5_tool_choice_from_response(response: &str) -> Option<Stage8_5ToolChoice> {
+    let trimmed = response.trim();
+    if !trimmed.ends_with('?') {
+        return None;
+    }
+    let lower = ph1x_stage8_5_normalized(trimmed);
+    if !lower.contains(" or ") || !lower.contains(" for ") {
+        return None;
+    }
+    let alternatives = lower
+        .split(" for ")
+        .next()
+        .unwrap_or_default()
+        .split(" or ")
+        .filter_map(|part| {
+            part.split_whitespace()
+                .rev()
+                .find_map(Stage8_5ToolFamily::from_token)
+        })
+        .collect::<Vec<_>>();
+    if alternatives.len() < 2 {
+        return None;
+    }
+    let target = trimmed
+        .rsplit_once(" for ")
+        .map(|(_, target)| target)
+        .unwrap_or_default()
+        .trim()
+        .trim_end_matches('?')
+        .trim();
+    if target.is_empty() {
+        None
+    } else {
+        Some(Stage8_5ToolChoice {
+            target: target.to_string(),
+            alternatives,
+        })
+    }
+}
+
+fn ph1x_stage8_5_tool_choice_refs(choice: &Stage8_5ToolChoice) -> Vec<String> {
+    let mut refs = vec![
+        STAGE8_5_EXPECT_TOOL_CHOICE_REF.to_string(),
+        "ph1x:discourse:clarification".to_string(),
+        ph1x_stage8_5_make_ref("ph1x:clarification_target", &choice.target),
+    ];
+    for alternative in &choice.alternatives {
+        refs.push(format!(
+            "ph1x:clarification_option:{}",
+            alternative.ref_id()
+        ));
+    }
+    refs
+}
+
+fn ph1x_stage8_5_last_tool_entity(thread_state: &ThreadState) -> Option<String> {
+    thread_state
+        .last_turn_context
+        .as_ref()
+        .and_then(|context| ph1x_stage8_5_entity_after_marker(&context.answer_text))
+}
+
+fn ph1x_stage8_5_entity_after_marker(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    for marker in [" in ", " for ", " at "].iter() {
+        if let Some((_, tail)) = trimmed.rsplit_once(marker) {
+            let candidate = tail
+                .trim()
+                .trim_matches(|ch: char| ch.is_ascii_punctuation() || ch.is_whitespace());
+            let words = candidate
+                .split_whitespace()
+                .take(4)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if !words.is_empty() {
+                return Some(words);
+            }
+        }
+    }
+    ph1x_stage8_5_extract_prior_options(trimmed)
+        .into_iter()
+        .next()
+}
+
+fn ph1x_stage8_5_planning_refs(features: &Stage8_5Features, response: &str) -> Vec<String> {
+    let mut refs = vec![
+        STAGE8_5_FRAME_PLANNING_REF.to_string(),
+        STAGE8_5_EXPECT_RECOMMENDATION_REF.to_string(),
+        STAGE8_5_OPEN_SELECTION_REF.to_string(),
+        STAGE8_5_COMPARISON_SET_REF.to_string(),
+    ];
+    if let Some(destination) = &features.destination {
+        refs.push(ph1x_stage8_5_make_ref("ph1x:topic", destination));
+    }
+    for constraint in &features.constraints {
+        refs.push(ph1x_stage8_5_make_ref("ph1x:constraint", constraint));
+    }
+    for option in ph1x_stage8_5_extract_prior_options(response) {
+        refs.push(ph1x_stage8_5_make_ref("ph1x:option", &option));
+    }
+    refs
+}
+
+fn ph1x_stage8_5_writing_refs(features: &Stage8_5Features) -> Vec<String> {
+    let mut refs = vec![
+        STAGE8_5_FRAME_WRITING_REF.to_string(),
+        STAGE8_5_EXPECT_REWRITE_REF.to_string(),
+        STAGE8_5_REFERENCE_PREVIOUS_REF.to_string(),
+    ];
+    for token in &features.tokens {
+        if STAGE8_5_ARTIFACT_MARKERS.contains(&token.as_str()) {
+            refs.push(ph1x_stage8_5_make_ref("ph1x:artifact", token));
+        }
+    }
+    if let Some(destination) = &features.destination {
+        refs.push(ph1x_stage8_5_make_ref("ph1x:entity", destination));
+    }
+    refs
+}
+
+fn ph1x_stage8_5_has_planning_frame(thread_state: &ThreadState) -> bool {
+    thread_state.active_subject_ref.as_deref() == Some(STAGE8_5_PLANNING_SUBJECT)
+        || thread_state.interrupted_subject_ref.as_deref() == Some(STAGE8_5_PLANNING_SUBJECT)
+        || thread_state
+            .pinned_context_refs
+            .iter()
+            .any(|context_ref| context_ref == STAGE8_5_FRAME_PLANNING_REF)
+}
+
+fn ph1x_stage8_5_has_writing_frame(thread_state: &ThreadState) -> bool {
+    thread_state.active_subject_ref.as_deref() == Some(STAGE8_5_WRITING_SUBJECT)
+        || thread_state
+            .pinned_context_refs
+            .iter()
+            .any(|context_ref| context_ref == STAGE8_5_FRAME_WRITING_REF)
+}
+
+fn ph1x_stage8_5_frame_values(thread_state: &ThreadState, prefix: &str) -> Vec<String> {
+    thread_state
+        .pinned_context_refs
+        .iter()
+        .filter_map(|context_ref| context_ref.strip_prefix(prefix))
+        .map(|value| value.replace('_', " "))
+        .collect()
+}
+
+fn ph1x_stage8_5_planning_prompt(
+    thread_state: &ThreadState,
+    user_text: &str,
+    timing_followup: bool,
+    prior_options_followup: bool,
+) -> String {
+    let topics = ph1x_stage8_5_frame_values(thread_state, "ph1x:topic:");
+    let constraints = ph1x_stage8_5_frame_values(thread_state, "ph1x:constraint:");
+    let options = ph1x_stage8_5_frame_values(thread_state, "ph1x:option:");
+    let topic_text = ph1x_stage8_5_join_or_default(&topics, "the active trip or planning topic");
+    let constraint_text =
+        ph1x_stage8_5_join_or_default(&constraints, "the user's stated constraints");
+    let option_text =
+        ph1x_stage8_5_join_or_default(&options, "the prior options already presented");
+    let focus = if timing_followup {
+        "The user is asking for timing guidance inside the current planning frame."
+    } else if prior_options_followup {
+        "The user is asking about prior recommendations inside the current planning frame."
+    } else {
+        "The user is asking for a recommendation inside the current planning frame."
+    };
+    format!(
+        "Continue the active planning frame. Topic: {topic_text}. Constraints and interests: {constraint_text}. Prior options: {option_text}. {focus} Answer this follow-up inside that frame and do not switch to unrelated destinations unless the user asks to change topic: {user_text}"
+    )
+}
+
+fn ph1x_stage8_5_join_or_default(values: &[String], default: &str) -> String {
+    if values.is_empty() {
+        default.to_string()
+    } else {
+        values.join(", ")
+    }
+}
+
+fn ph1x_stage8_5_extract_prior_options(response: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut current = Vec::new();
+    for raw in response.split_whitespace() {
+        let clean = raw.trim_matches(|ch: char| !ch.is_ascii_alphanumeric());
+        let starts_upper = clean
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase());
+        if starts_upper && clean.len() > 2 && !ph1x_stage8_5_common_sentence_start(clean) {
+            current.push(clean.to_string());
+            continue;
+        }
+        if !current.is_empty() {
+            out.push(current.join(" "));
+            current.clear();
+        }
+    }
+    if !current.is_empty() {
+        out.push(current.join(" "));
+    }
+    out.sort();
+    out.dedup();
+    out.into_iter().take(6).collect()
+}
+
+fn ph1x_stage8_5_common_sentence_start(value: &str) -> bool {
+    matches!(
+        value,
+        "I" | "It" | "The" | "A" | "An" | "For" | "Both" | "Another" | "Consider" | "Sure"
+    )
+}
+
+fn ph1x_stage8_5_protected_request_from_subject(thread_state: &ThreadState) -> Option<String> {
+    let subject = thread_state.active_subject_ref.as_deref()?;
+    let encoded = subject.strip_prefix(STAGE8_5_PROTECTED_PREFIX)?;
+    let decoded = encoded.replace('_', " ");
+    (!decoded.trim().is_empty()).then_some(decoded)
+}
+
+fn ph1x_stage8_5_make_ref(prefix: &str, value: &str) -> String {
+    format!("{prefix}:{}", ph1x_stage8_5_slug(value))
+}
+
+fn ph1x_stage8_5_clean_ref(value: &str) -> String {
+    ph1x_stage8_5_clean_context_fragment(&value.replace(' ', "_"), 128)
+}
+
+fn ph1x_stage8_5_clean_context_fragment(value: &str, max_chars: usize) -> String {
+    ph1x_stage8_5_truncate_chars(
+        &value
+            .trim()
+            .chars()
+            .filter(|ch| !ch.is_control() && !ch.is_ascii_whitespace())
+            .collect::<String>(),
+        max_chars,
+    )
+}
+
+fn ph1x_stage8_5_slug(value: &str) -> String {
+    ph1x_stage8_5_normalized(value)
+        .split_whitespace()
+        .take(8)
+        .collect::<Vec<_>>()
+        .join("_")
+}
+
+fn ph1x_stage8_5_truncate_chars(text: &str, max_chars: usize) -> String {
+    let mut out = String::new();
+    for ch in text.chars().take(max_chars) {
+        out.push(ch);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3840,8 +4808,8 @@ mod tests {
     use selene_kernel_contracts::ph1tts::AnswerId;
     use selene_kernel_contracts::ph1x::{
         ConfirmAnswer, DispatchRequest, IdentityContext, IdentityPromptState,
-        InterruptContinuityOutcome, InterruptResumePolicy, InterruptSubjectRelation, ResumeBuffer,
-        ThreadState, TtsResumeSnapshot,
+        InterruptContinuityOutcome, InterruptResumePolicy, InterruptSubjectRelation,
+        LastTurnContext, LastTurnRouteClass, ResumeBuffer, ThreadState, TtsResumeSnapshot,
     };
     use selene_kernel_contracts::{MonotonicTimeNs, ReasonCodeId, SchemaVersion};
 
@@ -3857,6 +4825,24 @@ mod tests {
         ThreadState::empty_v1()
     }
 
+    fn last_turn_context(route_class: LastTurnRouteClass, answer_text: &str) -> LastTurnContext {
+        let tool_used = matches!(
+            route_class,
+            LastTurnRouteClass::ToolTime
+                | LastTurnRouteClass::ToolWeather
+                | LastTurnRouteClass::ToolOther
+        );
+        LastTurnContext::v1(
+            route_class,
+            tool_used,
+            tool_used,
+            None,
+            answer_text.to_string(),
+            "0".repeat(64),
+        )
+        .unwrap()
+    }
+
     fn base_thread_with_continuity(subject_ref: &str, active_speaker_user_id: &str) -> ThreadState {
         ThreadState::empty_v1()
             .with_continuity(
@@ -3868,6 +4854,438 @@ mod tests {
 
     fn now(n: u64) -> MonotonicTimeNs {
         MonotonicTimeNs(n)
+    }
+
+    #[test]
+    fn stage8_5_japan_planning_city_followup_uses_active_context() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I'm interested in Japan and doing some skiing and visiting some great Japanese restaurants."),
+	            Some("Japan has strong ski and restaurant options."),
+	            Some("PUBLIC_CHAT"),
+	        );
+
+        let rewritten = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Which city do you suggest?"),
+        )
+        .expect("Japan planning follow-up should carry context");
+        let areas = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Which areas do you suggest?"),
+        )
+        .expect("area recommendation should use the same active planning frame");
+
+        assert!(rewritten.contains("active planning frame"));
+        assert!(areas.contains("active planning frame"));
+        assert!(rewritten.contains("japan"));
+        assert!(areas.contains("japan"));
+        assert!(rewritten.contains("skiing"));
+        assert!(rewritten.contains("restaurants"));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == "ph1x:topic:japan"));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_COMPARISON_SET_REF));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_EXPECT_RECOMMENDATION_REF));
+    }
+
+    #[test]
+    fn stage8_5_time_followup_preserves_tool_family_for_new_entity() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolTime,
+            "It's 9:40 AM in New York.",
+        ));
+
+        let rewritten =
+            ph1x_universal_active_context_followup_query(&thread, Some("What about Sydney?"))
+                .expect("new entity follow-up should preserve the time tool family");
+
+        assert_eq!(rewritten, "what is the time in Sydney");
+    }
+
+    #[test]
+    fn stage8_5_time_followup_handles_unseen_place_fragment() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolTime,
+            "It's 8:15 PM in Paris.",
+        ));
+
+        let rewritten = ph1x_universal_active_context_followup_query(&thread, Some("And Berlin"))
+            .expect("short entity fragment should preserve the prior tool family");
+
+        assert_eq!(rewritten, "what is the time in Berlin");
+    }
+
+    #[test]
+    fn stage8_5_planning_region_followup_uses_unseen_destination() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I want to plan a trip to Canada with snow and dining."),
+            Some("Canada has several mountain regions with strong dining scenes."),
+            Some("PUBLIC_CHAT"),
+        );
+
+        let rewritten = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Which regions would you recommend?"),
+        )
+        .expect("planning area follow-up should carry the active frame");
+
+        assert!(rewritten.contains("active planning frame"));
+        assert!(rewritten.contains("canada"));
+        assert!(rewritten.contains("snow"));
+        assert!(rewritten.contains("dining"));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_OPEN_SELECTION_REF));
+    }
+
+    #[test]
+    fn stage8_5_planning_place_and_base_questions_share_same_frame() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I'm interested in Japan and doing some skiing and visiting some great Japanese restaurants."),
+            Some("Japan has strong ski and restaurant options."),
+            Some("PUBLIC_CHAT"),
+        );
+
+        let place = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Which place would you pick?"),
+        )
+        .expect("place recommendation should stay in the planning frame");
+        let base = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Where would you base the trip?"),
+        )
+        .expect("base recommendation should stay in the planning frame");
+
+        assert!(place.contains("active planning frame"));
+        assert!(place.contains("japan"));
+        assert!(base.contains("active planning frame"));
+        assert!(base.contains("japan"));
+    }
+
+    #[test]
+    fn stage8_5_japan_season_followup_uses_planning_constraints() {
+        let seeded = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I'll be planning a trip to Japan."),
+            Some("That sounds exciting. What activities do you want to include?"),
+            Some("PUBLIC_CHAT"),
+        );
+        let thread = ph1x_update_universal_active_context_after_turn(
+            seeded,
+            Some("I want to do some skiing and enjoy Japanese food."),
+            Some("Consider visiting Niseko in Hokkaido or Hakuba for skiing and Japanese food."),
+            Some("PUBLIC_CHAT"),
+        );
+
+        let rewritten = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Which time of the year do you suggest?"),
+        )
+        .expect("Japan season follow-up should carry planning context");
+
+        assert!(rewritten.contains("active planning frame"));
+        assert!(rewritten.contains("japan"));
+        assert!(rewritten.contains("skiing"));
+        assert!(rewritten.contains("timing guidance"));
+    }
+
+    #[test]
+    fn stage8_5_japan_prior_options_survive_time_interruption() {
+        let seeded = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I'll be planning a trip to Japan."),
+            Some("That sounds exciting. What activities do you want to include?"),
+            Some("PUBLIC_CHAT"),
+        );
+        let japan_thread = ph1x_update_universal_active_context_after_turn(
+            seeded,
+            Some("I want to do some skiing and enjoy Japanese food."),
+            Some("Consider visiting Niseko in Hokkaido or Hakuba for skiing and Japanese food."),
+            Some("PUBLIC_CHAT"),
+        );
+        let interrupted_thread = ph1x_update_universal_active_context_after_turn(
+            japan_thread,
+            Some("What time is it in Brisbane?"),
+            Some("It's 12:48 AM in Brisbane."),
+            Some("TOOL_TIME"),
+        );
+
+        let rewritten = ph1x_universal_active_context_followup_query(
+            &interrupted_thread,
+            Some("And where did you suggest we should go?"),
+        )
+        .expect("returnable Japan topic should preserve prior suggested options");
+
+        assert!(rewritten.contains("niseko"));
+        assert!(rewritten.contains("hakuba"));
+        assert!(interrupted_thread
+            .interrupted_subject_ref
+            .as_deref()
+            .is_some_and(|subject| subject == STAGE8_5_PLANNING_SUBJECT));
+    }
+
+    #[test]
+    fn stage8_5_tool_choice_the_time_fills_pending_location() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("And Melbourne"),
+            Some("Should I check the weather or the time for Melbourne?"),
+            Some("H381_H380_LIVE_RESPONSE"),
+        );
+
+        let rewritten = ph1x_universal_active_context_followup_query(&thread, Some("The time"))
+            .expect("tool-choice follow-up should resolve the pending location");
+
+        assert_eq!(rewritten, "what is the time in melbourne");
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == "ph1x:clarification_option:weather"));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == "ph1x:clarification_target:melbourne"));
+    }
+
+    #[test]
+    fn stage8_5_tool_choice_the_time_uses_last_turn_clarification_fallback() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::Clarify,
+            "Should I check the weather or the time for Melbourne?",
+        ));
+
+        let rewritten = ph1x_universal_active_context_followup_query(&thread, Some("The time"))
+            .expect("tool-choice answer should resolve from prior clarification text");
+
+        assert_eq!(rewritten, "what is the time in Melbourne");
+    }
+
+    #[test]
+    fn stage8_5_writing_artifact_shorter_resolves_previous_story() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Write me a short story about a locked factory."),
+            Some("At midnight, the locked factory hummed back to life."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "At midnight, the locked factory hummed back to life.",
+        ));
+
+        let rewritten =
+            ph1x_universal_active_context_followup_query(&thread, Some("Make it shorter."))
+                .expect("writing follow-up should resolve the previous story");
+
+        assert!(rewritten.contains("active writing artifact"));
+        assert!(rewritten.contains("locked factory"));
+        assert!(rewritten.contains("Previous draft"));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_EXPECT_REWRITE_REF));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_REFERENCE_PREVIOUS_REF));
+    }
+
+    #[test]
+    fn stage8_5_writing_artifact_handles_unseen_style_modifiers() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Write me a short story about a locked factory."),
+            Some("At midnight, the locked factory hummed back to life."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "At midnight, the locked factory hummed back to life.",
+        ));
+
+        let tighten = ph1x_universal_active_context_followup_query(&thread, Some("Tighten it."))
+            .expect("unseen concise-edit verb should modify the writing artifact");
+        let darker = ph1x_universal_active_context_followup_query(&thread, Some("Make it darker."))
+            .expect("style-edit verb should modify the writing artifact");
+
+        assert!(tighten.contains("active writing artifact"));
+        assert!(tighten.contains("locked factory"));
+        assert!(darker.contains("darker"));
+        assert!(darker.contains("Previous draft"));
+    }
+
+    #[test]
+    fn stage8_5_writing_artifact_warmer_keeps_mark_and_next_week() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Draft a message to Mark saying I'll come back next week."),
+            Some("Mark, I will come back next week."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "Mark, I will come back next week.",
+        ));
+
+        let rewritten =
+            ph1x_universal_active_context_followup_query(&thread, Some("Make it warmer."))
+                .expect("style follow-up should resolve the draft artifact");
+
+        assert!(rewritten.contains("Mark"));
+        assert!(rewritten.contains("come back next week"));
+        assert!(rewritten.contains("warmer"));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_FRAME_WRITING_REF));
+    }
+
+    #[test]
+    fn stage8_5_message_artifact_handles_shorten_and_add_instructions() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Draft a message to Mark saying I'll come back next week."),
+            Some("Mark, I will come back next week."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "Mark, I will come back next week.",
+        ));
+
+        let shorten =
+            ph1x_universal_active_context_followup_query(&thread, Some("Shorten the draft."))
+                .expect("draft shortening should modify the active artifact");
+        let add_detail = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Add that I'll confirm timing soon."),
+        )
+        .expect("add-detail instruction should modify the active artifact");
+
+        assert!(shorten.contains("active writing artifact"));
+        assert!(shorten.contains("Mark"));
+        assert!(add_detail.contains("confirm timing soon"));
+        assert!(add_detail.contains("Previous draft"));
+    }
+
+    #[test]
+    fn stage8_5_topic_switch_does_not_steal_name_question() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I'm interested in Japan and doing some skiing and visiting some great Japanese restaurants."),
+            Some("Japan has strong ski and restaurant options."),
+	            Some("PUBLIC_CHAT"),
+	        );
+
+        let rewritten =
+            ph1x_universal_active_context_followup_query(&thread, Some("What is your name?"));
+
+        assert!(rewritten.is_none());
+
+        let joke = ph1x_universal_active_context_followup_query(&thread, Some("Tell me a joke."));
+        assert!(joke.is_none());
+    }
+
+    #[test]
+    fn stage8_5_origin_and_metadiscourse_do_not_become_place_followups() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolTime,
+            "It's 9:40 AM in New York.",
+        ));
+
+        let origin =
+            ph1x_universal_active_context_followup_query(&thread, Some("Where are you from?"));
+        let meaning =
+            ph1x_universal_active_context_followup_query(&thread, Some("With meaning behind it"));
+
+        assert!(origin.is_none());
+        assert!(meaning.is_none());
+    }
+
+    #[test]
+    fn stage8_5_condition_like_query_defers_to_current_turn_weather_route() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolTime,
+            "It's 9:40 AM in New York.",
+        ));
+
+        let rewritten = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Like in Sydney right now."),
+        );
+
+        assert!(rewritten.is_none());
+    }
+
+    #[test]
+    fn stage8_5_weather_time_correction_uses_prior_location() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolWeather,
+            "Sydney is mild and partly cloudy.",
+        ));
+
+        let rewritten =
+            ph1x_universal_active_context_followup_query(&thread, Some("Not weather, time."))
+                .expect("weather-to-time correction should keep the prior location");
+
+        assert_eq!(rewritten, "what is the time in Sydney");
+    }
+
+    #[test]
+    fn stage8_5_negated_tool_without_replacement_does_not_reroute() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolWeather,
+            "Barcelona is mild and cloudy.",
+        ));
+
+        let rewritten = ph1x_universal_active_context_followup_query(
+            &thread,
+            Some("Not the weather, the proof"),
+        );
+
+        assert!(rewritten.is_none());
+    }
+
+    #[test]
+    fn stage8_5_protected_confirmation_preserves_fail_closed_boundary() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Organize payroll for Tim."),
+            Some("I can't perform or prepare that protected business action from this turn. NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION."),
+            Some("H411_PROTECTED_EXECUTION_FAIL_CLOSED_PRESERVED"),
+        );
+
+        let rewritten = ph1x_universal_active_context_followup_query(&thread, Some("Yes, do it."))
+            .expect("protected confirmation should stay in protected payroll lane");
+
+        assert_eq!(rewritten, "organize payroll for tim");
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_PROTECTED_RISK_REF));
+        assert!(thread
+            .pinned_context_refs
+            .iter()
+            .any(|item| item == STAGE8_5_FAIL_CLOSED_REF));
     }
 
     fn id_text() -> IdentityContext {
