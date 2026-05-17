@@ -1329,7 +1329,9 @@ protected execution;
 
 authority decisions.
 
-Before any Desktop app proof, live voice proof, manual smoke, xcodebuild proof, or native UI test, Codex must prove that the app being opened is the current app built from the current repo HEAD.
+Before any Desktop app proof, live voice proof, manual smoke, JD live smoke, xcodebuild proof, or native UI test, Codex must prove that the app being opened is the current app built from the current repo HEAD.
+
+No live Desktop/JD smoke proof counts unless Codex first closes stale app instances, proves one Desktop app and one managed adapter/runtime owner, shows the exact launched bundle path, and proves `/healthz` or the repo-equivalent health/provenance endpoint reports the current repo/head provenance.
 
 Codex must not test an old app bundle, stale DerivedData app, old /Applications copy, duplicate Desktop process, or duplicate managed adapter process.
 
@@ -1369,6 +1371,16 @@ attach to existing correct adapter only if ownership/version is proven;
 
 otherwise stop and report.
 
+Prove runtime/app provenance:
+
+query `/healthz` or the repo-equivalent health/provenance endpoint;
+
+record current repo HEAD from that health/provenance result when exposed;
+
+record adapter process/port owner;
+
+prove exactly one Desktop app instance and exactly one adapter/runtime owner before JD is asked to run live smoke.
+
 After any Desktop code change:
 
 rebuild the Desktop app;
@@ -1391,6 +1403,8 @@ If more than one managed adapter/runtime owner is active, stop and report: MULTI
 
 If the app path points to an old bundle or unknown bundle, stop and report: WRONG_DESKTOP_APP_BUNDLE_UNDER_TEST
 
+If `/healthz` or the repo-equivalent provenance endpoint cannot prove current repo/head provenance, stop and report: DESKTOP_HEALTHZ_PROVENANCE_UNPROVEN
+
 Every Desktop/live-app proof final report must include:
 
 current HEAD;
@@ -1402,6 +1416,8 @@ exact app bundle path launched;
 process count before and after launch;
 
 adapter process/port owner proof;
+
+health/provenance endpoint proof, including repo/head provenance when exposed;
 
 confirmation stale app instances were closed;
 
