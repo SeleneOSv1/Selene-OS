@@ -19,17 +19,18 @@ use axum::{
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use selene_adapter::{
     app_ui_assets, build_runtime_execution_envelope_for_voice_turn_request, AdapterHealthResponse,
-    AdapterProcessProvenance, AdapterRuntime, AdapterSyncHealth, InviteLinkOpenAdapterRequest,
-    InviteLinkOpenAdapterResponse, OnboardingContinueAdapterRequest,
-    OnboardingContinueAdapterResponse, PublicBrainTraceReportResponse, SessionAttachAdapterRequest,
-    SessionAttachAdapterResponse, SessionIdleCloseCheckAdapterRequest,
-    SessionIdleCloseCheckAdapterResponse, SessionPostureEvidenceAdapterRequest,
-    SessionPostureEvidenceAdapterResponse, SessionRecentListAdapterRequest,
-    SessionRecentListAdapterResponse, SessionRecoverAdapterRequest, SessionRecoverAdapterResponse,
-    SessionResumeAdapterRequest, SessionResumeAdapterResponse, UiChatTranscriptResponse,
-    UiHealthChecksResponse, UiHealthDetailFilter, UiHealthDetailResponse,
-    UiHealthReportQueryRequest, UiHealthReportQueryResponse, UiHealthSummary,
-    UiHealthTimelinePaging, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
+    AdapterProcessProvenance, AdapterRuntime, AdapterSyncHealth, DesktopOpenAiTtsEvidenceInput,
+    DesktopOpenAiTtsEvidenceStatus, InviteLinkOpenAdapterRequest, InviteLinkOpenAdapterResponse,
+    OnboardingContinueAdapterRequest, OnboardingContinueAdapterResponse,
+    PublicBrainTraceReportResponse, SessionAttachAdapterRequest, SessionAttachAdapterResponse,
+    SessionIdleCloseCheckAdapterRequest, SessionIdleCloseCheckAdapterResponse,
+    SessionPostureEvidenceAdapterRequest, SessionPostureEvidenceAdapterResponse,
+    SessionRecentListAdapterRequest, SessionRecentListAdapterResponse,
+    SessionRecoverAdapterRequest, SessionRecoverAdapterResponse, SessionResumeAdapterRequest,
+    SessionResumeAdapterResponse, UiChatTranscriptResponse, UiHealthChecksResponse,
+    UiHealthDetailFilter, UiHealthDetailResponse, UiHealthReportQueryRequest,
+    UiHealthReportQueryResponse, UiHealthSummary, UiHealthTimelinePaging,
+    UiInternalHistoryEvidenceResponse, VoiceTurnAdapterRequest, VoiceTurnAdapterResponse,
     VoiceTurnIngressError, WakeProfileAvailabilityRefreshAdapterRequest,
     WakeProfileAvailabilityRefreshAdapterResponse,
 };
@@ -300,6 +301,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/v1/ui/health/detail/:check_id", get(ui_health_detail))
         .route("/v1/ui/health/report/query", post(ui_health_report_query))
         .route("/v1/ui/chat/transcript", get(ui_chat_transcript))
+        .route(
+            "/v1/ui/internal-history/evidence",
+            get(ui_internal_history_evidence),
+        )
         .route("/v1/ui/public-brain/trace", get(ui_public_brain_trace))
         .route("/v1/voice/turn", post(run_voice_turn))
         .route(
@@ -578,6 +583,30 @@ async fn ui_chat_transcript(
     (
         StatusCode::OK,
         Json(runtime.ui_chat_transcript_report(None)),
+    )
+}
+
+async fn ui_internal_history_evidence(
+    State(state): State<HttpAdapterState>,
+) -> (StatusCode, Json<UiInternalHistoryEvidenceResponse>) {
+    let runtime = match state.runtime.lock() {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(UiInternalHistoryEvidenceResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: 0,
+                    note: Some("adapter runtime lock poisoned".to_string()),
+                    total_events: 0,
+                    events: Vec::new(),
+                }),
+            );
+        }
+    };
+    (
+        StatusCode::OK,
+        Json(runtime.ui_internal_history_evidence_report(None)),
     )
 }
 
@@ -992,6 +1021,30 @@ async fn run_desktop_openai_tts_speech(
                 );
             }
             let audio_sha256 = sha256_hex(&audio);
+            if let Ok(runtime) = state.runtime.lock() {
+                if let Err(err) =
+                    runtime.record_desktop_openai_tts_evidence(DesktopOpenAiTtsEvidenceInput {
+                        correlation_id: request.correlation_id,
+                        turn_id: request
+                            .turn_id
+                            .as_deref()
+                            .and_then(|value| value.trim().parse::<u64>().ok()),
+                        session_id: request.session_id.clone(),
+                        actor_user_id: request.actor_user_id.clone(),
+                        device_id: request.device_id.clone(),
+                        request_id: request.request_id.clone(),
+                        answer_text_hash: Some(answer_text_sha256.clone()),
+                        audio_sha256: Some(audio_sha256.clone()),
+                        audio_byte_len: Some(audio_byte_len),
+                        model: model.clone(),
+                        voice: voice.clone(),
+                        status: DesktopOpenAiTtsEvidenceStatus::Ready,
+                        failure_reason: None,
+                    })
+                {
+                    eprintln!("selene_adapter stage7 tts ready evidence failed: {err}");
+                }
+            }
             let response = DesktopOpenAiTtsSpeechResponse {
                 status: "ok".to_string(),
                 outcome: "OPENAI_TTS_SPEECH_CREATED".to_string(),
@@ -1014,6 +1067,30 @@ async fn run_desktop_openai_tts_speech(
         }
         Err(reason) => {
             release_openai_tts_failed_reservation(&state.tts_request_limiter, &limiter_reservation);
+            if let Ok(runtime) = state.runtime.lock() {
+                if let Err(err) =
+                    runtime.record_desktop_openai_tts_evidence(DesktopOpenAiTtsEvidenceInput {
+                        correlation_id: request.correlation_id,
+                        turn_id: request
+                            .turn_id
+                            .as_deref()
+                            .and_then(|value| value.trim().parse::<u64>().ok()),
+                        session_id: request.session_id.clone(),
+                        actor_user_id: request.actor_user_id.clone(),
+                        device_id: request.device_id.clone(),
+                        request_id: request.request_id.clone(),
+                        answer_text_hash: Some(answer_text_sha256),
+                        audio_sha256: None,
+                        audio_byte_len: None,
+                        model,
+                        voice,
+                        status: DesktopOpenAiTtsEvidenceStatus::FailedClosed,
+                        failure_reason: Some(reason.clone()),
+                    })
+                {
+                    eprintln!("selene_adapter stage7 tts fail evidence failed: {err}");
+                }
+            }
             desktop_openai_tts_error_response(
                 StatusCode::SERVICE_UNAVAILABLE,
                 &request,

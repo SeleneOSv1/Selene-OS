@@ -78,7 +78,11 @@ use selene_kernel_contracts::ph1e::{
     CacheStatus, SearchImagePacket, ToolCatalogRef, ToolName, ToolResponse, ToolResult, ToolStatus,
 };
 use selene_kernel_contracts::ph1f::{
-    ConversationRole, ConversationSource, ConversationTurnInput, PrivacyScope,
+    ConversationRole, ConversationSource, ConversationTurnId, ConversationTurnInput,
+    InputTranscriptEvidenceRefs, InternalHistoryEventKind, InternalHistoryEvidenceInput,
+    InternalHistoryEvidenceRecord, InternalHistoryEvidenceRefs, InternalHistoryModality,
+    LiveContextEvidenceRefs, MemoryCandidateStatus, MemoryEvidenceRefs, PrivacyScope,
+    ResponseSpokenEvidenceRefs, SpeakerEvidenceRefs, TtsEvidenceStatus,
 };
 use selene_kernel_contracts::ph1feedback::FeedbackEventType;
 use selene_kernel_contracts::ph1health::{
@@ -361,6 +365,29 @@ pub struct VoiceTurnAdapterResponse {
     pub screen_lifecycle_action: Option<VoiceTurnScreenLifecycleActionPacket>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_lifecycle_action: Option<VoiceTurnSessionLifecycleActionPacket>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopOpenAiTtsEvidenceStatus {
+    Ready,
+    FailedClosed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopOpenAiTtsEvidenceInput {
+    pub correlation_id: u64,
+    pub turn_id: Option<u64>,
+    pub session_id: Option<String>,
+    pub actor_user_id: String,
+    pub device_id: String,
+    pub request_id: Option<String>,
+    pub answer_text_hash: Option<String>,
+    pub audio_sha256: Option<String>,
+    pub audio_byte_len: Option<u64>,
+    pub model: String,
+    pub voice: String,
+    pub status: DesktopOpenAiTtsEvidenceStatus,
+    pub failure_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -1011,6 +1038,7 @@ struct ReusedResponseTranscriptUpdate<'a> {
     actor_user_id: &'a UserId,
     device_id: &'a DeviceId,
     response: &'a VoiceTurnAdapterResponse,
+    user_source: ConversationSource,
     user_text_final: Option<&'a str>,
     selene_text_final: Option<&'a str>,
 }
@@ -1518,6 +1546,119 @@ pub struct UiChatTranscriptResponse {
     pub generated_at_ns: u64,
     pub note: Option<String>,
     pub messages: Vec<UiTranscriptMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistoryEvidenceResponse {
+    pub status: String,
+    pub generated_at_ns: u64,
+    pub note: Option<String>,
+    pub total_events: usize,
+    pub events: Vec<UiInternalHistoryEvidenceRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistoryEvidenceRow {
+    pub schema_version: u32,
+    pub internal_history_event_id: u64,
+    pub event_kind: String,
+    pub conversation_turn_id: Option<u64>,
+    pub correlation_id: String,
+    pub turn_id: String,
+    pub session_id: Option<String>,
+    pub thread_key: Option<String>,
+    pub role: Option<String>,
+    pub source: Option<String>,
+    pub modality: String,
+    pub speaker: UiInternalHistorySpeakerSummary,
+    pub input: UiInternalHistoryInputSummary,
+    pub response: UiInternalHistoryResponseSummary,
+    pub ph1x: UiInternalHistoryPh1xSummary,
+    pub ph1m: UiInternalHistoryPh1mSummary,
+    pub refs: UiInternalHistoryRefsSummary,
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistorySpeakerSummary {
+    pub user_id: Option<String>,
+    pub actor_id: Option<String>,
+    pub device_id: Option<String>,
+    pub speaker_id: Option<String>,
+    pub voice_profile_id: Option<String>,
+    pub identity_posture: String,
+    pub voice_id_confidence_bp: Option<u16>,
+    pub voice_identity_assertion_ref: Option<String>,
+    pub typed_actor_identity_ref: Option<String>,
+    pub has_voice_identity_evidence: bool,
+    pub has_typed_actor_identity: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistoryInputSummary {
+    pub committed_text_hash: Option<String>,
+    pub transcript_confidence_bp: Option<u16>,
+    pub ph1c_status: String,
+    pub rejected_reason_ref: Option<String>,
+    pub wake_boundary_ref: Option<String>,
+    pub input_language: Option<String>,
+    pub input_surface: Option<String>,
+    pub has_audio_capture_ref: bool,
+    pub has_unsent_draft_exclusion_ref: bool,
+    pub has_accidental_keystroke_rejection_ref: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistoryResponseSummary {
+    pub final_response_text_hash: Option<String>,
+    pub approved_tts_text_hash: Option<String>,
+    pub visible_response_hash: Option<String>,
+    pub spoken_text_hash: Option<String>,
+    pub tts_provider: Option<String>,
+    pub tts_status: String,
+    pub has_audio_generation_ref: bool,
+    pub has_playback_started_ref: bool,
+    pub has_playback_ended_ref: bool,
+    pub playback_failure_ref: Option<String>,
+    pub thinking_duration_ref: Option<String>,
+    pub rearm_ref: Option<String>,
+    pub spoken_matches_final_answer: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistoryPh1xSummary {
+    pub active_context_packet_ref: Option<String>,
+    pub human_conversation_directive_ref: Option<String>,
+    pub active_topic_ref: Option<String>,
+    pub active_intent_ref: Option<String>,
+    pub continuation_ref: Option<String>,
+    pub protected_risk_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistoryPh1mSummary {
+    pub memory_evidence_packet_ref: Option<String>,
+    pub memory_recall_request_ref: Option<String>,
+    pub fresh_memory_handoff_ref: Option<String>,
+    pub memory_continuation_decision_ref: Option<String>,
+    pub memory_no_match_ref: Option<String>,
+    pub memory_candidate_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct UiInternalHistoryRefsSummary {
+    pub tool_provider_refs: Vec<String>,
+    pub source_refs: Vec<String>,
+    pub presentation_refs: Vec<String>,
+    pub multimodal_refs: Vec<String>,
+    pub correction_refs: Vec<String>,
+    pub decision_task_refs: Vec<String>,
+    pub privacy_retention_refs: Vec<String>,
+    pub protected_execution_refs: Vec<String>,
+    pub timing_refs: Vec<String>,
+    pub device_surface_provenance_refs: Vec<String>,
+    pub audit_refs: Vec<String>,
+    pub replay_integrity_refs: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -5802,6 +5943,151 @@ impl AdapterRuntime {
         }
     }
 
+    pub fn ui_internal_history_evidence_report(
+        &self,
+        now_ns: Option<u64>,
+    ) -> UiInternalHistoryEvidenceResponse {
+        let now_ns = now_ns.unwrap_or_else(system_time_now_ns).max(1);
+        let rows = match self.store.lock() {
+            Ok(store) => store
+                .internal_history_evidence_ledger()
+                .iter()
+                .map(ui_internal_history_evidence_row_from_record)
+                .collect::<Vec<_>>(),
+            Err(_) => {
+                return UiInternalHistoryEvidenceResponse {
+                    status: "error".to_string(),
+                    generated_at_ns: now_ns,
+                    note: Some("adapter store lock poisoned".to_string()),
+                    total_events: 0,
+                    events: Vec::new(),
+                };
+            }
+        };
+        let note = if rows.is_empty() {
+            Some("No internal history evidence events yet.".to_string())
+        } else {
+            None
+        };
+        UiInternalHistoryEvidenceResponse {
+            status: "ok".to_string(),
+            generated_at_ns: now_ns,
+            total_events: rows.len(),
+            note,
+            events: rows,
+        }
+    }
+
+    pub fn record_desktop_openai_tts_evidence(
+        &self,
+        input: DesktopOpenAiTtsEvidenceInput,
+    ) -> Result<(), String> {
+        let Some(turn_id) = input.turn_id.filter(|value| *value > 0) else {
+            return Ok(());
+        };
+        let correlation_id = CorrelationId(input.correlation_id.into());
+        let turn_id = TurnId(turn_id);
+        let session_id = input
+            .session_id
+            .as_deref()
+            .and_then(|value| value.trim().parse::<u128>().ok())
+            .filter(|value| *value > 0)
+            .map(SessionId);
+        let now = MonotonicTimeNs(system_time_now_ns().max(1));
+        let mut response = ResponseSpokenEvidenceRefs::none();
+        response.final_response_text_hash = input.answer_text_hash.clone();
+        response.approved_tts_text_hash = input.answer_text_hash.clone();
+        response.spoken_text_hash = input.answer_text_hash.clone();
+        response.tts_provider = Some("openai_first_runtime".to_string());
+        response.tts_status = match input.status {
+            DesktopOpenAiTtsEvidenceStatus::Ready => TtsEvidenceStatus::Ready,
+            DesktopOpenAiTtsEvidenceStatus::FailedClosed => TtsEvidenceStatus::FailedClosed,
+        };
+        response.audio_generation_ref = input.audio_sha256.as_ref().map(|sha| {
+            format!(
+                "openai_tts_audio:{}:{}",
+                truncate_ascii(sha, 64),
+                input.audio_byte_len.unwrap_or(0)
+            )
+        });
+        response.playback_failure_ref = input.failure_reason.as_ref().map(|reason| {
+            format!(
+                "openai_tts_fail_closed:{}",
+                sanitize_idempotency_token(reason)
+            )
+        });
+        response.spoken_matches_final_answer = Some(matches!(
+            input.status,
+            DesktopOpenAiTtsEvidenceStatus::Ready
+        ));
+
+        let mut refs = InternalHistoryEvidenceRefs::none();
+        refs.timing_refs.push(format!(
+            "openai_tts_status:{:?}:{}:{}",
+            input.status, correlation_id.0, turn_id.0
+        ));
+        refs.device_surface_provenance_refs.push(format!(
+            "desktop_tts_device:{}",
+            sanitize_idempotency_token(&input.device_id)
+        ));
+        refs.device_surface_provenance_refs.push(format!(
+            "desktop_tts_actor:{}",
+            sanitize_idempotency_token(&input.actor_user_id)
+        ));
+        refs.replay_integrity_refs.push(format!(
+            "openai_tts_request:{}",
+            input
+                .request_id
+                .as_deref()
+                .map(sanitize_idempotency_token)
+                .unwrap_or_else(|| format!("{}:{}", correlation_id.0, turn_id.0))
+        ));
+        refs.replay_integrity_refs.push(format!(
+            "openai_tts_model:{}:voice:{}",
+            sanitize_idempotency_token(&input.model),
+            sanitize_idempotency_token(&input.voice)
+        ));
+        if let Some(reason) = input.failure_reason.as_deref() {
+            refs.audit_refs.push(format!(
+                "openai_tts_fail_closed_reason:{}",
+                sanitize_idempotency_token(reason)
+            ));
+        }
+
+        let evidence = InternalHistoryEvidenceInput::v1(
+            now,
+            InternalHistoryEventKind::LifecycleBoundary,
+            None,
+            correlation_id,
+            turn_id,
+            session_id,
+            None,
+            Some(ConversationRole::Selene),
+            Some(ConversationSource::SeleneOutput),
+            InternalHistoryModality::System,
+            SpeakerEvidenceRefs::none(),
+            InputTranscriptEvidenceRefs::none(),
+            response,
+            LiveContextEvidenceRefs::none(),
+            MemoryEvidenceRefs::none(),
+            refs,
+            Some(sanitize_idempotency_token(&format!(
+                "stage7_desktop_openai_tts:{:?}:{}:{}",
+                input.status, correlation_id.0, turn_id.0
+            ))),
+        )
+        .map_err(|err| format!("invalid desktop OpenAI TTS evidence: {err:?}"))?;
+
+        let mut store = self
+            .store
+            .lock()
+            .map_err(|_| "adapter store lock poisoned".to_string())?;
+        store
+            .append_internal_history_evidence(evidence)
+            .map_err(storage_error_to_string)?;
+        Ok(())
+    }
+
     pub fn ui_public_brain_trace_report(
         &self,
         now_ns: Option<u64>,
@@ -6147,18 +6433,28 @@ impl AdapterRuntime {
         actor_user_id: &UserId,
         device_id: Option<&DeviceId>,
         session_id: Option<SessionId>,
+        user_source: ConversationSource,
         user_text_partial: Option<String>,
         user_text_final: Option<String>,
         selene_text_partial: Option<String>,
         selene_text_final: Option<String>,
         update_recent_archive_digest: bool,
     ) -> Result<(), String> {
+        let user_transcript_source = match user_source {
+            ConversationSource::VoiceTranscript => AdapterTranscriptSource::Ph1C,
+            ConversationSource::TypedText => AdapterTranscriptSource::UiText,
+            ConversationSource::SeleneOutput | ConversationSource::Tombstone => {
+                return Err(format!(
+                    "invalid committed user conversation source: {user_source:?}"
+                ))
+            }
+        };
         if let Some(text) = user_text_partial {
             self.push_transcript_partial_event(
                 correlation_id,
                 turn_id,
                 AdapterTranscriptRole::User,
-                AdapterTranscriptSource::Ph1C,
+                user_transcript_source,
                 text,
                 now.0,
             )?;
@@ -6183,14 +6479,14 @@ impl AdapterRuntime {
                 device_id,
                 session_id,
                 ConversationRole::User,
-                ConversationSource::VoiceTranscript,
+                user_source,
                 &text,
             )?;
             self.clear_transcript_partials_for_key(
                 correlation_id,
                 turn_id,
                 AdapterTranscriptRole::User,
-                AdapterTranscriptSource::Ph1C,
+                user_transcript_source,
             )?;
         }
         if let Some(text) = selene_text_final {
@@ -6244,6 +6540,7 @@ impl AdapterRuntime {
             update.actor_user_id,
             Some(update.device_id),
             adapter_response_session_id(update.response)?,
+            update.user_source,
             None,
             update.user_text_final.map(str::to_string),
             None,
@@ -8269,6 +8566,8 @@ impl AdapterRuntime {
             sanitize_transcript_text_option(request.user_text_partial.clone());
         let mut user_text_final = sanitize_transcript_text_option(request.user_text_final.clone());
         let upstream_transcript_supplied = user_text_final.is_some();
+        let committed_user_source =
+            committed_user_conversation_source_for_request(&request, upstream_transcript_supplied);
         let selene_text_partial =
             sanitize_transcript_text_option(request.selene_text_partial.clone());
         let selene_text_final = sanitize_transcript_text_option(request.selene_text_final.clone());
@@ -8374,6 +8673,7 @@ impl AdapterRuntime {
                                 actor_user_id: &actor_user_id,
                                 device_id: &runtime_device_id,
                                 response: &response,
+                                user_source: committed_user_source,
                                 user_text_final: user_text_final.as_deref(),
                                 selene_text_final: selene_text_final.as_deref(),
                             },
@@ -8418,6 +8718,7 @@ impl AdapterRuntime {
                     actor_user_id: &actor_user_id,
                     device_id: &runtime_device_id,
                     response: &response,
+                    user_source: committed_user_source,
                     user_text_final: user_text_final.as_deref(),
                     selene_text_final: selene_text_final.as_deref(),
                 },
@@ -8438,6 +8739,7 @@ impl AdapterRuntime {
             return result;
         }
 
+        let stage7_user_text_for_fallback = user_text_final.clone();
         let execution_result = (|| {
             let mut store = self
                 .store
@@ -8742,6 +9044,7 @@ impl AdapterRuntime {
                                 &actor_user_id,
                                 Some(&runtime_device_id),
                                 session_turn_state.session_id_for_commits,
+                                committed_user_source,
                                 user_text_partial.clone(),
                                 user_text_final.clone(),
                                 None,
@@ -8873,6 +9176,7 @@ impl AdapterRuntime {
                             &actor_user_id,
                             Some(&runtime_device_id),
                             session_turn_state.session_id_for_commits,
+                            committed_user_source,
                             user_text_partial.clone(),
                             user_text_final.clone(),
                             None,
@@ -8957,6 +9261,7 @@ impl AdapterRuntime {
                                         &actor_user_id,
                                         Some(&runtime_device_id),
                                         session_turn_state.session_id_for_commits,
+                                        committed_user_source,
                                         user_text_partial.clone(),
                                         user_text_final.clone(),
                                         None,
@@ -9231,6 +9536,7 @@ impl AdapterRuntime {
                         &actor_user_id,
                         Some(&runtime_device_id),
                         session_turn_state.session_id_for_commits,
+                        committed_user_source,
                         user_text_partial.clone(),
                         user_text_final.clone(),
                         selene_text_partial.clone(),
@@ -9305,11 +9611,25 @@ impl AdapterRuntime {
                         &actor_user_id,
                         Some(&runtime_device_id),
                         session_turn_state.session_id_for_commits,
+                        committed_user_source,
                         user_text_partial.clone(),
                         user_text_final.clone(),
                         selene_text_partial.clone(),
                         selene_text_final.clone().or(Some(response_text.clone())),
                         true,
+                    )
+                    .map_err(post_session_error)?;
+                    append_stage7_runtime_response_evidence(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        session_turn_state.session_id_for_commits,
+                        committed_user_source,
+                        user_text_final.as_deref(),
+                        Some(&response_text),
+                        None,
+                        false,
                     )
                     .map_err(post_session_error)?;
                     finalize_session_turn_record(
@@ -9373,6 +9693,22 @@ impl AdapterRuntime {
                     })
                 {
                     let response_text = h411_response.response_text.clone();
+                    self.record_transcript_updates(
+                        &mut store,
+                        now,
+                        correlation_id,
+                        turn_id,
+                        &actor_user_id,
+                        Some(&runtime_device_id),
+                        session_turn_state.session_id_for_commits,
+                        committed_user_source,
+                        user_text_partial.clone(),
+                        user_text_final.clone(),
+                        selene_text_partial.clone(),
+                        selene_text_final.clone().or(Some(response_text.clone())),
+                        true,
+                    )
+                    .map_err(post_session_error)?;
                     finalize_session_turn_record(
                         &mut store,
                         now,
@@ -9688,6 +10024,32 @@ impl AdapterRuntime {
                 .as_deref()
                 .map(|text| !text.trim().is_empty())
                 .unwrap_or(false);
+            let selene_text_final_for_transcript = selene_text_final
+                .or(typed_public_deterministic_answer_text)
+                .or(ph1d_public_answer_text)
+                .or_else(|| {
+                    if has_committed_user_final {
+                        execution_outcome.response_text.as_ref().and_then(|text| {
+                            if text.trim().is_empty() {
+                                None
+                            } else {
+                                Some(text.clone())
+                            }
+                        })
+                    } else {
+                        None
+                    }
+                });
+            let selene_text_final_for_stage7 = selene_text_final_for_transcript.clone();
+            let protected_fail_closed_for_stage7 = execution_outcome
+                .response_text
+                .as_deref()
+                .is_some_and(|text| {
+                    text.contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION")
+                })
+                || selene_text_final_for_stage7.as_deref().is_some_and(|text| {
+                    text.contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION")
+                });
             self.record_transcript_updates(
                 &mut store,
                 now,
@@ -9696,26 +10058,25 @@ impl AdapterRuntime {
                 &actor_user_id,
                 Some(&runtime_device_id),
                 session_turn_state.session_id_for_commits,
+                committed_user_source,
                 user_text_partial,
                 user_text_final,
                 selene_text_partial,
-                selene_text_final
-                    .or(typed_public_deterministic_answer_text)
-                    .or(ph1d_public_answer_text)
-                    .or_else(|| {
-                        if has_committed_user_final {
-                            execution_outcome.response_text.as_ref().and_then(|text| {
-                                if text.trim().is_empty() {
-                                    None
-                                } else {
-                                    Some(text.clone())
-                                }
-                            })
-                        } else {
-                            None
-                        }
-                    }),
+                selene_text_final_for_transcript,
                 update_recent_archive_digest,
+            )
+            .map_err(post_session_error)?;
+            append_stage7_runtime_response_evidence(
+                &mut store,
+                now,
+                correlation_id,
+                turn_id,
+                session_turn_state.session_id_for_commits,
+                committed_user_source,
+                h410_captured_final_for_trace.as_deref(),
+                selene_text_final_for_stage7.as_deref(),
+                execution_outcome.tool_response.as_ref(),
+                protected_fail_closed_for_stage7,
             )
             .map_err(post_session_error)?;
             if let Some(ph1c) = ph1c_live_outcome.as_ref() {
@@ -9837,6 +10198,38 @@ impl AdapterRuntime {
                 &execution_result,
             )
             .map_err(pre_session_error)?;
+        }
+
+        if let Ok(response) = &execution_result {
+            let protected_fail_closed = response
+                .response_text
+                .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION");
+            if protected_fail_closed
+                || stage7_tts_should_be_requested(
+                    committed_user_source,
+                    Some(response.response_text.as_str()),
+                )
+            {
+                let session_id =
+                    adapter_response_session_id(response).map_err(pre_session_error)?;
+                let mut store = self
+                    .store
+                    .lock()
+                    .map_err(|_| pre_session_error("adapter store lock poisoned".to_string()))?;
+                append_stage7_runtime_response_evidence(
+                    &mut store,
+                    now,
+                    correlation_id,
+                    turn_id,
+                    session_id,
+                    committed_user_source,
+                    stage7_user_text_for_fallback.as_deref(),
+                    Some(response.response_text.as_str()),
+                    None,
+                    protected_fail_closed,
+                )
+                .map_err(pre_session_error)?;
+            }
         }
 
         execution_result
@@ -18469,6 +18862,562 @@ fn adapter_transcript_event_from_record(
     })
 }
 
+fn ui_internal_history_evidence_row_from_record(
+    record: &InternalHistoryEvidenceRecord,
+) -> UiInternalHistoryEvidenceRow {
+    UiInternalHistoryEvidenceRow {
+        schema_version: record.schema_version.0,
+        internal_history_event_id: record.internal_history_event_id.0,
+        event_kind: format!("{:?}", record.event_kind),
+        conversation_turn_id: record.conversation_turn_id.map(|id| id.0),
+        correlation_id: record.correlation_id.0.to_string(),
+        turn_id: record.turn_id.0.to_string(),
+        session_id: record.session_id.map(|id| id.0.to_string()),
+        thread_key: record.thread_key.clone(),
+        role: record.role.map(|role| format!("{role:?}")),
+        source: record.source.map(|source| format!("{source:?}")),
+        modality: format!("{:?}", record.modality),
+        speaker: UiInternalHistorySpeakerSummary {
+            user_id: record
+                .speaker
+                .user_id
+                .as_ref()
+                .map(|user_id| user_id.as_str().to_string()),
+            actor_id: record.speaker.actor_id.clone(),
+            device_id: record
+                .speaker
+                .device_id
+                .as_ref()
+                .map(|device_id| device_id.as_str().to_string()),
+            speaker_id: record.speaker.speaker_id.clone(),
+            voice_profile_id: record.speaker.voice_profile_id.clone(),
+            identity_posture: format!("{:?}", record.speaker.identity_posture),
+            voice_id_confidence_bp: record.speaker.voice_id_confidence_bp,
+            voice_identity_assertion_ref: record.speaker.voice_identity_assertion_ref.clone(),
+            typed_actor_identity_ref: record.speaker.typed_actor_identity_ref.clone(),
+            has_voice_identity_evidence: record.speaker.voice_identity_assertion_ref.is_some(),
+            has_typed_actor_identity: record.speaker.typed_actor_identity_ref.is_some(),
+        },
+        input: UiInternalHistoryInputSummary {
+            committed_text_hash: record.input.committed_text_hash.clone(),
+            transcript_confidence_bp: record.input.transcript_confidence_bp,
+            ph1c_status: format!("{:?}", record.input.ph1c_status),
+            rejected_reason_ref: record.input.rejected_reason_ref.clone(),
+            wake_boundary_ref: record.input.wake_boundary_ref.clone(),
+            input_language: record.input.input_language.clone(),
+            input_surface: record.input.input_surface.clone(),
+            has_audio_capture_ref: record.input.audio_capture_ref.is_some(),
+            has_unsent_draft_exclusion_ref: record.input.unsent_draft_exclusion_ref.is_some(),
+            has_accidental_keystroke_rejection_ref: record
+                .input
+                .accidental_keystroke_rejection_ref
+                .is_some(),
+        },
+        response: UiInternalHistoryResponseSummary {
+            final_response_text_hash: record.response.final_response_text_hash.clone(),
+            approved_tts_text_hash: record.response.approved_tts_text_hash.clone(),
+            visible_response_hash: record.response.visible_response_hash.clone(),
+            spoken_text_hash: record.response.spoken_text_hash.clone(),
+            tts_provider: record.response.tts_provider.clone(),
+            tts_status: format!("{:?}", record.response.tts_status),
+            has_audio_generation_ref: record.response.audio_generation_ref.is_some(),
+            has_playback_started_ref: record.response.playback_started_ref.is_some(),
+            has_playback_ended_ref: record.response.playback_ended_ref.is_some(),
+            playback_failure_ref: record.response.playback_failure_ref.clone(),
+            thinking_duration_ref: record.response.thinking_duration_ref.clone(),
+            rearm_ref: record.response.rearm_ref.clone(),
+            spoken_matches_final_answer: record.response.spoken_matches_final_answer,
+        },
+        ph1x: UiInternalHistoryPh1xSummary {
+            active_context_packet_ref: record.ph1x.active_context_packet_ref.clone(),
+            human_conversation_directive_ref: record.ph1x.human_conversation_directive_ref.clone(),
+            active_topic_ref: record.ph1x.active_topic_ref.clone(),
+            active_intent_ref: record.ph1x.active_intent_ref.clone(),
+            continuation_ref: record.ph1x.continuation_ref.clone(),
+            protected_risk_ref: record.ph1x.protected_risk_ref.clone(),
+        },
+        ph1m: UiInternalHistoryPh1mSummary {
+            memory_evidence_packet_ref: record.ph1m.memory_evidence_packet_ref.clone(),
+            memory_recall_request_ref: record.ph1m.memory_recall_request_ref.clone(),
+            fresh_memory_handoff_ref: record.ph1m.fresh_memory_handoff_ref.clone(),
+            memory_continuation_decision_ref: record.ph1m.memory_continuation_decision_ref.clone(),
+            memory_no_match_ref: record.ph1m.memory_no_match_ref.clone(),
+            memory_candidate_status: format!("{:?}", record.ph1m.memory_candidate_status),
+        },
+        refs: UiInternalHistoryRefsSummary {
+            tool_provider_refs: record.refs.tool_provider_refs.clone(),
+            source_refs: record.refs.source_refs.clone(),
+            presentation_refs: record.refs.presentation_refs.clone(),
+            multimodal_refs: record.refs.multimodal_refs.clone(),
+            correction_refs: record.refs.correction_refs.clone(),
+            decision_task_refs: record.refs.decision_task_refs.clone(),
+            privacy_retention_refs: record.refs.privacy_retention_refs.clone(),
+            protected_execution_refs: record.refs.protected_execution_refs.clone(),
+            timing_refs: record.refs.timing_refs.clone(),
+            device_surface_provenance_refs: record.refs.device_surface_provenance_refs.clone(),
+            audit_refs: record.refs.audit_refs.clone(),
+            replay_integrity_refs: record.refs.replay_integrity_refs.clone(),
+        },
+        idempotency_key: record.idempotency_key.clone(),
+    }
+}
+
+fn stage7_modality_for_conversation_source(
+    source: ConversationSource,
+) -> Option<InternalHistoryModality> {
+    match source {
+        ConversationSource::VoiceTranscript => Some(InternalHistoryModality::Voice),
+        ConversationSource::TypedText => Some(InternalHistoryModality::Typed),
+        ConversationSource::SeleneOutput => Some(InternalHistoryModality::System),
+        ConversationSource::Tombstone => None,
+    }
+}
+
+fn stage7_speaker_for_user_source(
+    source: ConversationSource,
+    actor_user_id: &UserId,
+    device_id: Option<&DeviceId>,
+) -> SpeakerEvidenceRefs {
+    match source {
+        ConversationSource::TypedText => {
+            SpeakerEvidenceRefs::typed_actor(actor_user_id.clone(), device_id.cloned())
+        }
+        ConversationSource::VoiceTranscript => {
+            SpeakerEvidenceRefs::voice_unknown(actor_user_id.clone(), device_id.cloned())
+        }
+        ConversationSource::SeleneOutput | ConversationSource::Tombstone => {
+            SpeakerEvidenceRefs::none()
+        }
+    }
+}
+
+fn stage7_input_for_user_source(
+    source: ConversationSource,
+    user_text_hash: Option<String>,
+) -> InputTranscriptEvidenceRefs {
+    match (source, user_text_hash) {
+        (ConversationSource::VoiceTranscript, Some(hash)) => {
+            InputTranscriptEvidenceRefs::voice_accepted(hash)
+        }
+        (ConversationSource::TypedText, Some(hash)) => {
+            InputTranscriptEvidenceRefs::typed_committed(hash)
+        }
+        _ => InputTranscriptEvidenceRefs::none(),
+    }
+}
+
+fn stage7_tts_should_be_requested(
+    user_source: ConversationSource,
+    selene_text: Option<&str>,
+) -> bool {
+    user_source == ConversationSource::VoiceTranscript
+        && selene_text
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty())
+}
+
+fn stage7_tool_family_label(tool_response: &ToolResponse) -> &'static str {
+    match tool_response.tool_result.as_ref() {
+        Some(ToolResult::Time { .. }) => "time",
+        Some(ToolResult::Weather { .. }) => "weather",
+        Some(ToolResult::WebSearch { .. }) => "web_search",
+        Some(ToolResult::News { .. }) => "news",
+        Some(ToolResult::UrlFetchAndCite { .. }) => "url_fetch_and_cite",
+        Some(ToolResult::DocumentUnderstand { .. }) => "document_understand",
+        Some(ToolResult::PhotoUnderstand { .. }) => "photo_understand",
+        Some(ToolResult::DataAnalysis { .. }) => "data_analysis",
+        Some(ToolResult::DeepResearch { .. }) => "deep_research",
+        Some(ToolResult::RecordMode { .. }) => "record_mode",
+        Some(ToolResult::ConnectorQuery { .. }) => "connector_query",
+        None => "tool_unknown",
+    }
+}
+
+fn stage7_source_refs_from_tool_response(tool_response: &ToolResponse) -> Vec<String> {
+    tool_response
+        .source_metadata
+        .as_ref()
+        .map(|metadata| {
+            metadata
+                .sources
+                .iter()
+                .map(|source| {
+                    format!(
+                        "ph1e_source:{}:{}",
+                        stable_hash_hex_16(&source.url),
+                        truncate_ascii(&source.title, 48)
+                    )
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn stage7_conversation_turn_id_for(
+    store: &Ph1fStore,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    role: ConversationRole,
+    source: ConversationSource,
+) -> Option<ConversationTurnId> {
+    store
+        .conversation_ledger()
+        .iter()
+        .find(|row| {
+            row.correlation_id == correlation_id
+                && row.turn_id == turn_id
+                && row.role == role
+                && row.source == source
+                && row.tombstone_of_conversation_turn_id.is_none()
+        })
+        .map(|row| row.conversation_turn_id)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_stage7_runtime_response_evidence(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    session_id: Option<SessionId>,
+    user_source: ConversationSource,
+    user_text: Option<&str>,
+    selene_text: Option<&str>,
+    tool_response: Option<&ToolResponse>,
+    protected_fail_closed: bool,
+) -> Result<(), String> {
+    let Some(selene_text) = selene_text.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let Some(selene_turn_id) = stage7_conversation_turn_id_for(
+        store,
+        correlation_id,
+        turn_id,
+        ConversationRole::Selene,
+        ConversationSource::SeleneOutput,
+    ) else {
+        return Ok(());
+    };
+
+    let response_hash = stable_hash_hex_16(selene_text);
+    let mut response = ResponseSpokenEvidenceRefs::selene_text(response_hash.clone());
+    if stage7_tts_should_be_requested(user_source, Some(selene_text)) {
+        response.approved_tts_text_hash = Some(response_hash.clone());
+        response.spoken_text_hash = Some(response_hash.clone());
+        response.tts_provider = Some("openai_first_runtime".to_string());
+        response.tts_status = TtsEvidenceStatus::Requested;
+        response.spoken_matches_final_answer = Some(true);
+        response.thinking_duration_ref = Some(format!(
+            "runtime_response_ready:{}:{}",
+            correlation_id.0, turn_id.0
+        ));
+        response.rearm_ref = Some(format!(
+            "desktop_rearm_after_playback:{}:{}",
+            correlation_id.0, turn_id.0
+        ));
+    }
+
+    let mut ph1x = LiveContextEvidenceRefs::none();
+    ph1x.active_context_packet_ref = Some(format!(
+        "ph1x_active_context:{}:{}",
+        correlation_id.0, turn_id.0
+    ));
+    ph1x.human_conversation_directive_ref =
+        Some(format!("ph1x_directive:{}:{}", correlation_id.0, turn_id.0));
+    if let Some(tool) = tool_response {
+        let family = stage7_tool_family_label(tool);
+        ph1x.active_topic_ref = Some(format!("ph1x_topic:{family}"));
+        ph1x.active_intent_ref = Some(format!("ph1x_intent:{family}"));
+        ph1x.continuation_ref = Some(format!(
+            "ph1x_tool_continuity:{}:{}:{}",
+            family, correlation_id.0, turn_id.0
+        ));
+    }
+    if protected_fail_closed {
+        ph1x.protected_risk_ref = Some(format!(
+            "ph1x_protected_risk:{}:{}",
+            correlation_id.0, turn_id.0
+        ));
+    }
+
+    let mut refs = InternalHistoryEvidenceRefs::none();
+    refs.presentation_refs
+        .push(format!("ph1write_visible_response:{response_hash}"));
+    refs.timing_refs.push(format!(
+        "runtime_response_ready:{}:{}",
+        correlation_id.0, turn_id.0
+    ));
+    refs.replay_integrity_refs.push(format!(
+        "conversation_turn:{}:stage7_response_evidence",
+        selene_turn_id.0
+    ));
+    if let Some(tool) = tool_response {
+        let family = stage7_tool_family_label(tool);
+        refs.tool_provider_refs.push(format!(
+            "ph1e_tool:{}:request:{}:query:{}:status:{:?}:cache:{:?}",
+            family, tool.request_id.0, tool.query_hash.0, tool.tool_status, tool.cache_status
+        ));
+        if let Some(provider_hint) = tool
+            .source_metadata
+            .as_ref()
+            .and_then(|metadata| metadata.provider_hint.as_ref())
+        {
+            refs.tool_provider_refs.push(format!(
+                "ph1e_provider:{}",
+                sanitize_idempotency_token(provider_hint)
+            ));
+        }
+        refs.source_refs
+            .extend(stage7_source_refs_from_tool_response(tool));
+    }
+    if protected_fail_closed {
+        refs.protected_execution_refs.push(format!(
+            "protected_fail_closed:no_simulation_no_authority:{}:{}",
+            correlation_id.0, turn_id.0
+        ));
+        refs.audit_refs.push(format!(
+            "protected_no_execution_proof:{}:{}",
+            correlation_id.0, turn_id.0
+        ));
+    }
+
+    let mut memory = MemoryEvidenceRefs::none();
+    if protected_fail_closed {
+        memory.memory_candidate_status = MemoryCandidateStatus::BlockedProtected;
+    }
+
+    let evidence = InternalHistoryEvidenceInput::v1(
+        now,
+        InternalHistoryEventKind::CommittedTurn,
+        Some(selene_turn_id),
+        correlation_id,
+        turn_id,
+        session_id,
+        None,
+        Some(ConversationRole::Selene),
+        Some(ConversationSource::SeleneOutput),
+        InternalHistoryModality::System,
+        SpeakerEvidenceRefs::none(),
+        InputTranscriptEvidenceRefs::none(),
+        response,
+        ph1x,
+        memory,
+        refs,
+        Some(sanitize_idempotency_token(&format!(
+            "stage7_response_evidence:{}:{}:{}",
+            correlation_id.0, turn_id.0, selene_turn_id.0
+        ))),
+    )
+    .map_err(|err| format!("invalid Stage 7 response evidence: {err:?}"))?;
+    store
+        .append_internal_history_evidence(evidence)
+        .map_err(storage_error_to_string)?;
+
+    if let Some(tool) = tool_response {
+        append_stage7_tool_evidence(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+            session_id,
+            Some(selene_turn_id),
+            selene_text,
+            tool,
+        )?;
+    }
+    if protected_fail_closed {
+        append_stage7_protected_fail_closed_evidence(
+            store,
+            now,
+            correlation_id,
+            turn_id,
+            session_id,
+            user_source,
+            user_text,
+            selene_text,
+        )?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_stage7_tool_evidence(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    session_id: Option<SessionId>,
+    conversation_turn_id: Option<ConversationTurnId>,
+    selene_text: &str,
+    tool_response: &ToolResponse,
+) -> Result<(), String> {
+    let family = stage7_tool_family_label(tool_response);
+    let response_hash = stable_hash_hex_16(selene_text);
+    let mut refs = InternalHistoryEvidenceRefs::none();
+    refs.tool_provider_refs.push(format!(
+        "ph1e_tool:{}:request:{}:query:{}:status:{:?}:cache:{:?}",
+        family,
+        tool_response.request_id.0,
+        tool_response.query_hash.0,
+        tool_response.tool_status,
+        tool_response.cache_status
+    ));
+    refs.tool_provider_refs
+        .push(format!("ph1e_reason:{}", tool_response.reason_code.0));
+    if let Some(fail) = tool_response.fail_reason_code.as_ref() {
+        refs.tool_provider_refs
+            .push(format!("ph1e_fail_reason:{}", fail.0));
+    }
+    if let Some(provider_hint) = tool_response
+        .source_metadata
+        .as_ref()
+        .and_then(|metadata| metadata.provider_hint.as_ref())
+    {
+        refs.tool_provider_refs.push(format!(
+            "ph1e_provider:{}",
+            sanitize_idempotency_token(provider_hint)
+        ));
+    }
+    refs.source_refs
+        .extend(stage7_source_refs_from_tool_response(tool_response));
+    refs.replay_integrity_refs.push(format!(
+        "ph1e_tool_evidence:{}:{}:{}",
+        family, correlation_id.0, turn_id.0
+    ));
+
+    let mut response = ResponseSpokenEvidenceRefs::selene_text(response_hash);
+    response.spoken_matches_final_answer = Some(true);
+    let mut ph1x = LiveContextEvidenceRefs::none();
+    ph1x.active_topic_ref = Some(format!("ph1x_topic:{family}"));
+    ph1x.active_intent_ref = Some(format!("ph1x_intent:{family}"));
+    ph1x.continuation_ref = Some(format!(
+        "ph1x_tool_continuity:{}:{}:{}",
+        family, correlation_id.0, turn_id.0
+    ));
+
+    let evidence = InternalHistoryEvidenceInput::v1(
+        now,
+        InternalHistoryEventKind::ToolEvidence,
+        conversation_turn_id,
+        correlation_id,
+        turn_id,
+        session_id,
+        None,
+        Some(ConversationRole::Selene),
+        Some(ConversationSource::SeleneOutput),
+        InternalHistoryModality::System,
+        SpeakerEvidenceRefs::none(),
+        InputTranscriptEvidenceRefs::none(),
+        response,
+        ph1x,
+        MemoryEvidenceRefs::none(),
+        refs,
+        Some(sanitize_idempotency_token(&format!(
+            "stage7_tool_evidence:{}:{}:{}",
+            correlation_id.0, turn_id.0, tool_response.request_id.0
+        ))),
+    )
+    .map_err(|err| format!("invalid Stage 7 tool evidence: {err:?}"))?;
+    store
+        .append_internal_history_evidence(evidence)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_stage7_protected_fail_closed_evidence(
+    store: &mut Ph1fStore,
+    now: MonotonicTimeNs,
+    correlation_id: CorrelationId,
+    turn_id: TurnId,
+    session_id: Option<SessionId>,
+    user_source: ConversationSource,
+    user_text: Option<&str>,
+    selene_text: &str,
+) -> Result<(), String> {
+    let Some(user_turn_id) = stage7_conversation_turn_id_for(
+        store,
+        correlation_id,
+        turn_id,
+        ConversationRole::User,
+        user_source,
+    ) else {
+        return Ok(());
+    };
+    let Some(user_record) = store
+        .conversation_ledger()
+        .iter()
+        .find(|row| row.conversation_turn_id == user_turn_id)
+        .cloned()
+    else {
+        return Ok(());
+    };
+    let Some(modality) = stage7_modality_for_conversation_source(user_source) else {
+        return Ok(());
+    };
+    let user_hash = user_text
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(stable_hash_hex_16)
+        .or_else(|| Some(user_record.text_hash.clone()));
+    let response_hash = stable_hash_hex_16(selene_text);
+    let mut ph1x = LiveContextEvidenceRefs::none();
+    ph1x.protected_risk_ref = Some(format!(
+        "ph1x_protected_risk:{}:{}",
+        correlation_id.0, turn_id.0
+    ));
+    let mut memory = MemoryEvidenceRefs::none();
+    memory.memory_candidate_status = MemoryCandidateStatus::BlockedProtected;
+    let mut refs = InternalHistoryEvidenceRefs::none();
+    refs.protected_execution_refs.push(format!(
+        "protected_fail_closed:no_simulation_no_authority:{}:{}",
+        correlation_id.0, turn_id.0
+    ));
+    refs.protected_execution_refs
+        .push("protected_execution:not_performed".to_string());
+    refs.audit_refs.push(format!(
+        "protected_no_execution_proof:{}:{}",
+        correlation_id.0, turn_id.0
+    ));
+    refs.replay_integrity_refs.push(format!(
+        "conversation_turn:{}:stage7_protected_fail_closed",
+        user_turn_id.0
+    ));
+    let mut response = ResponseSpokenEvidenceRefs::selene_text(response_hash);
+    response.spoken_matches_final_answer = Some(true);
+    let evidence = InternalHistoryEvidenceInput::v1(
+        now,
+        InternalHistoryEventKind::ProtectedFailClosed,
+        Some(user_turn_id),
+        correlation_id,
+        turn_id,
+        session_id,
+        None,
+        Some(ConversationRole::User),
+        Some(user_source),
+        modality,
+        stage7_speaker_for_user_source(
+            user_source,
+            &user_record.user_id,
+            user_record.device_id.as_ref(),
+        ),
+        stage7_input_for_user_source(user_source, user_hash),
+        response,
+        ph1x,
+        memory,
+        refs,
+        Some(sanitize_idempotency_token(&format!(
+            "stage7_protected_fail_closed:{}:{}:{}",
+            correlation_id.0, turn_id.0, user_turn_id.0
+        ))),
+    )
+    .map_err(|err| format!("invalid Stage 7 protected fail-closed evidence: {err:?}"))?;
+    store
+        .append_internal_history_evidence(evidence)
+        .map_err(storage_error_to_string)?;
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn append_transcript_final_conversation_turn(
     store: &mut Ph1fStore,
@@ -18481,10 +19430,21 @@ fn append_transcript_final_conversation_turn(
     role: ConversationRole,
     source: ConversationSource,
     text: &str,
-) -> Result<(), String> {
+) -> Result<Option<ConversationTurnId>, String> {
     let text = truncate_ascii(text.trim(), 8192);
     if text.is_empty() {
-        return Ok(());
+        return Ok(None);
+    }
+    let text_hash = stable_hash_hex_16(&text);
+    if let Some(existing) = store.conversation_ledger().iter().find(|row| {
+        row.correlation_id == correlation_id
+            && row.turn_id == turn_id
+            && row.role == role
+            && row.source == source
+            && row.text_hash == text_hash
+            && row.tombstone_of_conversation_turn_id.is_none()
+    }) {
+        return Ok(Some(existing.conversation_turn_id));
     }
     let idempotency_key = sanitize_idempotency_token(&format!(
         "adapter_transcript:{}:{}:{}:{}",
@@ -18511,17 +19471,17 @@ fn append_transcript_final_conversation_turn(
         role,
         source,
         text.clone(),
-        stable_hash_hex_16(&text),
+        text_hash,
         PrivacyScope::PublicChat,
         Some(idempotency_key),
         None,
         None,
     )
     .map_err(|err| format!("invalid transcript conversation input: {err:?}"))?;
-    let _ = store
+    let conversation_turn_id = store
         .append_conversation_turn(input)
         .map_err(storage_error_to_string)?;
-    Ok(())
+    Ok(Some(conversation_turn_id))
 }
 
 fn update_recent_archive_digest_from_conversation_ledger(
@@ -22972,6 +23932,17 @@ fn is_desktop_committed_voice_request(request: &VoiceTurnAdapterRequest) -> bool
             .is_some_and(|text| !text.is_empty())
 }
 
+fn committed_user_conversation_source_for_request(
+    request: &VoiceTurnAdapterRequest,
+    upstream_transcript_supplied: bool,
+) -> ConversationSource {
+    if request.audio_capture_ref.is_some() || !upstream_transcript_supplied {
+        ConversationSource::VoiceTranscript
+    } else {
+        ConversationSource::TypedText
+    }
+}
+
 fn capture_looks_like_live_desktop_input(capture: &VoiceTurnAudioCaptureRef) -> bool {
     let selected_mic = capture
         .selected_mic
@@ -25967,6 +26938,21 @@ mod tests {
             history_rows.len() >= conversation_rows.len(),
             "each committed conversation row should have immutable history evidence"
         );
+        let voice_user_rows = conversation_rows
+            .iter()
+            .filter(|row| {
+                row.correlation_id == CorrelationId(7_007_001)
+                    && row.turn_id == TurnId(7_007_001)
+                    && row.role == ConversationRole::User
+                    && row.source == ConversationSource::VoiceTranscript
+                    && row.tombstone_of_conversation_turn_id.is_none()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            voice_user_rows.len(),
+            1,
+            "PH1.C transcript filing and adapter final transcript bridge must not duplicate the committed voice user turn"
+        );
         assert!(history_rows.iter().any(|row| {
             row.event_kind == InternalHistoryEventKind::CommittedTurn
                 && row.modality == InternalHistoryModality::Voice
@@ -25976,6 +26962,147 @@ mod tests {
             row.event_kind == InternalHistoryEventKind::CommittedTurn
                 && row.response.final_response_text_hash.is_some()
         }));
+    }
+
+    #[test]
+    fn stage7_adapter_redacted_evidence_report_exposes_live_ledger_rows() {
+        let runtime = AdapterRuntime::default();
+        let mut request = base_request();
+        request.app_platform = "DESKTOP".to_string();
+        request.correlation_id = 7_007_002;
+        request.turn_id = 7_007_002;
+        request.device_turn_sequence = Some(7_007_002);
+        request.now_ns = Some(7_007_002_000_000);
+        request.thread_key = Some("stage7-adapter-live-evidence-report".to_string());
+        request.user_text_final = Some("what is the time in New York".to_string());
+
+        let out = runtime
+            .run_voice_turn(request)
+            .expect("adapter voice turn should complete");
+        assert_eq!(out.status, "ok", "{out:?}");
+        runtime
+            .record_desktop_openai_tts_evidence(DesktopOpenAiTtsEvidenceInput {
+                correlation_id: 7_007_002,
+                turn_id: Some(7_007_002),
+                session_id: out.session_id.clone(),
+                actor_user_id: "tenant_a:user_adapter_test".to_string(),
+                device_id: "adapter_device_1".to_string(),
+                request_id: Some("stage7_tts_request_7_007_002".to_string()),
+                answer_text_hash: Some(stable_hash_hex_16(&out.response_text)),
+                audio_sha256: Some("stage7_ready_audio_sha".to_string()),
+                audio_byte_len: Some(128),
+                model: "gpt-4o-mini-tts".to_string(),
+                voice: "alloy".to_string(),
+                status: DesktopOpenAiTtsEvidenceStatus::Ready,
+                failure_reason: None,
+            })
+            .expect("adapter should file TTS ready evidence");
+
+        let mut typed_request = base_request();
+        typed_request.app_platform = "DESKTOP".to_string();
+        typed_request.correlation_id = 7_007_003;
+        typed_request.turn_id = 7_007_003;
+        typed_request.device_turn_sequence = Some(7_007_003);
+        typed_request.now_ns = Some(7_007_003_000_000);
+        typed_request.thread_key = Some("stage7-adapter-live-evidence-report".to_string());
+        typed_request.audio_capture_ref = None;
+        typed_request.user_text_final = Some("what is your name".to_string());
+
+        let typed_out = runtime
+            .run_voice_turn(typed_request)
+            .expect("adapter typed turn should complete through canonical ingress");
+        assert_eq!(typed_out.status, "ok", "{typed_out:?}");
+
+        let mut protected_request = base_request();
+        protected_request.app_platform = "DESKTOP".to_string();
+        protected_request.correlation_id = 7_007_004;
+        protected_request.turn_id = 7_007_004;
+        protected_request.device_turn_sequence = Some(7_007_004);
+        protected_request.now_ns = Some(7_007_004_000_000);
+        protected_request.thread_key = Some("stage7-adapter-live-evidence-report".to_string());
+        protected_request.audio_capture_ref = None;
+        protected_request.user_text_final = Some("Approve payroll for Tim".to_string());
+
+        let protected_out = runtime
+            .run_voice_turn(protected_request)
+            .expect("adapter protected turn should fail closed through canonical ingress");
+        assert_eq!(protected_out.status, "ok", "{protected_out:?}");
+        assert!(
+            protected_out
+                .response_text
+                .contains("NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION"),
+            "{protected_out:?}"
+        );
+
+        let report = runtime.ui_internal_history_evidence_report(Some(7_007_002_000_100));
+        assert_eq!(report.status, "ok");
+        assert!(report.total_events >= 4, "{report:?}");
+        assert!(report.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.modality == "Voice"
+                && row.source.as_deref() == Some("VoiceTranscript")
+                && row.input.ph1c_status == "Accepted"
+                && row.speaker.identity_posture == "Unknown"
+                && !row.speaker.has_typed_actor_identity
+        }));
+        assert!(report.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.modality == "Typed"
+                && row.source.as_deref() == Some("TypedText")
+                && row.input.ph1c_status == "TypedCommitted"
+                && row.speaker.identity_posture == "Known"
+                && row.speaker.has_typed_actor_identity
+                && !row.speaker.has_voice_identity_evidence
+        }));
+        assert!(report.events.iter().any(|row| {
+            row.event_kind == "CommittedTurn"
+                && row.modality == "System"
+                && row.response.final_response_text_hash.is_some()
+        }));
+        assert!(
+            report.events.iter().any(|row| {
+                row.event_kind == "CommittedTurn"
+                    && row.modality == "System"
+                    && row.response.tts_status == "Requested"
+                    && row.response.approved_tts_text_hash.is_some()
+            }),
+            "{report:?}"
+        );
+        assert!(
+            report.events.iter().any(|row| {
+                row.event_kind == "LifecycleBoundary"
+                    && row.response.tts_status == "Ready"
+                    && row.response.has_audio_generation_ref
+            }),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .events
+                .iter()
+                .any(|row| row.event_kind == "ToolEvidence"
+                    && !row.refs.tool_provider_refs.is_empty()),
+            "{report:?}"
+        );
+        assert!(
+            report.events.iter().any(|row| {
+                row.event_kind == "ProtectedFailClosed"
+                    && row.modality == "Typed"
+                    && row.ph1x.protected_risk_ref.is_some()
+                    && row.ph1m.memory_candidate_status == "BlockedProtected"
+                    && !row.refs.protected_execution_refs.is_empty()
+                    && !row.speaker.has_voice_identity_evidence
+            }),
+            "{report:?}"
+        );
+        assert!(
+            report
+                .events
+                .iter()
+                .flat_map(|row| row.refs.replay_integrity_refs.iter())
+                .any(|r| r.starts_with("conversation_turn:")),
+            "{report:?}"
+        );
     }
 
     fn base_tablet_request() -> VoiceTurnAdapterRequest {
