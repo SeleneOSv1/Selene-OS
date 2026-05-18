@@ -2951,6 +2951,118 @@ JD live acceptance passes; or
 
 JD explicitly waives live acceptance for that build.
 
+7.16 Interactive JD Live Test and Backend Evidence Verification Law
+
+This law strengthens Section 7.15 for interactive JD live testing and backend evidence verification. It must not be treated as a substitute for Section 7.15; both laws apply.
+
+For any build involving voice, Desktop UI, TTS, PH1.X, PH1.M, Voice ID, memory, context, routing, protected classification, search presentation, or user-visible behavior, Codex must use interactive JD live testing when JD is available.
+
+Codex must not ask JD to “just test generally.”
+
+Codex must guide JD one step at a time.
+
+For every live test, Codex must:
+
+tell JD exactly what to say or type;
+
+tell JD when to wait;
+
+confirm the latest app was rebuilt from current HEAD;
+
+prove one current app instance and one adapter/runtime owner;
+
+capture the exact transcript or typed input;
+
+capture the visible result;
+
+capture whether TTS was heard when expected;
+
+inspect backend evidence immediately after the prompt;
+
+confirm the correct owner made the decision;
+
+confirm the correct packet/directive/evidence landed;
+
+mark the test PASS or FAIL;
+
+if failed, identify root owner and repair there;
+
+rebuild/restart latest app after any fix;
+
+rerun the failed live test;
+
+commit only after JD live acceptance and backend evidence both pass.
+
+Cargo tests, unit tests, mocked tests, fixture tests, xcodebuild, /healthz, and app launch proof do not replace JD live testing when the behavior is user-visible.
+
+A live test only counts as passed when all three are true:
+
+JD confirms the visible/audible behavior is correct;
+
+Codex confirms backend evidence matches the expected route;
+
+the latest current app/current HEAD was used.
+
+For PH1.X / PH1.M / Voice ID / context builds, Codex must also prove:
+
+ActiveContextPacket or equivalent evidence;
+
+HumanConversationDirective or equivalent directive;
+
+selected candidate and rejected candidates where applicable;
+
+confidence / ambiguity / reason code where applicable;
+
+PH1.M memory evidence only when memory is actually used;
+
+Voice ID evidence is speaker evidence only, not authority;
+
+Desktop did not decide meaning;
+
+Adapter did not become the context or memory brain;
+
+protected fail-closed behavior remains preserved.
+
+If JD reports that the visible behavior did not work, Codex must report:
+
+JD_LIVE_ACCEPTANCE_FAILED
+
+Codex must not claim completion until the failure is repaired and retested.
+
+If backend evidence is missing, incomplete, in the wrong owner, or inconsistent with the visible behavior, Codex must report:
+
+BACKEND_EVIDENCE_VERIFICATION_FAILED
+
+Codex must not claim completion until the evidence path is repaired and retested.
+
+Every final report must include:
+
+exact JD prompt;
+
+exact captured transcript or typed input;
+
+visible result;
+
+audible result if voice/TTS expected;
+
+backend packet/evidence refs;
+
+owner decision proof;
+
+root cause if repaired;
+
+latest app/current HEAD proof;
+
+JD live acceptance result;
+
+final clean tree proof.
+
+Final rule:
+
+A Selene build is not truly accepted because Codex says tests passed.
+
+A Selene build is accepted only when JD live behavior and backend evidence agree.
+
 8. Determinism, Fail-Closed, and Engineering Quality
 
 8.1 Determinism Lock
