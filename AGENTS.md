@@ -1807,6 +1807,310 @@ regression result;
 
 proof no duplicate owner/path was created.
 
+5.10 Universal Algorithmic Implementation / No Patchwork Law
+
+Codex must always implement real architecture algorithms, real owner wiring, real state machines, real scoring, real packet flow, and real reusable logic.
+
+Codex must never substitute phrase patches, example-specific string checks, toy fixes, shortcut branches, or wrong-owner helper hacks for proper implementation.
+
+This law applies across every engine, runtime surface, client surface, bridge, storage layer, provider layer, and protected-execution layer.
+
+This includes, but is not limited to:
+
+PH1.X
+
+PH1.M
+
+PH1.C
+
+PH1.L
+
+PH1.E
+
+PH1.WRITE
+
+PH1.TTS
+
+PH1.VOICE.ID
+
+PH1.LANG / PH1.SRL / PH1.N
+
+Adapter
+
+Desktop
+
+Storage / Archive / Audit
+
+Search / Provider
+
+Protected execution / SimulationExecutor
+
+JD examples are evidence of a broken pattern.
+
+JD examples are not the production algorithm.
+
+Forbidden production work includes:
+
+exact phrase branching;
+
+prompt-specific if/else chains;
+
+string contains fixes for one example;
+
+one-city / one-person / one-topic hardcoding;
+
+one-off customer/company/person/product logic;
+
+hidden adapter shortcut meaning;
+
+Desktop semantic fallback;
+
+helper-shim semantic workarounds;
+
+duplicate owner paths;
+
+narrow route patches that only make the tested prompt pass;
+
+fixture-driven production behavior;
+
+fake tests that assert the patch instead of the product behavior;
+
+storing semantic meaning in the wrong owner;
+
+leaving old phrase patches active after a canonical owner exists.
+
+Forbidden production examples include but are not limited to:
+
+contains("which city")
+
+contains("which areas")
+
+contains("the time")
+
+contains("Sydney")
+
+contains("Melbourne")
+
+contains("Japan")
+
+contains("make it shorter")
+
+contains("make it warmer")
+
+contains("prepare payroll")
+
+contains("organize payroll")
+
+exact real person/company/customer/product names
+
+any exact phrase JD used in live testing as the behavior trigger
+
+Allowed uses of exact phrases:
+
+tests;
+
+fixtures;
+
+proof reports;
+
+comments explaining a scenario;
+
+user-facing copy;
+
+canonical enum names;
+
+reason codes;
+
+governed domain vocabulary tables owned by the correct engine.
+
+A governed domain vocabulary is allowed only when it is:
+
+data-driven;
+
+reusable;
+
+owned by the correct engine;
+
+tested with unseen alternatives;
+
+not hidden in scattered string checks;
+
+not used as a substitute for the required algorithm.
+
+Correct production implementation must use generalized algorithms appropriate to the owner, such as:
+
+semantic role classification;
+
+intent/posture classification;
+
+active context frames;
+
+topic stacks;
+
+reference resolution;
+
+slot/entity frames;
+
+candidate generation;
+
+candidate scoring;
+
+hard disqualifiers;
+
+ambiguity scoring;
+
+confidence thresholds;
+
+correction targeting;
+
+clarification target tracking;
+
+writing artifact state;
+
+tool continuity state;
+
+memory evidence packets;
+
+speaker/identity evidence packets;
+
+privacy/scope gates;
+
+protected-risk classification;
+
+source/evidence verification;
+
+state machines;
+
+owner-specific routing packets;
+
+deterministic protected-execution gates;
+
+reusable decision functions.
+
+Every build touching language understanding, current user turns, context, memory, recall, search, providers, writing, speech, Voice ID, protected classification, tools, routing, Desktop behavior, Adapter behavior, or storage evidence must include an Algorithmic Generality Proof.
+
+The Algorithmic Generality Proof must state:
+
+1. The canonical owner of the behavior.
+
+2. The old patch/shortcut paths found.
+
+3. Whether each old path was removed, migrated, retained as compatibility, or deferred.
+
+4. The generalized algorithm or state machine used.
+
+5. The input features used.
+
+6. The output packet/directive produced.
+
+7. Why the solution works beyond the exact JD example.
+
+8. Positive tests using the original failing examples.
+
+9. Positive tests using unseen paraphrases or substituted entities.
+
+10. Negative tests proving unrelated inputs are not hijacked.
+
+11. Proof Desktop did not gain semantic authority.
+
+12. Proof Adapter did not become the context/memory/tool brain.
+
+13. Proof no duplicate owner/path was created.
+
+14. Proof protected fail-closed behavior was preserved.
+
+For every relevant build, Codex must run a phrase-patch scan before commit.
+
+Minimum scan:
+
+git diff --unified=0 | rg -n "contains\(|starts_with\(|ends_with\(|== \".*\"|which city|which areas|the time|make it shorter|make it warmer|Japan|Sydney|Melbourne|Brisbane|payroll|Tim|Mark|locked factory|Niseko|Hakuba|Nozawa|Sapporo"
+
+Every hit must be classified as exactly one of:
+
+TEST_FIXTURE_OK
+
+REPORT_OK
+
+COMMENT_ONLY_OK
+
+USER_FACING_COPY_OK
+
+CANONICAL_REASON_CODE_OK
+
+DOMAIN_VOCABULARY_OK
+
+EXISTING_COMPATIBILITY_OK
+
+RETAINED_COMPATIBILITY_PATH
+
+DEAD_LOCAL_SURFACE
+
+WRONG_OWNER_SURFACE
+
+PRODUCTION_PHRASE_PATCH_NOT_ALLOWED
+
+If any hit is classified as PRODUCTION_PHRASE_PATCH_NOT_ALLOWED, Codex must remove the patch and implement the correct owner algorithm before commit.
+
+Codex must also search the affected owner files for old shortcut paths:
+
+rg -n "contains\(|starts_with\(|ends_with\(|== \".*\"|shortcut|fallback|deterministic_active_context|deterministic_weather_context|weather context|time context|H380|H411|H412" <affected files>
+
+Old paths must be classified as:
+
+CURRENT_ACTIVE_REQUIRED
+
+MIGRATE_TO_CANONICAL_OWNER
+
+DEAD_UNREACHABLE
+
+STALE_DANGEROUS
+
+LEGACY_COMPATIBILITY_REQUIRED
+
+REPO_TRUTH_CONFLICT
+
+Codex must remove old patchwork when all of these are true:
+
+it is inside approved scope;
+
+repo truth proves it is dead, stale, wrong-owner, or superseded;
+
+canonical owner replacement is wired;
+
+tests prove preserved behavior still works;
+
+final report proves no duplicate owner remains.
+
+Codex must not delete old code blindly.
+
+If old patchwork cannot be safely removed inside the current scope, Codex must mark it as retained compatibility and report the future removal condition.
+
+If cleanup requires broader scope, Codex must stop and report:
+
+ALGORITHMIC_CLEANUP_SCOPE_APPROVAL_REQUIRED
+
+Hard stop conditions:
+
+If Codex fixes a behavior by hardcoding the exact tested phrase, stop.
+
+If Codex cannot explain the generalized algorithm, stop.
+
+If Codex puts semantic meaning into Desktop, stop.
+
+If Codex makes Adapter the context, memory, tool, provider, Voice ID, or protected-execution brain, stop.
+
+If Codex creates a second route instead of repairing the canonical owner, stop.
+
+If unseen paraphrases fail, the build is not complete.
+
+If old phrase patches remain reachable without compatibility justification, the build is not complete.
+
+Final rule:
+
+Codex must build real architecture, real code, real owner wiring, and real algorithms.
+
+Codex must not build toys with phrases.
+
 6. Search, Provider, Evidence, and Presentation Law
 
 6.1 No Real Search-Name Hardcoding
