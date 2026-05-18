@@ -249,6 +249,9 @@ impl Validate for HumanConversationDirective {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveContextPacket {
     pub schema_version: SchemaVersion,
+    pub raw_user_turn_ref: Option<String>,
+    pub normalized_user_turn_ref: Option<String>,
+    pub modality: Option<String>,
     pub active_topic: Option<String>,
     pub active_intent: Option<String>,
     pub interaction_posture: InteractionPosture,
@@ -279,6 +282,7 @@ pub struct ActiveContextPacket {
     pub constraints: Vec<String>,
     pub user_preference_in_turn: Option<String>,
     pub expected_answer_type: Option<String>,
+    pub last_answer_type: Option<String>,
     pub last_clarification_question: Option<String>,
     pub clarification_answer_target: Option<String>,
     pub discourse_state: Option<String>,
@@ -287,7 +291,16 @@ pub struct ActiveContextPacket {
     pub interruption_state: Option<String>,
     pub speaker_continuity: Option<String>,
     pub confidence_reason: Option<String>,
+    pub why_continue_reason: Option<String>,
     pub why_not_continue_reason: Option<String>,
+    pub selected_candidate: Option<String>,
+    pub rejected_candidates_ref: Option<String>,
+    pub candidate_rejection_ledger_ref: Option<String>,
+    pub minimum_evidence_threshold_ref: Option<String>,
+    pub owner_engine: Option<String>,
+    pub allowed_next_action: Option<String>,
+    pub blocked_actions: Vec<String>,
+    pub reason_code: Option<ReasonCodeId>,
     pub evidence_refs: Vec<String>,
 }
 
@@ -301,6 +314,9 @@ impl ActiveContextPacket {
     pub fn empty_v1() -> Self {
         Self {
             schema_version: PH1X_CONTRACT_VERSION,
+            raw_user_turn_ref: None,
+            normalized_user_turn_ref: None,
+            modality: None,
             active_topic: None,
             active_intent: None,
             interaction_posture: InteractionPosture::default(),
@@ -330,6 +346,7 @@ impl ActiveContextPacket {
             constraints: Vec::new(),
             user_preference_in_turn: None,
             expected_answer_type: None,
+            last_answer_type: None,
             last_clarification_question: None,
             clarification_answer_target: None,
             discourse_state: None,
@@ -338,7 +355,16 @@ impl ActiveContextPacket {
             interruption_state: None,
             speaker_continuity: None,
             confidence_reason: None,
+            why_continue_reason: None,
             why_not_continue_reason: None,
+            selected_candidate: None,
+            rejected_candidates_ref: None,
+            candidate_rejection_ledger_ref: None,
+            minimum_evidence_threshold_ref: None,
+            owner_engine: None,
+            allowed_next_action: None,
+            blocked_actions: Vec::new(),
+            reason_code: None,
             evidence_refs: Vec::new(),
         }
     }
@@ -367,6 +393,9 @@ impl ActiveContextPacket {
     ) -> Result<Self, ContractViolation> {
         let packet = Self {
             schema_version: PH1X_CONTRACT_VERSION,
+            raw_user_turn_ref: None,
+            normalized_user_turn_ref: None,
+            modality: None,
             active_topic,
             active_intent,
             interaction_posture,
@@ -396,6 +425,7 @@ impl ActiveContextPacket {
             constraints: Vec::new(),
             user_preference_in_turn: None,
             expected_answer_type: None,
+            last_answer_type: None,
             last_clarification_question: None,
             clarification_answer_target: None,
             discourse_state: None,
@@ -404,7 +434,16 @@ impl ActiveContextPacket {
             interruption_state: None,
             speaker_continuity: None,
             confidence_reason: None,
+            why_continue_reason: None,
             why_not_continue_reason: None,
+            selected_candidate: None,
+            rejected_candidates_ref: None,
+            candidate_rejection_ledger_ref: None,
+            minimum_evidence_threshold_ref: None,
+            owner_engine: None,
+            allowed_next_action: None,
+            blocked_actions: Vec::new(),
+            reason_code: None,
             evidence_refs,
         };
         packet.validate()?;
@@ -415,6 +454,9 @@ impl ActiveContextPacket {
         mut self,
         fields: UniversalActiveFrameFields,
     ) -> Result<Self, ContractViolation> {
+        self.raw_user_turn_ref = fields.raw_user_turn_ref;
+        self.normalized_user_turn_ref = fields.normalized_user_turn_ref;
+        self.modality = fields.modality;
         self.user_goal = fields.user_goal;
         self.current_plan = fields.current_plan;
         self.open_question = fields.open_question;
@@ -426,6 +468,7 @@ impl ActiveContextPacket {
         self.constraints = fields.constraints;
         self.user_preference_in_turn = fields.user_preference_in_turn;
         self.expected_answer_type = fields.expected_answer_type;
+        self.last_answer_type = fields.last_answer_type;
         self.last_clarification_question = fields.last_clarification_question;
         self.clarification_answer_target = fields.clarification_answer_target;
         self.discourse_state = fields.discourse_state;
@@ -434,7 +477,16 @@ impl ActiveContextPacket {
         self.interruption_state = fields.interruption_state;
         self.speaker_continuity = fields.speaker_continuity;
         self.confidence_reason = fields.confidence_reason;
+        self.why_continue_reason = fields.why_continue_reason;
         self.why_not_continue_reason = fields.why_not_continue_reason;
+        self.selected_candidate = fields.selected_candidate;
+        self.rejected_candidates_ref = fields.rejected_candidates_ref;
+        self.candidate_rejection_ledger_ref = fields.candidate_rejection_ledger_ref;
+        self.minimum_evidence_threshold_ref = fields.minimum_evidence_threshold_ref;
+        self.owner_engine = fields.owner_engine;
+        self.allowed_next_action = fields.allowed_next_action;
+        self.blocked_actions = fields.blocked_actions;
+        self.reason_code = fields.reason_code;
         self.validate()?;
         Ok(self)
     }
@@ -442,6 +494,9 @@ impl ActiveContextPacket {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct UniversalActiveFrameFields {
+    pub raw_user_turn_ref: Option<String>,
+    pub normalized_user_turn_ref: Option<String>,
+    pub modality: Option<String>,
     pub user_goal: Option<String>,
     pub current_plan: Option<String>,
     pub open_question: Option<String>,
@@ -453,6 +508,7 @@ pub struct UniversalActiveFrameFields {
     pub constraints: Vec<String>,
     pub user_preference_in_turn: Option<String>,
     pub expected_answer_type: Option<String>,
+    pub last_answer_type: Option<String>,
     pub last_clarification_question: Option<String>,
     pub clarification_answer_target: Option<String>,
     pub discourse_state: Option<String>,
@@ -461,7 +517,16 @@ pub struct UniversalActiveFrameFields {
     pub interruption_state: Option<String>,
     pub speaker_continuity: Option<String>,
     pub confidence_reason: Option<String>,
+    pub why_continue_reason: Option<String>,
     pub why_not_continue_reason: Option<String>,
+    pub selected_candidate: Option<String>,
+    pub rejected_candidates_ref: Option<String>,
+    pub candidate_rejection_ledger_ref: Option<String>,
+    pub minimum_evidence_threshold_ref: Option<String>,
+    pub owner_engine: Option<String>,
+    pub allowed_next_action: Option<String>,
+    pub blocked_actions: Vec<String>,
+    pub reason_code: Option<ReasonCodeId>,
 }
 
 impl Validate for ActiveContextPacket {
@@ -472,6 +537,21 @@ impl Validate for ActiveContextPacket {
                 reason: "must match PH1X_CONTRACT_VERSION",
             });
         }
+        validate_optional_context_text(
+            "active_context_packet.raw_user_turn_ref",
+            &self.raw_user_turn_ref,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.normalized_user_turn_ref",
+            &self.normalized_user_turn_ref,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.modality",
+            &self.modality,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
         validate_optional_context_text(
             "active_context_packet.active_topic",
             &self.active_topic,
@@ -580,6 +660,11 @@ impl Validate for ActiveContextPacket {
             PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
         )?;
         validate_optional_context_text(
+            "active_context_packet.last_answer_type",
+            &self.last_answer_type,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
             "active_context_packet.last_clarification_question",
             &self.last_clarification_question,
             PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
@@ -621,10 +706,61 @@ impl Validate for ActiveContextPacket {
             PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
         )?;
         validate_optional_context_text(
+            "active_context_packet.why_continue_reason",
+            &self.why_continue_reason,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
             "active_context_packet.why_not_continue_reason",
             &self.why_not_continue_reason,
             PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
         )?;
+        validate_optional_context_text(
+            "active_context_packet.selected_candidate",
+            &self.selected_candidate,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.rejected_candidates_ref",
+            &self.rejected_candidates_ref,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.candidate_rejection_ledger_ref",
+            &self.candidate_rejection_ledger_ref,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.minimum_evidence_threshold_ref",
+            &self.minimum_evidence_threshold_ref,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.owner_engine",
+            &self.owner_engine,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "active_context_packet.allowed_next_action",
+            &self.allowed_next_action,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "active_context_packet.blocked_actions",
+            &self.blocked_actions,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        if self
+            .reason_code
+            .as_ref()
+            .is_some_and(|reason_code| reason_code.0 == 0)
+        {
+            return Err(ContractViolation::InvalidValue {
+                field: "active_context_packet.reason_code",
+                reason: "must be > 0 when provided",
+            });
+        }
         validate_context_text_list(
             "active_context_packet.evidence_refs",
             &self.evidence_refs,
@@ -3225,6 +3361,7 @@ mod tests {
                 "explicit Japan plus skiing and restaurant constraints".to_string(),
             ),
             why_not_continue_reason: None,
+            ..Default::default()
         })
         .unwrap();
 
@@ -3239,6 +3376,79 @@ mod tests {
         );
         assert!(packet.constraints.iter().any(|item| item == "skiing"));
         assert_eq!(packet.topic_depth, 2);
+    }
+
+    #[test]
+    fn ph1x_active_context_packet_carries_stage8_5b_completion_fields() {
+        let packet = ActiveContextPacket::default()
+            .with_universal_frame(UniversalActiveFrameFields {
+                raw_user_turn_ref: Some("turn_raw:alpha".to_string()),
+                normalized_user_turn_ref: Some("turn_normalized:alpha".to_string()),
+                modality: Some("typed".to_string()),
+                user_goal: Some("plan a seasonal trip".to_string()),
+                current_plan: Some("combine outdoor activity and dining".to_string()),
+                open_question: Some("choose a base location".to_string()),
+                unresolved_decision: Some("select the best base".to_string()),
+                prior_options_presented: vec![
+                    "option_alpha".to_string(),
+                    "option_beta".to_string(),
+                ],
+                selected_option: Some("option_alpha".to_string()),
+                rejected_option: Some("option_gamma".to_string()),
+                comparison_set: vec!["activity fit".to_string(), "dining fit".to_string()],
+                constraints: vec!["outdoor activity".to_string(), "local dining".to_string()],
+                user_preference_in_turn: Some("prioritize dining quality".to_string()),
+                expected_answer_type: Some("recommendation".to_string()),
+                last_answer_type: Some("structured_options".to_string()),
+                last_clarification_question: Some(
+                    "Which planning factor matters most?".to_string(),
+                ),
+                clarification_answer_target: Some("planning_priority".to_string()),
+                discourse_state: Some("continuing_open_decision".to_string()),
+                topic_depth: 3,
+                returnable_topic: Some("seasonal trip plan".to_string()),
+                interruption_state: Some("no_interruption".to_string()),
+                speaker_continuity: Some("same_speaker".to_string()),
+                confidence_reason: Some("active plan and open decision both match".to_string()),
+                why_continue_reason: Some("current turn fills the active decision".to_string()),
+                why_not_continue_reason: None,
+                selected_candidate: Some("candidate:active_plan".to_string()),
+                rejected_candidates_ref: Some("rejected_candidates:alpha".to_string()),
+                candidate_rejection_ledger_ref: Some("candidate_ledger:alpha".to_string()),
+                minimum_evidence_threshold_ref: Some("threshold:stage8_5c_default".to_string()),
+                owner_engine: Some("PH1.X".to_string()),
+                allowed_next_action: Some("route_write".to_string()),
+                blocked_actions: vec!["protected_execute".to_string()],
+                reason_code: Some(ReasonCodeId(0x5800_0F01)),
+            })
+            .unwrap();
+
+        packet.validate().unwrap();
+        assert_eq!(packet.raw_user_turn_ref.as_deref(), Some("turn_raw:alpha"));
+        assert_eq!(
+            packet.normalized_user_turn_ref.as_deref(),
+            Some("turn_normalized:alpha")
+        );
+        assert_eq!(packet.modality.as_deref(), Some("typed"));
+        assert_eq!(
+            packet.last_answer_type.as_deref(),
+            Some("structured_options")
+        );
+        assert_eq!(
+            packet.why_continue_reason.as_deref(),
+            Some("current turn fills the active decision")
+        );
+        assert_eq!(
+            packet.selected_candidate.as_deref(),
+            Some("candidate:active_plan")
+        );
+        assert_eq!(packet.owner_engine.as_deref(), Some("PH1.X"));
+        assert_eq!(packet.allowed_next_action.as_deref(), Some("route_write"));
+        assert_eq!(
+            packet.blocked_actions,
+            vec!["protected_execute".to_string()]
+        );
+        assert_eq!(packet.reason_code, Some(ReasonCodeId(0x5800_0F01)));
     }
 
     #[test]
