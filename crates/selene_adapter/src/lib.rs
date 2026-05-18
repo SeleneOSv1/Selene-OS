@@ -139,7 +139,7 @@ use selene_kernel_contracts::ph1w::{
     WakePolicyContext, PH1W_IMPLEMENTATION_ID,
 };
 use selene_kernel_contracts::ph1x::{
-    ConfirmAnswer, LastTurnContext, LastTurnRouteClass, PendingState, Ph1xDirective,
+    ConfirmAnswer, LastTurnContext, LastTurnRouteClass, PendingState, Ph1xDirective, ProtectedRisk,
     ThreadPolicyFlags, ThreadState,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
@@ -195,8 +195,9 @@ use selene_os::ph1vision::{
     Ph1VisionEngine, Ph1VisionWiring, Ph1VisionWiringConfig, VisionTurnInput, VisionWiringOutcome,
 };
 use selene_os::ph1x::{
-    ph1x_universal_active_context_followup_query, ph1x_update_universal_active_context_after_turn,
-    resolve_report_display_target, ReportDisplayResolution,
+    ph1x_stage8_5c_candidate_decision, ph1x_universal_active_context_followup_query,
+    ph1x_update_universal_active_context_after_turn, resolve_report_display_target,
+    ReportDisplayResolution, Stage8_5CandidateDecision,
 };
 use selene_os::runtime_governance::{
     governance_failure_class_for_response, governance_reason_to_session_state,
@@ -1663,6 +1664,11 @@ pub struct UiInternalHistoryPh1xSummary {
     pub active_intent_ref: Option<String>,
     pub continuation_ref: Option<String>,
     pub protected_risk_ref: Option<String>,
+    pub selected_candidate_ref: Option<String>,
+    pub rejected_candidates_ref: Option<String>,
+    pub candidate_rejection_ledger_ref: Option<String>,
+    pub minimum_evidence_threshold_ref: Option<String>,
+    pub owner_output_contract_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -9005,6 +9011,7 @@ impl AdapterRuntime {
 
         let stage7_user_text_for_fallback = user_text_final.clone();
         let mut stage8_fresh_memory_bridge_for_fallback: Option<Stage8FreshMemoryBridge> = None;
+        let mut stage8_5c_candidate_decision_for_fallback: Option<Stage8_5CandidateDecision> = None;
         let execution_result = (|| {
             let mut store = self
                 .store
@@ -9754,16 +9761,23 @@ impl AdapterRuntime {
                 &thread_key,
             )
             .map_err(post_session_error)?;
-            let active_context_followup_rewrite = ph1x_universal_active_context_followup_query(
-                &base_thread_state,
-                user_text_final.as_deref(),
-            )
-            .or_else(|| {
-                deterministic_active_context_followup_query(
-                    &base_thread_state,
-                    user_text_final.as_deref(),
-                )
-            });
+            let stage8_5c_candidate_decision =
+                ph1x_stage8_5c_candidate_decision(&base_thread_state, user_text_final.as_deref());
+            let active_context_followup_rewrite = stage8_5c_candidate_decision
+                .as_ref()
+                .and_then(|decision| decision.rewritten_query.clone())
+                .or_else(|| {
+                    ph1x_universal_active_context_followup_query(
+                        &base_thread_state,
+                        user_text_final.as_deref(),
+                    )
+                })
+                .or_else(|| {
+                    deterministic_active_context_followup_query(
+                        &base_thread_state,
+                        user_text_final.as_deref(),
+                    )
+                });
             let stage8_fresh_memory_bridge = if active_context_followup_rewrite.is_none() {
                 stage8_fresh_memory_bridge_from_store(
                     &store,
@@ -9779,6 +9793,7 @@ impl AdapterRuntime {
                 None
             };
             stage8_fresh_memory_bridge_for_fallback = stage8_fresh_memory_bridge.clone();
+            stage8_5c_candidate_decision_for_fallback = stage8_5c_candidate_decision.clone();
             let stage8_fresh_memory_followup_rewrite = stage8_fresh_memory_bridge
                 .as_ref()
                 .and_then(|bridge| bridge.rewritten_query.clone());
@@ -9813,6 +9828,7 @@ impl AdapterRuntime {
                     Some(&response_text),
                     None,
                     false,
+                    stage8_5c_candidate_decision.as_ref(),
                     stage8_fresh_memory_bridge.as_ref(),
                 )
                 .map_err(post_session_error)?;
@@ -10009,6 +10025,7 @@ impl AdapterRuntime {
                         Some(&response_text),
                         None,
                         false,
+                        stage8_5c_candidate_decision.as_ref(),
                         stage8_fresh_memory_bridge.as_ref(),
                     )
                     .map_err(post_session_error)?;
@@ -10130,6 +10147,7 @@ impl AdapterRuntime {
                         Some(&response_text),
                         None,
                         protected_fail_closed,
+                        stage8_5c_candidate_decision.as_ref(),
                         stage8_fresh_memory_bridge.as_ref(),
                     )
                     .map_err(post_session_error)?;
@@ -10266,6 +10284,7 @@ impl AdapterRuntime {
                         Some(&response_text),
                         None,
                         false,
+                        stage8_5c_candidate_decision.as_ref(),
                         stage8_fresh_memory_bridge.as_ref(),
                     )
                     .map_err(post_session_error)?;
@@ -10374,6 +10393,7 @@ impl AdapterRuntime {
                         .map(|raw| truncate_ascii(raw.trim(), 16))
                         .filter(|value| !value.is_empty())
                 });
+            let post_turn_base_thread_state = base_thread_state.clone();
             let x_build = AppVoicePh1xBuildInput {
                 now,
                 thread_key: Some(thread_key.clone()),
@@ -10456,12 +10476,33 @@ impl AdapterRuntime {
             {
                 ph1d_public_answer_text = execution_outcome.response_text.clone();
             }
-            if let Some(ph1x_response) = execution_outcome.ph1x_response.as_ref() {
-                let persisted_thread_state = ph1x_update_universal_active_context_after_turn(
+            let post_turn_thread_state = execution_outcome
+                .ph1x_response
+                .as_ref()
+                .map(|ph1x_response| {
                     decorate_thread_state_with_last_turn_context(
                         ph1x_response.thread_state.clone(),
                         &execution_outcome,
-                    ),
+                    )
+                })
+                .unwrap_or_else(|| {
+                    decorate_thread_state_with_last_turn_context(
+                        post_turn_base_thread_state,
+                        &execution_outcome,
+                    )
+                });
+            let post_turn_reason_code = execution_outcome
+                .ph1x_response
+                .as_ref()
+                .map(|ph1x_response| ph1x_response.reason_code)
+                .or_else(|| {
+                    stage8_5c_candidate_decision
+                        .as_ref()
+                        .map(|decision| decision.owner_output_contract.reason_code)
+                });
+            if let Some(reason_code) = post_turn_reason_code {
+                let persisted_thread_state = ph1x_update_universal_active_context_after_turn(
+                    post_turn_thread_state,
                     user_text_final.as_deref(),
                     execution_outcome.response_text.as_deref(),
                     Some(outcome_label(&execution_outcome)),
@@ -10473,7 +10514,7 @@ impl AdapterRuntime {
                         actor_user_id: &actor_user_id,
                         thread_key: &thread_key,
                         thread_state: persisted_thread_state,
-                        reason_code: ph1x_response.reason_code,
+                        reason_code,
                         correlation_id,
                         turn_id,
                     },
@@ -10562,6 +10603,7 @@ impl AdapterRuntime {
                 selene_text_final_for_stage7.as_deref(),
                 execution_outcome.tool_response.as_ref(),
                 protected_fail_closed_for_stage7,
+                stage8_5c_candidate_decision.as_ref(),
                 stage8_fresh_memory_bridge.as_ref(),
             )
             .map_err(post_session_error)?;
@@ -10713,6 +10755,7 @@ impl AdapterRuntime {
                     Some(response.response_text.as_str()),
                     None,
                     protected_fail_closed,
+                    stage8_5c_candidate_decision_for_fallback.as_ref(),
                     stage8_fresh_memory_bridge_for_fallback.as_ref(),
                 )
                 .map_err(pre_session_error)?;
@@ -19658,6 +19701,11 @@ fn ui_internal_history_evidence_row_from_record(
             active_intent_ref: record.ph1x.active_intent_ref.clone(),
             continuation_ref: record.ph1x.continuation_ref.clone(),
             protected_risk_ref: record.ph1x.protected_risk_ref.clone(),
+            selected_candidate_ref: record.ph1x.selected_candidate_ref.clone(),
+            rejected_candidates_ref: record.ph1x.rejected_candidates_ref.clone(),
+            candidate_rejection_ledger_ref: record.ph1x.candidate_rejection_ledger_ref.clone(),
+            minimum_evidence_threshold_ref: record.ph1x.minimum_evidence_threshold_ref.clone(),
+            owner_output_contract_ref: record.ph1x.owner_output_contract_ref.clone(),
         },
         ph1m: UiInternalHistoryPh1mSummary {
             memory_evidence_packet_ref: record.ph1m.memory_evidence_packet_ref.clone(),
@@ -20042,6 +20090,79 @@ fn stage7_conversation_turn_id_for(
         .map(|row| row.conversation_turn_id)
 }
 
+fn append_stage8_5c_candidate_refs(
+    ph1x: &mut LiveContextEvidenceRefs,
+    refs: &mut InternalHistoryEvidenceRefs,
+    decision: &Stage8_5CandidateDecision,
+) {
+    ph1x.selected_candidate_ref = decision.active_context_packet.selected_candidate.clone();
+    ph1x.rejected_candidates_ref = decision
+        .active_context_packet
+        .rejected_candidates_ref
+        .clone();
+    ph1x.candidate_rejection_ledger_ref = decision
+        .active_context_packet
+        .candidate_rejection_ledger_ref
+        .clone();
+    ph1x.minimum_evidence_threshold_ref = decision
+        .active_context_packet
+        .minimum_evidence_threshold_ref
+        .clone();
+    ph1x.owner_output_contract_ref = decision
+        .active_context_packet
+        .evidence_refs
+        .iter()
+        .find(|reference| reference.starts_with("ph1x_owner_output:"))
+        .cloned();
+    if let Some(ledger_ref) = ph1x.candidate_rejection_ledger_ref.as_ref() {
+        if ph1x.active_context_packet_ref.is_none() {
+            ph1x.active_context_packet_ref =
+                Some(format!("ph1x_active_context_packet:{ledger_ref}"));
+        }
+        refs.decision_task_refs.push(ledger_ref.clone());
+        refs.replay_integrity_refs.push(ledger_ref.clone());
+    }
+    if let Some(selected_ref) = ph1x.selected_candidate_ref.as_ref() {
+        refs.decision_task_refs.push(selected_ref.clone());
+    }
+    if let Some(threshold_ref) = ph1x.minimum_evidence_threshold_ref.as_ref() {
+        refs.decision_task_refs.push(threshold_ref.clone());
+    }
+    if let Some(owner_ref) = ph1x.owner_output_contract_ref.as_ref() {
+        refs.decision_task_refs.push(owner_ref.clone());
+    }
+    if ph1x.human_conversation_directive_ref.is_none() {
+        ph1x.human_conversation_directive_ref = Some(format!(
+            "ph1x_directive:{:?}:{}",
+            decision.owner_output_contract.selected_directive,
+            decision
+                .active_context_packet
+                .candidate_rejection_ledger_ref
+                .as_deref()
+                .unwrap_or("stage8_5c")
+        ));
+    }
+    if ph1x.continuation_ref.is_none() {
+        ph1x.continuation_ref = decision
+            .active_context_packet
+            .why_continue_reason
+            .clone()
+            .or_else(|| {
+                decision
+                    .active_context_packet
+                    .why_not_continue_reason
+                    .clone()
+            });
+    }
+    if decision.active_context_packet.protected_risk == ProtectedRisk::Protected {
+        ph1x.protected_risk_ref = Some("ph1x_protected_risk:stage8_5c_fail_closed".to_string());
+    }
+    refs.decision_task_refs.sort();
+    refs.decision_task_refs.dedup();
+    refs.replay_integrity_refs.sort();
+    refs.replay_integrity_refs.dedup();
+}
+
 #[allow(clippy::too_many_arguments)]
 fn append_stage7_runtime_response_evidence(
     store: &mut Ph1fStore,
@@ -20054,6 +20175,7 @@ fn append_stage7_runtime_response_evidence(
     selene_text: Option<&str>,
     tool_response: Option<&ToolResponse>,
     protected_fail_closed: bool,
+    stage8_5c_decision: Option<&Stage8_5CandidateDecision>,
     stage8_fresh_memory: Option<&Stage8FreshMemoryBridge>,
 ) -> Result<(), String> {
     let Some(selene_text) = selene_text.map(str::trim).filter(|value| !value.is_empty()) else {
@@ -20168,6 +20290,9 @@ fn append_stage7_runtime_response_evidence(
         if let Some(ref value) = stage8.memory_refs.memory_continuation_decision_ref {
             refs.replay_integrity_refs.push(value.clone());
         }
+    }
+    if let Some(decision) = stage8_5c_decision {
+        append_stage8_5c_candidate_refs(&mut ph1x, &mut refs, decision);
     }
 
     let mut memory = stage8_fresh_memory
@@ -28248,6 +28373,128 @@ mod tests {
                 .iter()
                 .flat_map(|row| row.refs.replay_integrity_refs.iter())
                 .any(|r| r.starts_with("conversation_turn:")),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn stage8_5c_adapter_evidence_report_exposes_candidate_decision_refs() {
+        let runtime = AdapterRuntime::default();
+        let mut first = base_request();
+        first.app_platform = "DESKTOP".to_string();
+        first.audio_capture_ref = None;
+        first.correlation_id = 8_500_301;
+        first.turn_id = 8_500_301;
+        first.device_turn_sequence = Some(8_500_301);
+        first.now_ns = Some(8_500_301_000_000);
+        first.thread_key = Some("stage8-5c-candidate-evidence".to_string());
+        first.user_text_final = Some("What time is it in New York?".to_string());
+        let first_out = runtime
+            .run_voice_turn(first)
+            .expect("first time turn should complete");
+        assert_h363_clean_time_answer(&first_out, "New York");
+
+        let mut followup = base_request();
+        followup.app_platform = "DESKTOP".to_string();
+        followup.audio_capture_ref = None;
+        followup.correlation_id = 8_500_302;
+        followup.turn_id = 8_500_302;
+        followup.device_turn_sequence = Some(8_500_302);
+        followup.now_ns = Some(8_500_302_000_000);
+        followup.thread_key = Some("stage8-5c-candidate-evidence".to_string());
+        followup.user_text_final = Some("What about Sydney?".to_string());
+        let followup_out = runtime
+            .run_voice_turn(followup)
+            .expect("follow-up time turn should complete");
+        assert_h363_clean_time_answer(&followup_out, "Sydney");
+
+        let report = runtime.ui_internal_history_evidence_report(Some(8_500_302_000_010));
+        assert!(
+            report.events.iter().any(|row| {
+                row.turn_id == "8500302"
+                    && row.event_kind == "CommittedTurn"
+                    && row.modality == "System"
+                    && row.ph1x.selected_candidate_ref.is_some()
+                    && row.ph1x.rejected_candidates_ref.is_some()
+                    && row.ph1x.candidate_rejection_ledger_ref.is_some()
+                    && row.ph1x.minimum_evidence_threshold_ref.is_some()
+                    && row.ph1x.owner_output_contract_ref.is_some()
+                    && row
+                        .refs
+                        .decision_task_refs
+                        .iter()
+                        .any(|reference| reference.starts_with("ph1x_candidate_ledger:"))
+            }),
+            "{report:?}"
+        );
+    }
+
+    #[test]
+    fn stage8_5c_adapter_persists_public_answer_writing_frame() {
+        let runtime = AdapterRuntime::default();
+        let thread_key = "stage8-5c-public-writing-frame";
+        let mut story = base_request();
+        story.app_platform = "DESKTOP".to_string();
+        story.audio_capture_ref = None;
+        story.correlation_id = 8_500_321;
+        story.turn_id = 8_500_321;
+        story.device_turn_sequence = Some(8_500_321);
+        story.now_ns = Some(8_500_321_000_000);
+        story.thread_key = Some(thread_key.to_string());
+        story.user_text_final = Some("Tell me a short story about a tiny lighthouse.".to_string());
+
+        let story_out = runtime
+            .run_voice_turn(story.clone())
+            .expect("public writing seed turn should complete");
+        assert_eq!(story_out.status, "ok", "{story_out:?}");
+
+        let actor_user_id = UserId::new(story.actor_user_id.clone()).expect("actor id must parse");
+        {
+            let store = runtime.store.lock().expect("store lock must not poison");
+            let loaded_thread = store
+                .ph1x_thread_state_current_row(&actor_user_id, thread_key)
+                .expect("thread-state lookup must succeed");
+            assert_eq!(
+                loaded_thread.thread_state.active_subject_ref.as_deref(),
+                Some("ph1x:frame:writing"),
+                "{loaded_thread:?}"
+            );
+            assert!(
+                loaded_thread
+                    .thread_state
+                    .pinned_context_refs
+                    .iter()
+                    .any(|reference| reference == "ph1x:expected:rewrite"),
+                "{loaded_thread:?}"
+            );
+        }
+
+        let mut shorten = base_request();
+        shorten.app_platform = "DESKTOP".to_string();
+        shorten.audio_capture_ref = None;
+        shorten.correlation_id = 8_500_322;
+        shorten.turn_id = 8_500_322;
+        shorten.device_turn_sequence = Some(8_500_322);
+        shorten.now_ns = Some(8_500_322_000_000);
+        shorten.thread_key = Some(thread_key.to_string());
+        shorten.user_text_final = Some("Give me a shorter version.".to_string());
+
+        let shorten_out = runtime
+            .run_voice_turn(shorten)
+            .expect("writing follow-up turn should complete");
+        assert_eq!(shorten_out.status, "ok", "{shorten_out:?}");
+
+        let report = runtime.ui_internal_history_evidence_report(Some(8_500_322_000_010));
+        assert!(
+            report.events.iter().any(|row| {
+                row.turn_id == "8500322"
+                    && row.event_kind == "CommittedTurn"
+                    && row.modality == "System"
+                    && row.ph1x.selected_candidate_ref.as_deref()
+                        == Some("ph1x_candidate:active_writing_artifact")
+                    && row.ph1x.candidate_rejection_ledger_ref.is_some()
+                    && row.ph1x.owner_output_contract_ref.is_some()
+            }),
             "{report:?}"
         );
     }

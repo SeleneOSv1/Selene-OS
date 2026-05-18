@@ -592,6 +592,11 @@ pub struct LiveContextEvidenceRefs {
     pub active_intent_ref: Option<String>,
     pub continuation_ref: Option<String>,
     pub protected_risk_ref: Option<String>,
+    pub selected_candidate_ref: Option<String>,
+    pub rejected_candidates_ref: Option<String>,
+    pub candidate_rejection_ledger_ref: Option<String>,
+    pub minimum_evidence_threshold_ref: Option<String>,
+    pub owner_output_contract_ref: Option<String>,
 }
 
 impl LiveContextEvidenceRefs {
@@ -603,6 +608,11 @@ impl LiveContextEvidenceRefs {
             active_intent_ref: None,
             continuation_ref: None,
             protected_risk_ref: None,
+            selected_candidate_ref: None,
+            rejected_candidates_ref: None,
+            candidate_rejection_ledger_ref: None,
+            minimum_evidence_threshold_ref: None,
+            owner_output_contract_ref: None,
         }
     }
 }
@@ -637,6 +647,31 @@ impl Validate for LiveContextEvidenceRefs {
         validate_optional_history_text(
             "ph1x_evidence.protected_risk_ref",
             &self.protected_risk_ref,
+            PH1F_INTERNAL_HISTORY_REF_MAX_CHARS,
+        )?;
+        validate_optional_history_text(
+            "ph1x_evidence.selected_candidate_ref",
+            &self.selected_candidate_ref,
+            PH1F_INTERNAL_HISTORY_REF_MAX_CHARS,
+        )?;
+        validate_optional_history_text(
+            "ph1x_evidence.rejected_candidates_ref",
+            &self.rejected_candidates_ref,
+            PH1F_INTERNAL_HISTORY_REF_MAX_CHARS,
+        )?;
+        validate_optional_history_text(
+            "ph1x_evidence.candidate_rejection_ledger_ref",
+            &self.candidate_rejection_ledger_ref,
+            PH1F_INTERNAL_HISTORY_REF_MAX_CHARS,
+        )?;
+        validate_optional_history_text(
+            "ph1x_evidence.minimum_evidence_threshold_ref",
+            &self.minimum_evidence_threshold_ref,
+            PH1F_INTERNAL_HISTORY_REF_MAX_CHARS,
+        )?;
+        validate_optional_history_text(
+            "ph1x_evidence.owner_output_contract_ref",
+            &self.owner_output_contract_ref,
             PH1F_INTERNAL_HISTORY_REF_MAX_CHARS,
         )
     }

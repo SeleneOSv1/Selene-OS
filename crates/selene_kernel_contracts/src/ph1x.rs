@@ -246,6 +246,471 @@ impl Validate for HumanConversationDirective {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1xContextCandidateKind {
+    LatestSeleneAnswer,
+    ActiveToolResult,
+    ActiveWritingArtifact,
+    ActivePlan,
+    OpenClarification,
+    CorrectionTarget,
+    TopicStack,
+    ReturnableTopic,
+    FreshMemoryHandoff,
+    NewTopicFallback,
+    ProtectedFailClosed,
+}
+
+impl Default for Ph1xContextCandidateKind {
+    fn default() -> Self {
+        Self::NewTopicFallback
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ph1xCandidateRejectionReasonCode {
+    LowerScore,
+    BelowMinimumEvidenceThreshold,
+    HardDisqualifierProtectedRisk,
+    HardDisqualifierSpeakerPrivacyMismatch,
+    HardDisqualifierRejectedEvidence,
+    HardDisqualifierStaleContext,
+    HardDisqualifierExplicitTopicSwitch,
+    HardDisqualifierWrongArtifactType,
+    HardDisqualifierClosedTopic,
+    HardDisqualifierUnsupportedEvidence,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Ph1xCandidateScoreFactors {
+    pub semantic_fit: u16,
+    pub task_fit: u16,
+    pub entity_fit: u16,
+    pub artifact_fit: u16,
+    pub tool_family_fit: u16,
+    pub open_slot_fit: u16,
+    pub recency_score: u16,
+    pub speaker_continuity_score: u16,
+    pub topic_stack_score: u16,
+    pub discourse_fit: u16,
+    pub clarification_fit: u16,
+    pub correction_fit: u16,
+    pub privacy_scope_fit: u16,
+    pub risk_penalty: u16,
+    pub ambiguity_penalty: u16,
+    pub stale_context_penalty: u16,
+}
+
+impl Validate for Ph1xCandidateScoreFactors {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        for (field, value) in [
+            ("candidate_score.semantic_fit", self.semantic_fit),
+            ("candidate_score.task_fit", self.task_fit),
+            ("candidate_score.entity_fit", self.entity_fit),
+            ("candidate_score.artifact_fit", self.artifact_fit),
+            ("candidate_score.tool_family_fit", self.tool_family_fit),
+            ("candidate_score.open_slot_fit", self.open_slot_fit),
+            ("candidate_score.recency_score", self.recency_score),
+            (
+                "candidate_score.speaker_continuity_score",
+                self.speaker_continuity_score,
+            ),
+            ("candidate_score.topic_stack_score", self.topic_stack_score),
+            ("candidate_score.discourse_fit", self.discourse_fit),
+            ("candidate_score.clarification_fit", self.clarification_fit),
+            ("candidate_score.correction_fit", self.correction_fit),
+            ("candidate_score.privacy_scope_fit", self.privacy_scope_fit),
+            ("candidate_score.risk_penalty", self.risk_penalty),
+            ("candidate_score.ambiguity_penalty", self.ambiguity_penalty),
+            (
+                "candidate_score.stale_context_penalty",
+                self.stale_context_penalty,
+            ),
+        ] {
+            validate_context_confidence(field, value)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1xContextCandidate {
+    pub schema_version: SchemaVersion,
+    pub candidate_ref: String,
+    pub candidate_kind: Ph1xContextCandidateKind,
+    pub target_ref: Option<String>,
+    pub directive: HumanConversationDirective,
+    pub owner_engine: SuggestedNextEngine,
+    pub score: u16,
+    pub score_factors: Ph1xCandidateScoreFactors,
+    pub protected_risk: ProtectedRisk,
+    pub evidence_refs: Vec<String>,
+    pub disqualifier_applied: Option<Ph1xCandidateRejectionReasonCode>,
+}
+
+impl Ph1xContextCandidate {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        candidate_ref: String,
+        candidate_kind: Ph1xContextCandidateKind,
+        target_ref: Option<String>,
+        directive: HumanConversationDirective,
+        owner_engine: SuggestedNextEngine,
+        score: u16,
+        score_factors: Ph1xCandidateScoreFactors,
+        protected_risk: ProtectedRisk,
+        evidence_refs: Vec<String>,
+        disqualifier_applied: Option<Ph1xCandidateRejectionReasonCode>,
+    ) -> Result<Self, ContractViolation> {
+        let candidate = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            candidate_ref,
+            candidate_kind,
+            target_ref,
+            directive,
+            owner_engine,
+            score,
+            score_factors,
+            protected_risk,
+            evidence_refs,
+            disqualifier_applied,
+        };
+        candidate.validate()?;
+        Ok(candidate)
+    }
+}
+
+impl Validate for Ph1xContextCandidate {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_context_candidate.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        validate_context_text_list(
+            "ph1x_context_candidate.candidate_ref",
+            std::slice::from_ref(&self.candidate_ref),
+            1,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "ph1x_context_candidate.target_ref",
+            &self.target_ref,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        self.directive.validate()?;
+        validate_context_confidence("ph1x_context_candidate.score", self.score)?;
+        self.score_factors.validate()?;
+        validate_context_text_list(
+            "ph1x_context_candidate.evidence_refs",
+            &self.evidence_refs,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1xCandidateRejection {
+    pub schema_version: SchemaVersion,
+    pub candidate_ref: String,
+    pub rejection_reason_code: Ph1xCandidateRejectionReasonCode,
+    pub rejection_reason_text: Option<String>,
+    pub disqualifier_applied: Option<Ph1xCandidateRejectionReasonCode>,
+    pub owner_engine: SuggestedNextEngine,
+    pub protected_risk: ProtectedRisk,
+    pub ambiguity_level: AmbiguityLevel,
+    pub confidence: u16,
+    pub confidence_reason: Option<String>,
+    pub why_continue_reason: Option<String>,
+    pub why_not_continue_reason: Option<String>,
+    pub evidence_refs: Vec<String>,
+}
+
+impl Ph1xCandidateRejection {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        candidate_ref: String,
+        rejection_reason_code: Ph1xCandidateRejectionReasonCode,
+        rejection_reason_text: Option<String>,
+        disqualifier_applied: Option<Ph1xCandidateRejectionReasonCode>,
+        owner_engine: SuggestedNextEngine,
+        protected_risk: ProtectedRisk,
+        ambiguity_level: AmbiguityLevel,
+        confidence: u16,
+        confidence_reason: Option<String>,
+        why_continue_reason: Option<String>,
+        why_not_continue_reason: Option<String>,
+        evidence_refs: Vec<String>,
+    ) -> Result<Self, ContractViolation> {
+        let rejection = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            candidate_ref,
+            rejection_reason_code,
+            rejection_reason_text,
+            disqualifier_applied,
+            owner_engine,
+            protected_risk,
+            ambiguity_level,
+            confidence,
+            confidence_reason,
+            why_continue_reason,
+            why_not_continue_reason,
+            evidence_refs,
+        };
+        rejection.validate()?;
+        Ok(rejection)
+    }
+}
+
+impl Validate for Ph1xCandidateRejection {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_candidate_rejection.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        validate_context_text_list(
+            "ph1x_candidate_rejection.candidate_ref",
+            std::slice::from_ref(&self.candidate_ref),
+            1,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "ph1x_candidate_rejection.rejection_reason_text",
+            &self.rejection_reason_text,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_confidence("ph1x_candidate_rejection.confidence", self.confidence)?;
+        validate_optional_context_text(
+            "ph1x_candidate_rejection.confidence_reason",
+            &self.confidence_reason,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "ph1x_candidate_rejection.why_continue_reason",
+            &self.why_continue_reason,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "ph1x_candidate_rejection.why_not_continue_reason",
+            &self.why_not_continue_reason,
+            PH1X_ACTIVE_CONTEXT_TEXT_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "ph1x_candidate_rejection.evidence_refs",
+            &self.evidence_refs,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1xCandidateRejectionLedger {
+    pub schema_version: SchemaVersion,
+    pub selected_candidate: Option<String>,
+    pub rejected_candidates: Vec<Ph1xCandidateRejection>,
+    pub selected_directive: HumanConversationDirective,
+    pub owner_engine: SuggestedNextEngine,
+    pub allowed_next_action: Option<String>,
+    pub blocked_actions: Vec<String>,
+    pub reason_code: ReasonCodeId,
+    pub evidence_refs: Vec<String>,
+    pub confidence: u16,
+    pub ambiguity_level: AmbiguityLevel,
+    pub protected_risk: ProtectedRisk,
+}
+
+impl Ph1xCandidateRejectionLedger {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        selected_candidate: Option<String>,
+        rejected_candidates: Vec<Ph1xCandidateRejection>,
+        selected_directive: HumanConversationDirective,
+        owner_engine: SuggestedNextEngine,
+        allowed_next_action: Option<String>,
+        blocked_actions: Vec<String>,
+        reason_code: ReasonCodeId,
+        evidence_refs: Vec<String>,
+        confidence: u16,
+        ambiguity_level: AmbiguityLevel,
+        protected_risk: ProtectedRisk,
+    ) -> Result<Self, ContractViolation> {
+        let ledger = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            selected_candidate,
+            rejected_candidates,
+            selected_directive,
+            owner_engine,
+            allowed_next_action,
+            blocked_actions,
+            reason_code,
+            evidence_refs,
+            confidence,
+            ambiguity_level,
+            protected_risk,
+        };
+        ledger.validate()?;
+        Ok(ledger)
+    }
+}
+
+impl Validate for Ph1xCandidateRejectionLedger {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_candidate_rejection_ledger.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        validate_optional_context_text(
+            "ph1x_candidate_rejection_ledger.selected_candidate",
+            &self.selected_candidate,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        if self.rejected_candidates.len() > PH1X_ACTIVE_CONTEXT_MAX_ITEMS {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_candidate_rejection_ledger.rejected_candidates",
+                reason: "exceeds max items",
+            });
+        }
+        for rejection in &self.rejected_candidates {
+            rejection.validate()?;
+        }
+        self.selected_directive.validate()?;
+        validate_optional_context_text(
+            "ph1x_candidate_rejection_ledger.allowed_next_action",
+            &self.allowed_next_action,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "ph1x_candidate_rejection_ledger.blocked_actions",
+            &self.blocked_actions,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_candidate_rejection_ledger.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        validate_context_text_list(
+            "ph1x_candidate_rejection_ledger.evidence_refs",
+            &self.evidence_refs,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_context_confidence(
+            "ph1x_candidate_rejection_ledger.confidence",
+            self.confidence,
+        )?;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1xOwnerOutputContract {
+    pub schema_version: SchemaVersion,
+    pub selected_directive: HumanConversationDirective,
+    pub owner_engine: SuggestedNextEngine,
+    pub allowed_next_action: Option<String>,
+    pub blocked_actions: Vec<String>,
+    pub reason_code: ReasonCodeId,
+    pub evidence_refs: Vec<String>,
+    pub selected_candidate: Option<String>,
+    pub rejected_candidates_ref: Option<String>,
+    pub confidence: u16,
+    pub ambiguity_level: AmbiguityLevel,
+    pub protected_risk: ProtectedRisk,
+}
+
+impl Ph1xOwnerOutputContract {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        selected_directive: HumanConversationDirective,
+        owner_engine: SuggestedNextEngine,
+        allowed_next_action: Option<String>,
+        blocked_actions: Vec<String>,
+        reason_code: ReasonCodeId,
+        evidence_refs: Vec<String>,
+        selected_candidate: Option<String>,
+        rejected_candidates_ref: Option<String>,
+        confidence: u16,
+        ambiguity_level: AmbiguityLevel,
+        protected_risk: ProtectedRisk,
+    ) -> Result<Self, ContractViolation> {
+        let contract = Self {
+            schema_version: PH1X_CONTRACT_VERSION,
+            selected_directive,
+            owner_engine,
+            allowed_next_action,
+            blocked_actions,
+            reason_code,
+            evidence_refs,
+            selected_candidate,
+            rejected_candidates_ref,
+            confidence,
+            ambiguity_level,
+            protected_risk,
+        };
+        contract.validate()?;
+        Ok(contract)
+    }
+}
+
+impl Validate for Ph1xOwnerOutputContract {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1X_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_owner_output_contract.schema_version",
+                reason: "must match PH1X_CONTRACT_VERSION",
+            });
+        }
+        self.selected_directive.validate()?;
+        validate_optional_context_text(
+            "ph1x_owner_output_contract.allowed_next_action",
+            &self.allowed_next_action,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_context_text_list(
+            "ph1x_owner_output_contract.blocked_actions",
+            &self.blocked_actions,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1x_owner_output_contract.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        validate_context_text_list(
+            "ph1x_owner_output_contract.evidence_refs",
+            &self.evidence_refs,
+            PH1X_ACTIVE_CONTEXT_MAX_ITEMS,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "ph1x_owner_output_contract.selected_candidate",
+            &self.selected_candidate,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_optional_context_text(
+            "ph1x_owner_output_contract.rejected_candidates_ref",
+            &self.rejected_candidates_ref,
+            PH1X_ACTIVE_CONTEXT_LABEL_MAX_CHARS,
+        )?;
+        validate_context_confidence("ph1x_owner_output_contract.confidence", self.confidence)?;
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ActiveContextPacket {
     pub schema_version: SchemaVersion,
@@ -3449,6 +3914,84 @@ mod tests {
             vec!["protected_execute".to_string()]
         );
         assert_eq!(packet.reason_code, Some(ReasonCodeId(0x5800_0F01)));
+    }
+
+    #[test]
+    fn ph1x_stage8_5c_candidate_rejection_and_owner_contract_validate() {
+        let score_factors = Ph1xCandidateScoreFactors {
+            semantic_fit: 9_000,
+            task_fit: 8_900,
+            entity_fit: 8_800,
+            tool_family_fit: 9_100,
+            recency_score: 8_700,
+            discourse_fit: 8_600,
+            ..Default::default()
+        };
+        score_factors.validate().unwrap();
+        let selected = Ph1xContextCandidate::v1(
+            "candidate:active_tool".to_string(),
+            Ph1xContextCandidateKind::ActiveToolResult,
+            Some("ph1x:entity:alpha".to_string()),
+            HumanConversationDirective::RouteToTool,
+            SuggestedNextEngine::Ph1E,
+            8_900,
+            score_factors,
+            ProtectedRisk::None,
+            vec!["ph1x:tool_family:time".to_string()],
+            None,
+        )
+        .unwrap();
+        let rejected = Ph1xCandidateRejection::v1(
+            "candidate:new_topic".to_string(),
+            Ph1xCandidateRejectionReasonCode::LowerScore,
+            Some("lower scoring fallback".to_string()),
+            None,
+            SuggestedNextEngine::Ph1Write,
+            ProtectedRisk::None,
+            AmbiguityLevel::Low,
+            8_900,
+            Some("active tool candidate had stronger evidence".to_string()),
+            Some("same tool family and new entity".to_string()),
+            Some("fallback had weaker task fit".to_string()),
+            vec!["ph1x:threshold:stage8_5c".to_string()],
+        )
+        .unwrap();
+        let ledger = Ph1xCandidateRejectionLedger::v1(
+            Some(selected.candidate_ref.clone()),
+            vec![rejected],
+            HumanConversationDirective::RouteToTool,
+            SuggestedNextEngine::Ph1E,
+            Some("route_to_ph1e".to_string()),
+            vec!["protected_execute".to_string()],
+            ReasonCodeId(0x5800_0870),
+            vec!["ph1x_candidate_ledger:alpha".to_string()],
+            8_900,
+            AmbiguityLevel::Low,
+            ProtectedRisk::None,
+        )
+        .unwrap();
+        let owner = Ph1xOwnerOutputContract::v1(
+            ledger.selected_directive,
+            ledger.owner_engine,
+            ledger.allowed_next_action.clone(),
+            ledger.blocked_actions.clone(),
+            ledger.reason_code,
+            ledger.evidence_refs.clone(),
+            ledger.selected_candidate.clone(),
+            Some("ph1x_rejected_candidates:alpha".to_string()),
+            ledger.confidence,
+            ledger.ambiguity_level,
+            ledger.protected_risk,
+        )
+        .unwrap();
+
+        assert_eq!(
+            ledger.selected_candidate.as_deref(),
+            Some("candidate:active_tool")
+        );
+        assert_eq!(ledger.rejected_candidates.len(), 1);
+        assert_eq!(owner.owner_engine, SuggestedNextEngine::Ph1E);
+        assert_eq!(owner.allowed_next_action.as_deref(), Some("route_to_ph1e"));
     }
 
     #[test]

@@ -14,16 +14,21 @@ use selene_kernel_contracts::ph1n::{
 };
 use selene_kernel_contracts::ph1tts::{AnswerId, TtsControl};
 use selene_kernel_contracts::ph1x::{
-    ClarifyDirective, ConfirmDirective, DeliveryHint, DispatchDirective, IdentityContext,
-    IdentityPromptState, InterruptContinuityOutcome, InterruptResumePolicy,
-    InterruptSubjectRelation, LastTurnRouteClass, PendingState, Ph1xDirective, Ph1xRequest,
-    Ph1xResponse, ResumeBuffer, StepUpActionClass, StepUpCapabilities, StepUpChallengeMethod,
-    StepUpOutcome, StepUpResult, ThreadState, WaitDirective,
+    ActiveContextPacket, AmbiguityLevel, ClarifyDirective, ConfirmDirective, ContinuationType,
+    ConversationRhythm, DeliveryHint, DispatchDirective, HumanConversationDirective,
+    IdentityContext, IdentityPromptState, InteractionPosture, InterruptContinuityOutcome,
+    InterruptResumePolicy, InterruptSubjectRelation, LastTurnRouteClass, PendingState,
+    Ph1xCandidateRejection, Ph1xCandidateRejectionLedger, Ph1xCandidateRejectionReasonCode,
+    Ph1xCandidateScoreFactors, Ph1xContextCandidate, Ph1xContextCandidateKind, Ph1xDirective,
+    Ph1xOwnerOutputContract, Ph1xRequest, Ph1xResponse, ProtectedRisk, ResponseShape, ResumeBuffer,
+    StepUpActionClass, StepUpCapabilities, StepUpChallengeMethod, StepUpOutcome, StepUpResult,
+    SuggestedNextEngine, ThreadState, UniversalActiveFrameFields, WaitDirective,
 };
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{
     ContractViolation, MonotonicTimeNs, ReasonCodeId, SessionState, Validate,
 };
+use std::hash::{Hash, Hasher};
 
 pub mod reason_codes {
     use selene_kernel_contracts::ReasonCodeId;
@@ -62,6 +67,14 @@ pub mod reason_codes {
     pub const X_INTERRUPT_RETURN_CHECK_ASKED: ReasonCodeId = ReasonCodeId(0x5800_001F);
     pub const X_INTERRUPT_RESUME_NOW: ReasonCodeId = ReasonCodeId(0x5800_0020);
     pub const X_INTERRUPT_DISCARD: ReasonCodeId = ReasonCodeId(0x5800_0021);
+    pub const X_STAGE8_5C_CONTINUE_TOOL: ReasonCodeId = ReasonCodeId(0x5800_0870);
+    pub const X_STAGE8_5C_CONTINUE_PLAN: ReasonCodeId = ReasonCodeId(0x5800_0871);
+    pub const X_STAGE8_5C_MODIFY_ARTIFACT: ReasonCodeId = ReasonCodeId(0x5800_0872);
+    pub const X_STAGE8_5C_CORRECT_TOOL: ReasonCodeId = ReasonCodeId(0x5800_0873);
+    pub const X_STAGE8_5C_ANSWER_NEW_TOPIC: ReasonCodeId = ReasonCodeId(0x5800_0874);
+    pub const X_STAGE8_5C_ASK_CLARIFICATION: ReasonCodeId = ReasonCodeId(0x5800_0875);
+    pub const X_STAGE8_5C_FAIL_CLOSED_PROTECTED: ReasonCodeId = ReasonCodeId(0x5800_0876);
+    pub const X_STAGE8_5C_HANDOFF_MEMORY: ReasonCodeId = ReasonCodeId(0x5800_0877);
 }
 
 const IDENTITY_PROMPT_COOLDOWN_NS: u64 = 600_000_000_000;
@@ -3886,9 +3899,21 @@ const STAGE8_5_ARTIFACT_MARKERS: &[&str] = &[
     "summary", "letter",
 ];
 const STAGE8_5_ARTIFACT_MODIFIERS: &[&str] = &[
+    "short",
     "shorter",
     "shorten",
+    "brief",
+    "concise",
+    "condensed",
+    "compact",
     "tighten",
+    "trim",
+    "reduce",
+    "summarize",
+    "summarise",
+    "summarized",
+    "summarised",
+    "version",
     "longer",
     "warmer",
     "colder",
@@ -3907,7 +3932,53 @@ const STAGE8_5_ARTIFACT_MODIFIERS: &[&str] = &[
     "tone",
 ];
 const STAGE8_5_REFERENCE_TERMS: &[&str] = &[
-    "it", "that", "this", "same", "again", "previous", "prior", "first", "other",
+    "it", "that", "this", "same", "those", "these", "they", "them", "their", "he", "him", "his",
+    "she", "her", "hers", "either", "again", "previous", "prior", "first", "other",
+];
+const STAGE8_5_DEFINITE_REFERENCE_MARKERS: &[&str] = &[
+    "the", "that", "this", "those", "these", "either", "both", "same", "other", "first", "second",
+    "previous", "prior",
+];
+const STAGE8_5_DEFINITE_REFERENCE_TARGETS: &[&str] = &[
+    "answer",
+    "answers",
+    "area",
+    "areas",
+    "choice",
+    "choices",
+    "city",
+    "cities",
+    "country",
+    "countries",
+    "destination",
+    "destinations",
+    "draft",
+    "email",
+    "hotel",
+    "hotels",
+    "item",
+    "items",
+    "message",
+    "option",
+    "options",
+    "person",
+    "people",
+    "place",
+    "places",
+    "plan",
+    "restaurant",
+    "restaurants",
+    "role",
+    "roles",
+    "room",
+    "rooms",
+    "source",
+    "sources",
+    "story",
+    "text",
+    "trip",
+    "one",
+    "ones",
 ];
 const STAGE8_5_CONFIRMATION_TERMS: &[&str] = &[
     "yes",
@@ -3970,6 +4041,8 @@ struct Stage8_5Features {
     entity_fragment: Option<String>,
     destination: Option<String>,
     constraints: Vec<String>,
+    reference_followup: bool,
+    definite_reference_followup: bool,
     selection_followup: bool,
     timing_followup: bool,
     prior_options_followup: bool,
@@ -3980,10 +4053,33 @@ struct Stage8_5Features {
     new_topic: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Stage8_5CandidateDecision {
+    pub rewritten_query: Option<String>,
+    pub selected_candidate: Option<Ph1xContextCandidate>,
+    pub candidates: Vec<Ph1xContextCandidate>,
+    pub rejection_ledger: Ph1xCandidateRejectionLedger,
+    pub owner_output_contract: Ph1xOwnerOutputContract,
+    pub active_context_packet: ActiveContextPacket,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Stage8_5CandidateWork {
+    candidate: Ph1xContextCandidate,
+    rewritten_query: Option<String>,
+}
+
 pub fn ph1x_universal_active_context_followup_query(
     thread_state: &ThreadState,
     transcript_text: Option<&str>,
 ) -> Option<String> {
+    ph1x_stage8_5c_candidate_decision(thread_state, transcript_text)?.rewritten_query
+}
+
+pub fn ph1x_stage8_5c_candidate_decision(
+    thread_state: &ThreadState,
+    transcript_text: Option<&str>,
+) -> Option<Stage8_5CandidateDecision> {
     let text = transcript_text?.trim();
     if text.is_empty() || text.len() > 2048 {
         return None;
@@ -3993,15 +4089,209 @@ pub fn ph1x_universal_active_context_followup_query(
         return None;
     }
 
+    let mut candidates = ph1x_stage8_5c_generate_candidates(thread_state, text, &features);
+    if candidates.is_empty() {
+        return None;
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .candidate
+            .score
+            .cmp(&left.candidate.score)
+            .then_with(|| {
+                left.candidate
+                    .candidate_ref
+                    .cmp(&right.candidate.candidate_ref)
+            })
+    });
+    let selected_index = ph1x_stage8_5c_select_candidate_index(&candidates);
+    let selected = selected_index.and_then(|idx| candidates.get(idx).cloned());
+    let selected_candidate_ref = selected
+        .as_ref()
+        .map(|work| work.candidate.candidate_ref.clone());
+    let selected_score = selected
+        .as_ref()
+        .map(|work| work.candidate.score)
+        .unwrap_or(0);
+    let selected_owner = selected
+        .as_ref()
+        .map(|work| work.candidate.owner_engine)
+        .unwrap_or(SuggestedNextEngine::None);
+    let selected_directive = selected
+        .as_ref()
+        .map(|work| work.candidate.directive)
+        .unwrap_or(HumanConversationDirective::AnswerNewQuestion);
+    let selected_protected_risk = selected
+        .as_ref()
+        .map(|work| work.candidate.protected_risk)
+        .unwrap_or(ProtectedRisk::None);
+    let ambiguity = ph1x_stage8_5c_ambiguity_for_score(selected_score, selected_protected_risk);
+    let decision_suffix = ph1x_stage8_5c_decision_suffix(&features.normalized);
+    let rejected_candidates_ref = format!("ph1x_rejected_candidates:{decision_suffix}");
+    let ledger_ref = format!("ph1x_candidate_ledger:{decision_suffix}");
+    let owner_contract_ref = format!("ph1x_owner_output:{decision_suffix}");
+    let threshold_ref = "ph1x_threshold:stage8_5c:high_8500_medium_6500".to_string();
+    let evidence_refs = ph1x_stage8_5c_decision_evidence_refs(
+        thread_state,
+        &features,
+        &ledger_ref,
+        &threshold_ref,
+        &owner_contract_ref,
+    );
+    let allowed_next_action = ph1x_stage8_5c_allowed_action(selected_directive);
+    let blocked_actions = ph1x_stage8_5c_blocked_actions(selected_protected_risk);
+    let reason_code = ph1x_stage8_5c_reason_code(selected_directive, selected_owner);
+    let rejections = ph1x_stage8_5c_rejections(
+        &candidates,
+        selected_candidate_ref.as_deref(),
+        ambiguity,
+        selected_score,
+        &features,
+    )?;
+
+    let ledger = Ph1xCandidateRejectionLedger::v1(
+        selected_candidate_ref.clone(),
+        rejections,
+        selected_directive,
+        selected_owner,
+        allowed_next_action.clone(),
+        blocked_actions.clone(),
+        reason_code,
+        evidence_refs.clone(),
+        selected_score,
+        ambiguity,
+        selected_protected_risk,
+    )
+    .ok()?;
+    let owner_output_contract = Ph1xOwnerOutputContract::v1(
+        selected_directive,
+        selected_owner,
+        allowed_next_action.clone(),
+        blocked_actions.clone(),
+        reason_code,
+        evidence_refs.clone(),
+        selected_candidate_ref.clone(),
+        Some(rejected_candidates_ref.clone()),
+        selected_score,
+        ambiguity,
+        selected_protected_risk,
+    )
+    .ok()?;
+    let active_context_packet = ph1x_stage8_5c_active_context_packet(
+        thread_state,
+        &features,
+        selected.as_ref().map(|work| &work.candidate),
+        &rejected_candidates_ref,
+        &ledger_ref,
+        &threshold_ref,
+        &owner_contract_ref,
+        reason_code,
+        evidence_refs,
+        allowed_next_action,
+        blocked_actions,
+        ambiguity,
+    )?;
+    Some(Stage8_5CandidateDecision {
+        rewritten_query: selected
+            .as_ref()
+            .and_then(|work| work.rewritten_query.clone()),
+        selected_candidate: selected.map(|work| work.candidate),
+        candidates: candidates
+            .iter()
+            .map(|work| work.candidate.clone())
+            .collect(),
+        rejection_ledger: ledger,
+        owner_output_contract,
+        active_context_packet,
+    })
+}
+
+fn ph1x_stage8_5c_generate_candidates(
+    thread_state: &ThreadState,
+    text: &str,
+    features: &Stage8_5Features,
+) -> Vec<Stage8_5CandidateWork> {
+    let mut out = Vec::new();
+    let topic_switch_disqualifier = features
+        .new_topic
+        .then_some(Ph1xCandidateRejectionReasonCode::HardDisqualifierExplicitTopicSwitch);
+
     if let Some(prior_request) = ph1x_stage8_5_protected_request_from_subject(thread_state) {
         if features.confirmation_followup {
-            return Some(prior_request);
+            out.push(ph1x_stage8_5c_candidate(
+                "ph1x_candidate:protected_execution",
+                Ph1xContextCandidateKind::ProtectedFailClosed,
+                Some("protected_execution_without_authority".to_string()),
+                HumanConversationDirective::FailClosedProtected,
+                SuggestedNextEngine::ProtectedBoundary,
+                ph1x_stage8_5c_score_factors(&Ph1xCandidateScoreFactors {
+                    semantic_fit: 9_800,
+                    task_fit: 9_800,
+                    recency_score: 9_500,
+                    discourse_fit: 9_700,
+                    risk_penalty: 10_000,
+                    ..Default::default()
+                }),
+                Ph1xCandidateScoreFactors {
+                    semantic_fit: 9_800,
+                    task_fit: 9_800,
+                    recency_score: 9_500,
+                    discourse_fit: 9_700,
+                    risk_penalty: 10_000,
+                    ..Default::default()
+                },
+                ProtectedRisk::Protected,
+                vec![
+                    STAGE8_5_PROTECTED_RISK_REF.to_string(),
+                    STAGE8_5_FAIL_CLOSED_REF.to_string(),
+                ],
+                Some(Ph1xCandidateRejectionReasonCode::HardDisqualifierProtectedRisk),
+                None,
+            ));
+            out.push(ph1x_stage8_5c_candidate(
+                "ph1x_candidate:protected_fail_closed",
+                Ph1xContextCandidateKind::ProtectedFailClosed,
+                Some("protected_fail_closed_boundary".to_string()),
+                HumanConversationDirective::FailClosedProtected,
+                SuggestedNextEngine::ProtectedBoundary,
+                ph1x_stage8_5c_score_factors(&Ph1xCandidateScoreFactors {
+                    semantic_fit: 10_000,
+                    task_fit: 10_000,
+                    recency_score: 9_500,
+                    discourse_fit: 10_000,
+                    privacy_scope_fit: 10_000,
+                    ..Default::default()
+                }),
+                Ph1xCandidateScoreFactors {
+                    semantic_fit: 10_000,
+                    task_fit: 10_000,
+                    recency_score: 9_500,
+                    discourse_fit: 10_000,
+                    privacy_scope_fit: 10_000,
+                    ..Default::default()
+                },
+                ProtectedRisk::Protected,
+                vec![
+                    STAGE8_5_PROTECTED_RISK_REF.to_string(),
+                    STAGE8_5_FAIL_CLOSED_REF.to_string(),
+                ],
+                None,
+                Some(prior_request),
+            ));
         }
     }
 
     if let Some(target) = ph1x_stage8_5_tool_choice_target(thread_state) {
         if let Some(tool_family) = features.selected_tool_family {
-            return Some(ph1x_stage8_5_tool_prompt(tool_family, &target));
+            out.push(ph1x_stage8_5c_tool_candidate(
+                "ph1x_candidate:open_clarification",
+                Ph1xContextCandidateKind::OpenClarification,
+                tool_family,
+                &target,
+                10_000,
+                10_000,
+                None,
+            ));
         }
     }
 
@@ -4012,31 +4302,91 @@ pub fn ph1x_universal_active_context_followup_query(
         .map(|choice| choice.target)
     {
         if let Some(tool_family) = features.selected_tool_family {
-            return Some(ph1x_stage8_5_tool_prompt(tool_family, &target));
+            out.push(ph1x_stage8_5c_tool_candidate(
+                "ph1x_candidate:last_answer_clarification",
+                Ph1xContextCandidateKind::OpenClarification,
+                tool_family,
+                &target,
+                9_700,
+                10_000,
+                None,
+            ));
         }
     }
 
     if let Some(tool_family) = features.correction_target {
         if let Some(place) = ph1x_stage8_5_last_tool_entity(thread_state) {
-            return Some(ph1x_stage8_5_tool_prompt(tool_family, &place));
+            out.push(ph1x_stage8_5c_tool_candidate(
+                "ph1x_candidate:correction_target",
+                Ph1xContextCandidateKind::CorrectionTarget,
+                tool_family,
+                &place,
+                9_600,
+                9_200,
+                topic_switch_disqualifier,
+            ));
         }
     }
 
     if ph1x_stage8_5_has_planning_frame(thread_state)
         && (features.selection_followup
             || features.prior_options_followup
-            || features.timing_followup)
+            || features.timing_followup
+            || features.reference_followup
+            || features.definite_reference_followup
+            || !features.constraints.is_empty())
     {
-        return Some(ph1x_stage8_5_planning_prompt(
-            thread_state,
-            text,
-            features.timing_followup,
-            features.prior_options_followup,
+        let target_ref = ph1x_stage8_5_join_or_default(
+            &ph1x_stage8_5_frame_values(thread_state, "ph1x:topic:"),
+            "active_planning_frame",
+        );
+        out.push(ph1x_stage8_5c_candidate(
+            "ph1x_candidate:active_plan",
+            Ph1xContextCandidateKind::ActivePlan,
+            Some(target_ref),
+            HumanConversationDirective::RouteToWrite,
+            SuggestedNextEngine::Ph1Write,
+            ph1x_stage8_5c_score_factors(&Ph1xCandidateScoreFactors {
+                semantic_fit: 9_200,
+                task_fit: 9_400,
+                entity_fit: 8_200,
+                open_slot_fit: 9_300,
+                recency_score: 8_800,
+                topic_stack_score: 9_000,
+                discourse_fit: 9_400,
+                ambiguity_penalty: if features.prior_options_followup {
+                    0
+                } else {
+                    600
+                },
+                ..Default::default()
+            }),
+            Ph1xCandidateScoreFactors {
+                semantic_fit: 9_200,
+                task_fit: 9_400,
+                entity_fit: 8_200,
+                open_slot_fit: 9_300,
+                recency_score: 8_800,
+                topic_stack_score: 9_000,
+                discourse_fit: 9_400,
+                ambiguity_penalty: if features.prior_options_followup {
+                    0
+                } else {
+                    600
+                },
+                ..Default::default()
+            },
+            ProtectedRisk::None,
+            ph1x_stage8_5c_frame_evidence_refs(thread_state),
+            topic_switch_disqualifier,
+            Some(ph1x_stage8_5_planning_prompt(
+                thread_state,
+                text,
+                features.timing_followup,
+                features.prior_options_followup,
+                features.reference_followup || features.definite_reference_followup,
+            )),
         ));
-    }
-
-    if features.new_topic {
-        return None;
     }
 
     if let Some(entity) = &features.entity_fragment {
@@ -4045,21 +4395,912 @@ pub fn ph1x_universal_active_context_followup_query(
             .as_ref()
             .and_then(|context| ph1x_stage8_5_tool_family_from_route(context.route_class))
         {
-            return Some(ph1x_stage8_5_tool_prompt(route_tool, entity));
+            out.push(ph1x_stage8_5c_tool_candidate(
+                "ph1x_candidate:active_tool_result",
+                Ph1xContextCandidateKind::ActiveToolResult,
+                route_tool,
+                entity,
+                9_700,
+                9_500,
+                topic_switch_disqualifier,
+            ));
         }
     }
 
     if ph1x_stage8_5_has_writing_frame(thread_state) {
         if let Some(modifier) = &features.writing_modifier {
-            return Some(ph1x_stage8_5_rewrite_previous_artifact_prompt(
-                thread_state,
-                text,
-                modifier,
+            out.push(ph1x_stage8_5c_candidate(
+                "ph1x_candidate:active_writing_artifact",
+                Ph1xContextCandidateKind::ActiveWritingArtifact,
+                Some(STAGE8_5_WRITING_SUBJECT.to_string()),
+                HumanConversationDirective::ModifyPreviousOutput,
+                SuggestedNextEngine::Ph1Write,
+                ph1x_stage8_5c_score_factors(&Ph1xCandidateScoreFactors {
+                    semantic_fit: 9_200,
+                    task_fit: 9_500,
+                    artifact_fit: 10_000,
+                    recency_score: 9_000,
+                    discourse_fit: 9_200,
+                    ..Default::default()
+                }),
+                Ph1xCandidateScoreFactors {
+                    semantic_fit: 9_200,
+                    task_fit: 9_500,
+                    artifact_fit: 10_000,
+                    recency_score: 9_000,
+                    discourse_fit: 9_200,
+                    ..Default::default()
+                },
+                ProtectedRisk::None,
+                ph1x_stage8_5c_frame_evidence_refs(thread_state),
+                topic_switch_disqualifier,
+                Some(ph1x_stage8_5_rewrite_previous_artifact_prompt(
+                    thread_state,
+                    text,
+                    modifier,
+                )),
             ));
         }
     }
 
-    None
+    if ph1x_stage8_5_has_planning_frame(thread_state) {
+        out.push(ph1x_stage8_5c_candidate(
+            "ph1x_candidate:active_frame_observed",
+            Ph1xContextCandidateKind::TopicStack,
+            Some(STAGE8_5_PLANNING_SUBJECT.to_string()),
+            HumanConversationDirective::ContinueCurrentTopic,
+            SuggestedNextEngine::Ph1Write,
+            ph1x_stage8_5c_score_factors(&Ph1xCandidateScoreFactors {
+                semantic_fit: 4_800,
+                task_fit: 4_200,
+                recency_score: 8_000,
+                topic_stack_score: 7_000,
+                ambiguity_penalty: 3_000,
+                ..Default::default()
+            }),
+            Ph1xCandidateScoreFactors {
+                semantic_fit: 4_800,
+                task_fit: 4_200,
+                recency_score: 8_000,
+                topic_stack_score: 7_000,
+                ambiguity_penalty: 3_000,
+                ..Default::default()
+            },
+            ProtectedRisk::None,
+            ph1x_stage8_5c_frame_evidence_refs(thread_state),
+            topic_switch_disqualifier,
+            None,
+        ));
+    }
+
+    if thread_state
+        .last_turn_context
+        .as_ref()
+        .and_then(|context| ph1x_stage8_5_tool_family_from_route(context.route_class))
+        .is_some()
+    {
+        out.push(ph1x_stage8_5c_candidate(
+            "ph1x_candidate:latest_tool_context_observed",
+            Ph1xContextCandidateKind::LatestSeleneAnswer,
+            Some("latest_tool_answer".to_string()),
+            HumanConversationDirective::RouteToTool,
+            SuggestedNextEngine::Ph1E,
+            ph1x_stage8_5c_score_factors(&Ph1xCandidateScoreFactors {
+                semantic_fit: 4_600,
+                task_fit: 4_200,
+                tool_family_fit: 7_000,
+                recency_score: 8_000,
+                ambiguity_penalty: 3_200,
+                ..Default::default()
+            }),
+            Ph1xCandidateScoreFactors {
+                semantic_fit: 4_600,
+                task_fit: 4_200,
+                tool_family_fit: 7_000,
+                recency_score: 8_000,
+                ambiguity_penalty: 3_200,
+                ..Default::default()
+            },
+            ProtectedRisk::None,
+            ph1x_stage8_5c_frame_evidence_refs(thread_state),
+            topic_switch_disqualifier,
+            None,
+        ));
+    }
+
+    let reference_signal = features.reference_followup || features.definite_reference_followup;
+    if reference_signal
+        && !features.new_topic
+        && !ph1x_stage8_5_has_planning_frame(thread_state)
+        && !ph1x_stage8_5_has_writing_frame(thread_state)
+    {
+        if let Some(context) = thread_state
+            .last_turn_context
+            .as_ref()
+            .filter(|context| context.route_class != LastTurnRouteClass::Clarify)
+            .filter(|context| !context.answer_text.trim().is_empty())
+        {
+            let factors = Ph1xCandidateScoreFactors {
+                semantic_fit: 8_800,
+                task_fit: 8_700,
+                recency_score: 9_000,
+                discourse_fit: 9_200,
+                entity_fit: 7_800,
+                ..Default::default()
+            };
+            out.push(ph1x_stage8_5c_candidate(
+                "ph1x_candidate:latest_answer_context",
+                Ph1xContextCandidateKind::LatestSeleneAnswer,
+                Some("latest_selene_answer".to_string()),
+                HumanConversationDirective::RouteToWrite,
+                SuggestedNextEngine::Ph1Write,
+                ph1x_stage8_5c_score_factors(&factors),
+                factors,
+                ProtectedRisk::None,
+                vec![
+                    "ph1x:latest_answer_context".to_string(),
+                    format!("ph1x:last_answer_type:{:?}", context.route_class),
+                ],
+                topic_switch_disqualifier,
+                Some(ph1x_stage8_5_latest_answer_prompt(
+                    &context.answer_text,
+                    text,
+                )),
+            ));
+        }
+    }
+
+    if !ph1x_stage8_5c_has_hot_context(thread_state)
+        && ph1x_stage8_5c_has_reference_signal(features)
+    {
+        out.push(ph1x_stage8_5c_candidate(
+            "ph1x_candidate:fresh_memory_handoff",
+            Ph1xContextCandidateKind::FreshMemoryHandoff,
+            Some("fresh_memory_needed".to_string()),
+            HumanConversationDirective::HandOffToMemory,
+            SuggestedNextEngine::Ph1M,
+            ph1x_stage8_5c_score_factors(&Ph1xCandidateScoreFactors {
+                semantic_fit: 7_600,
+                task_fit: 7_400,
+                discourse_fit: 7_600,
+                recency_score: 7_000,
+                ..Default::default()
+            }),
+            Ph1xCandidateScoreFactors {
+                semantic_fit: 7_600,
+                task_fit: 7_400,
+                discourse_fit: 7_600,
+                recency_score: 7_000,
+                ..Default::default()
+            },
+            ProtectedRisk::None,
+            vec!["ph1m:fresh_memory_handoff_candidate".to_string()],
+            None,
+            None,
+        ));
+    }
+
+    let fallback_score = if features.new_topic {
+        9_200
+    } else if out.is_empty() {
+        8_400
+    } else {
+        4_500
+    };
+    out.push(ph1x_stage8_5c_candidate(
+        "ph1x_candidate:new_topic_fallback",
+        Ph1xContextCandidateKind::NewTopicFallback,
+        Some("current_turn_as_new_topic".to_string()),
+        HumanConversationDirective::AnswerNewQuestion,
+        SuggestedNextEngine::Ph1Write,
+        fallback_score,
+        Ph1xCandidateScoreFactors {
+            semantic_fit: fallback_score,
+            task_fit: fallback_score,
+            discourse_fit: fallback_score,
+            ..Default::default()
+        },
+        ProtectedRisk::None,
+        vec!["ph1x:no_context_or_topic_switch_fallback".to_string()],
+        None,
+        None,
+    ));
+
+    out
+}
+
+fn ph1x_stage8_5c_candidate(
+    candidate_ref: &str,
+    candidate_kind: Ph1xContextCandidateKind,
+    target_ref: Option<String>,
+    directive: HumanConversationDirective,
+    owner_engine: SuggestedNextEngine,
+    score: u16,
+    score_factors: Ph1xCandidateScoreFactors,
+    protected_risk: ProtectedRisk,
+    evidence_refs: Vec<String>,
+    disqualifier_applied: Option<Ph1xCandidateRejectionReasonCode>,
+    rewritten_query: Option<String>,
+) -> Stage8_5CandidateWork {
+    Stage8_5CandidateWork {
+        candidate: Ph1xContextCandidate::v1(
+            candidate_ref.to_string(),
+            candidate_kind,
+            target_ref,
+            directive,
+            owner_engine,
+            score,
+            score_factors,
+            protected_risk,
+            evidence_refs,
+            disqualifier_applied,
+        )
+        .expect("PH1.X Stage 8.5C candidate proof must validate"),
+        rewritten_query,
+    }
+}
+
+fn ph1x_stage8_5c_tool_candidate(
+    candidate_ref: &str,
+    candidate_kind: Ph1xContextCandidateKind,
+    tool_family: Stage8_5ToolFamily,
+    target: &str,
+    semantic_fit: u16,
+    task_fit: u16,
+    disqualifier_applied: Option<Ph1xCandidateRejectionReasonCode>,
+) -> Stage8_5CandidateWork {
+    let factors = Ph1xCandidateScoreFactors {
+        semantic_fit,
+        task_fit,
+        entity_fit: 9_300,
+        tool_family_fit: 10_000,
+        recency_score: 9_000,
+        discourse_fit: 9_000,
+        correction_fit: if candidate_kind == Ph1xContextCandidateKind::CorrectionTarget {
+            9_500
+        } else {
+            0
+        },
+        clarification_fit: if candidate_kind == Ph1xContextCandidateKind::OpenClarification {
+            10_000
+        } else {
+            0
+        },
+        ..Default::default()
+    };
+    ph1x_stage8_5c_candidate(
+        candidate_ref,
+        candidate_kind,
+        Some(ph1x_stage8_5_make_ref("ph1x:entity", target)),
+        if candidate_kind == Ph1xContextCandidateKind::CorrectionTarget {
+            HumanConversationDirective::CorrectPreviousOutput
+        } else {
+            HumanConversationDirective::RouteToTool
+        },
+        SuggestedNextEngine::Ph1E,
+        ph1x_stage8_5c_score_factors(&factors),
+        factors,
+        ProtectedRisk::None,
+        vec![
+            format!("ph1x:tool_family:{}", tool_family.ref_id()),
+            ph1x_stage8_5_make_ref("ph1x:entity", target),
+        ],
+        disqualifier_applied,
+        Some(ph1x_stage8_5_tool_prompt(tool_family, target)),
+    )
+}
+
+fn ph1x_stage8_5c_score_factors(factors: &Ph1xCandidateScoreFactors) -> u16 {
+    let positives = [
+        factors.semantic_fit,
+        factors.task_fit,
+        factors.entity_fit,
+        factors.artifact_fit,
+        factors.tool_family_fit,
+        factors.open_slot_fit,
+        factors.recency_score,
+        factors.speaker_continuity_score,
+        factors.topic_stack_score,
+        factors.discourse_fit,
+        factors.clarification_fit,
+        factors.correction_fit,
+        factors.privacy_scope_fit,
+    ];
+    let mut positive_total = 0u32;
+    let mut positive_count = 0u32;
+    for value in positives {
+        if value > 0 {
+            positive_total = positive_total.saturating_add(value as u32);
+            positive_count = positive_count.saturating_add(1);
+        }
+    }
+    let positive = if positive_count == 0 {
+        0
+    } else {
+        positive_total / positive_count
+    };
+    let penalty = [
+        factors.risk_penalty,
+        factors.ambiguity_penalty,
+        factors.stale_context_penalty,
+    ]
+    .into_iter()
+    .max()
+    .unwrap_or(0) as u32;
+    positive.saturating_sub(penalty).min(10_000) as u16
+}
+
+fn ph1x_stage8_5c_select_candidate_index(candidates: &[Stage8_5CandidateWork]) -> Option<usize> {
+    let best = candidates
+        .iter()
+        .enumerate()
+        .filter(|(_, work)| work.candidate.disqualifier_applied.is_none())
+        .max_by_key(|(_, work)| work.candidate.score)?;
+    if best.1.candidate.protected_risk == ProtectedRisk::Protected
+        && best.1.candidate.owner_engine == SuggestedNextEngine::ProtectedBoundary
+    {
+        return Some(best.0);
+    }
+    if best.1.candidate.score >= 6_500 {
+        Some(best.0)
+    } else {
+        candidates
+            .iter()
+            .enumerate()
+            .find(|(_, work)| {
+                work.candidate.candidate_kind == Ph1xContextCandidateKind::NewTopicFallback
+                    && work.candidate.disqualifier_applied.is_none()
+            })
+            .map(|(idx, _)| idx)
+    }
+}
+
+fn ph1x_stage8_5c_ambiguity_for_score(score: u16, protected_risk: ProtectedRisk) -> AmbiguityLevel {
+    if protected_risk == ProtectedRisk::Protected {
+        AmbiguityLevel::Medium
+    } else if score >= 8_500 {
+        AmbiguityLevel::Low
+    } else if score >= 6_500 {
+        AmbiguityLevel::Medium
+    } else {
+        AmbiguityLevel::High
+    }
+}
+
+fn ph1x_stage8_5c_decision_evidence_refs(
+    thread_state: &ThreadState,
+    features: &Stage8_5Features,
+    ledger_ref: &str,
+    threshold_ref: &str,
+    owner_contract_ref: &str,
+) -> Vec<String> {
+    let mut refs = vec![
+        ledger_ref.to_string(),
+        threshold_ref.to_string(),
+        owner_contract_ref.to_string(),
+        format!(
+            "ph1x:turn_hash:{}",
+            ph1x_stage8_5c_decision_suffix(&features.normalized)
+        ),
+    ];
+    refs.extend(ph1x_stage8_5c_frame_evidence_refs(thread_state));
+    refs.sort();
+    refs.dedup();
+    refs.into_iter().take(12).collect()
+}
+
+fn ph1x_stage8_5c_frame_evidence_refs(thread_state: &ThreadState) -> Vec<String> {
+    let mut refs = Vec::new();
+    if let Some(active_subject_ref) = &thread_state.active_subject_ref {
+        refs.push(active_subject_ref.clone());
+    }
+    if let Some(interrupted_subject_ref) = &thread_state.interrupted_subject_ref {
+        refs.push(interrupted_subject_ref.clone());
+    }
+    refs.extend(thread_state.pinned_context_refs.iter().take(8).cloned());
+    refs.sort();
+    refs.dedup();
+    refs.into_iter().take(12).collect()
+}
+
+fn ph1x_stage8_5c_allowed_action(directive: HumanConversationDirective) -> Option<String> {
+    Some(
+        match directive {
+            HumanConversationDirective::ContinueCurrentTopic => "continue_current_topic",
+            HumanConversationDirective::ModifyPreviousOutput => "route_to_ph1write_modify",
+            HumanConversationDirective::CorrectPreviousOutput => "route_to_owner_with_correction",
+            HumanConversationDirective::AnswerNewQuestion => "answer_new_question",
+            HumanConversationDirective::AskClarification => "ask_clarification",
+            HumanConversationDirective::HandOffToMemory => "handoff_to_ph1m",
+            HumanConversationDirective::RouteToTool => "route_to_ph1e",
+            HumanConversationDirective::RouteToWrite => "route_to_ph1write",
+            HumanConversationDirective::FailClosedProtected => "fail_closed_protected",
+            HumanConversationDirective::WaitOrNoAction => "wait_or_no_action",
+        }
+        .to_string(),
+    )
+}
+
+fn ph1x_stage8_5c_blocked_actions(protected_risk: ProtectedRisk) -> Vec<String> {
+    if protected_risk == ProtectedRisk::Protected {
+        vec![
+            "protected_execution_without_simulation".to_string(),
+            "protected_execution_without_authority".to_string(),
+            "memory_or_voice_id_authority_grant".to_string(),
+        ]
+    } else {
+        vec!["protected_execute".to_string()]
+    }
+}
+
+fn ph1x_stage8_5c_reason_code(
+    directive: HumanConversationDirective,
+    owner_engine: SuggestedNextEngine,
+) -> ReasonCodeId {
+    match (directive, owner_engine) {
+        (HumanConversationDirective::RouteToTool, SuggestedNextEngine::Ph1E) => {
+            reason_codes::X_STAGE8_5C_CONTINUE_TOOL
+        }
+        (HumanConversationDirective::RouteToWrite, SuggestedNextEngine::Ph1Write) => {
+            reason_codes::X_STAGE8_5C_CONTINUE_PLAN
+        }
+        (HumanConversationDirective::ModifyPreviousOutput, SuggestedNextEngine::Ph1Write) => {
+            reason_codes::X_STAGE8_5C_MODIFY_ARTIFACT
+        }
+        (HumanConversationDirective::CorrectPreviousOutput, _) => {
+            reason_codes::X_STAGE8_5C_CORRECT_TOOL
+        }
+        (HumanConversationDirective::AskClarification, _) => {
+            reason_codes::X_STAGE8_5C_ASK_CLARIFICATION
+        }
+        (HumanConversationDirective::HandOffToMemory, SuggestedNextEngine::Ph1M) => {
+            reason_codes::X_STAGE8_5C_HANDOFF_MEMORY
+        }
+        (
+            HumanConversationDirective::FailClosedProtected,
+            SuggestedNextEngine::ProtectedBoundary,
+        ) => reason_codes::X_STAGE8_5C_FAIL_CLOSED_PROTECTED,
+        _ => reason_codes::X_STAGE8_5C_ANSWER_NEW_TOPIC,
+    }
+}
+
+fn ph1x_stage8_5c_rejections(
+    candidates: &[Stage8_5CandidateWork],
+    selected_candidate_ref: Option<&str>,
+    ambiguity_level: AmbiguityLevel,
+    selected_score: u16,
+    features: &Stage8_5Features,
+) -> Option<Vec<Ph1xCandidateRejection>> {
+    let mut out = Vec::new();
+    for work in candidates {
+        if selected_candidate_ref.is_some_and(|selected| selected == work.candidate.candidate_ref) {
+            continue;
+        }
+        let reason_code = work.candidate.disqualifier_applied.unwrap_or_else(|| {
+            if work.candidate.score < 6_500 {
+                Ph1xCandidateRejectionReasonCode::BelowMinimumEvidenceThreshold
+            } else {
+                Ph1xCandidateRejectionReasonCode::LowerScore
+            }
+        });
+        let reason_text = match reason_code {
+            Ph1xCandidateRejectionReasonCode::LowerScore => {
+                "higher scoring candidate had stronger active-frame fit"
+            }
+            Ph1xCandidateRejectionReasonCode::BelowMinimumEvidenceThreshold => {
+                "candidate did not meet the minimum evidence threshold"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierProtectedRisk => {
+                "protected work cannot execute without simulation and authority"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierSpeakerPrivacyMismatch => {
+                "speaker or privacy scope did not authorize private continuation"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierRejectedEvidence => {
+                "rejected input evidence cannot become context"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierStaleContext => {
+                "context was too stale for automatic continuation"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierExplicitTopicSwitch => {
+                "current turn is a clear topic switch"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierWrongArtifactType => {
+                "candidate target was the wrong artifact type"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierClosedTopic => {
+                "candidate belongs to a closed topic"
+            }
+            Ph1xCandidateRejectionReasonCode::HardDisqualifierUnsupportedEvidence => {
+                "candidate depends on unsupported evidence"
+            }
+        };
+        out.push(
+            Ph1xCandidateRejection::v1(
+                work.candidate.candidate_ref.clone(),
+                reason_code,
+                Some(reason_text.to_string()),
+                work.candidate.disqualifier_applied,
+                work.candidate.owner_engine,
+                work.candidate.protected_risk,
+                ambiguity_level,
+                selected_score,
+                Some(ph1x_stage8_5c_confidence_reason(features, selected_score)),
+                None,
+                Some(reason_text.to_string()),
+                work.candidate.evidence_refs.clone(),
+            )
+            .ok()?,
+        );
+    }
+    Some(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ph1x_stage8_5c_active_context_packet(
+    thread_state: &ThreadState,
+    features: &Stage8_5Features,
+    selected: Option<&Ph1xContextCandidate>,
+    rejected_candidates_ref: &str,
+    ledger_ref: &str,
+    threshold_ref: &str,
+    owner_contract_ref: &str,
+    reason_code: ReasonCodeId,
+    evidence_refs: Vec<String>,
+    allowed_next_action: Option<String>,
+    blocked_actions: Vec<String>,
+    ambiguity_level: AmbiguityLevel,
+) -> Option<ActiveContextPacket> {
+    let selected = selected?;
+    let tool_family = selected
+        .evidence_refs
+        .iter()
+        .find_map(|reference| reference.strip_prefix("ph1x:tool_family:"))
+        .map(ToOwned::to_owned);
+    let entity_focus = selected
+        .target_ref
+        .iter()
+        .map(|target| target.trim_start_matches("ph1x:entity:").replace('_', " "))
+        .collect::<Vec<_>>();
+    let packet = ActiveContextPacket::v1(
+        ph1x_stage8_5c_active_topic(thread_state, selected),
+        Some(ph1x_stage8_5c_active_intent(selected)),
+        ph1x_stage8_5c_interaction_posture(features, selected),
+        ph1x_stage8_5c_conversation_rhythm(selected.directive),
+        ph1x_stage8_5c_continuation_type(selected.directive),
+        selected.target_ref.clone(),
+        entity_focus,
+        tool_family,
+        (selected.candidate_kind == Ph1xContextCandidateKind::ActiveWritingArtifact)
+            .then_some(STAGE8_5_WRITING_SUBJECT.to_string()),
+        ph1x_stage8_5c_pending_slots(selected),
+        (selected.candidate_kind == Ph1xContextCandidateKind::CorrectionTarget).then(|| {
+            selected
+                .target_ref
+                .clone()
+                .unwrap_or_else(|| "prior_answer".to_string())
+        }),
+        ph1x_stage8_5c_topic_stack(thread_state),
+        ph1x_stage8_5c_response_shape(selected.directive),
+        selected.score,
+        ambiguity_level,
+        selected.protected_risk,
+        selected.candidate_kind == Ph1xContextCandidateKind::FreshMemoryHandoff,
+        selected.owner_engine,
+        evidence_refs,
+    )
+    .ok()?
+    .with_universal_frame(UniversalActiveFrameFields {
+        raw_user_turn_ref: Some(format!(
+            "ph1x:raw_turn_hash:{}",
+            ph1x_stage8_5c_decision_suffix(&features.normalized)
+        )),
+        normalized_user_turn_ref: Some(format!(
+            "ph1x:normalized_turn_hash:{}",
+            ph1x_stage8_5c_decision_suffix(&features.normalized)
+        )),
+        modality: Some("typed_or_voice_committed_turn".to_string()),
+        user_goal: ph1x_stage8_5c_user_goal(thread_state, features),
+        current_plan: ph1x_stage8_5c_current_plan(thread_state),
+        open_question: ph1x_stage8_5c_open_question(selected),
+        unresolved_decision: ph1x_stage8_5c_unresolved_decision(selected),
+        prior_options_presented: ph1x_stage8_5_frame_values(thread_state, "ph1x:option:"),
+        comparison_set: ph1x_stage8_5_frame_values(thread_state, "ph1x:comparison:"),
+        constraints: ph1x_stage8_5_frame_values(thread_state, "ph1x:constraint:"),
+        user_preference_in_turn: (!features.constraints.is_empty())
+            .then(|| features.constraints.join(",")),
+        expected_answer_type: ph1x_stage8_5c_expected_answer_type(selected),
+        last_answer_type: thread_state
+            .last_turn_context
+            .as_ref()
+            .map(|context| format!("{:?}", context.route_class)),
+        last_clarification_question: (selected.candidate_kind
+            == Ph1xContextCandidateKind::OpenClarification)
+            .then(|| "open tool-family clarification".to_string()),
+        clarification_answer_target: (selected.candidate_kind
+            == Ph1xContextCandidateKind::OpenClarification)
+            .then(|| {
+                selected
+                    .target_ref
+                    .clone()
+                    .unwrap_or_else(|| "pending_target".to_string())
+            }),
+        discourse_state: Some(ph1x_stage8_5c_discourse_state(selected).to_string()),
+        topic_depth: ph1x_stage8_5c_topic_stack(thread_state).len() as u16,
+        returnable_topic: thread_state.interrupted_subject_ref.clone(),
+        speaker_continuity: Some("same_or_nullable".to_string()),
+        confidence_reason: Some(ph1x_stage8_5c_confidence_reason(features, selected.score)),
+        why_continue_reason: (selected.directive != HumanConversationDirective::AnswerNewQuestion)
+            .then(|| "selected candidate met active-frame evidence threshold".to_string()),
+        why_not_continue_reason: (selected.directive
+            == HumanConversationDirective::AnswerNewQuestion)
+            .then(|| "new-topic fallback selected or old context rejected".to_string()),
+        selected_candidate: Some(selected.candidate_ref.clone()),
+        rejected_candidates_ref: Some(rejected_candidates_ref.to_string()),
+        candidate_rejection_ledger_ref: Some(ledger_ref.to_string()),
+        minimum_evidence_threshold_ref: Some(threshold_ref.to_string()),
+        owner_engine: Some(ph1x_stage8_5c_engine_label(selected.owner_engine).to_string()),
+        allowed_next_action,
+        blocked_actions,
+        reason_code: Some(reason_code),
+        ..Default::default()
+    })
+    .ok()?;
+    let mut packet = packet;
+    packet.evidence_refs.push(owner_contract_ref.to_string());
+    packet.validate().ok()?;
+    Some(packet)
+}
+
+fn ph1x_stage8_5c_continuation_type(directive: HumanConversationDirective) -> ContinuationType {
+    match directive {
+        HumanConversationDirective::ContinueCurrentTopic
+        | HumanConversationDirective::RouteToTool
+        | HumanConversationDirective::RouteToWrite => ContinuationType::ContinueCurrentTopic,
+        HumanConversationDirective::ModifyPreviousOutput => ContinuationType::ModifyPreviousOutput,
+        HumanConversationDirective::CorrectPreviousOutput => {
+            ContinuationType::CorrectPreviousOutput
+        }
+        HumanConversationDirective::AskClarification => ContinuationType::AskClarification,
+        HumanConversationDirective::HandOffToMemory => ContinuationType::HandOffToMemory,
+        HumanConversationDirective::WaitOrNoAction => ContinuationType::NoActionRequired,
+        HumanConversationDirective::AnswerNewQuestion
+        | HumanConversationDirective::FailClosedProtected => ContinuationType::AnswerNewTopic,
+    }
+}
+
+fn ph1x_stage8_5c_response_shape(directive: HumanConversationDirective) -> ResponseShape {
+    match directive {
+        HumanConversationDirective::AskClarification => ResponseShape::OneQuestionClarification,
+        HumanConversationDirective::ModifyPreviousOutput => ResponseShape::RewriteOrModification,
+        HumanConversationDirective::FailClosedProtected => ResponseShape::SafeRefusal,
+        HumanConversationDirective::WaitOrNoAction => ResponseShape::WaitOrNoAction,
+        HumanConversationDirective::RouteToWrite
+        | HumanConversationDirective::ContinueCurrentTopic => ResponseShape::StructuredAnswer,
+        _ => ResponseShape::DirectAnswer,
+    }
+}
+
+fn ph1x_stage8_5c_conversation_rhythm(directive: HumanConversationDirective) -> ConversationRhythm {
+    match directive {
+        HumanConversationDirective::AskClarification => {
+            ConversationRhythm::OneQuestionClarification
+        }
+        HumanConversationDirective::ModifyPreviousOutput => {
+            ConversationRhythm::RewriteOrModification
+        }
+        HumanConversationDirective::FailClosedProtected => ConversationRhythm::ProtectedFailClosed,
+        HumanConversationDirective::HandOffToMemory => ConversationRhythm::MemoryRecall,
+        HumanConversationDirective::WaitOrNoAction => ConversationRhythm::WaitOrNoAction,
+        _ => ConversationRhythm::DirectAnswer,
+    }
+}
+
+fn ph1x_stage8_5c_interaction_posture(
+    features: &Stage8_5Features,
+    selected: &Ph1xContextCandidate,
+) -> InteractionPosture {
+    if selected.protected_risk == ProtectedRisk::Protected {
+        InteractionPosture::ActionRequest
+    } else if selected.candidate_kind == Ph1xContextCandidateKind::CorrectionTarget {
+        InteractionPosture::Correction
+    } else if selected.candidate_kind == Ph1xContextCandidateKind::ActiveWritingArtifact {
+        InteractionPosture::Instruction
+    } else if features.new_topic {
+        InteractionPosture::TopicSwitch
+    } else if selected.directive == HumanConversationDirective::HandOffToMemory {
+        InteractionPosture::MemoryRequest
+    } else {
+        InteractionPosture::Continuation
+    }
+}
+
+fn ph1x_stage8_5c_active_topic(
+    thread_state: &ThreadState,
+    selected: &Ph1xContextCandidate,
+) -> Option<String> {
+    match selected.candidate_kind {
+        Ph1xContextCandidateKind::ActivePlan => Some("active planning frame".to_string()),
+        Ph1xContextCandidateKind::ActiveWritingArtifact => {
+            Some("active writing artifact".to_string())
+        }
+        Ph1xContextCandidateKind::ActiveToolResult
+        | Ph1xContextCandidateKind::OpenClarification
+        | Ph1xContextCandidateKind::CorrectionTarget => Some("active tool frame".to_string()),
+        Ph1xContextCandidateKind::FreshMemoryHandoff => {
+            Some("fresh memory handoff candidate".to_string())
+        }
+        Ph1xContextCandidateKind::ProtectedFailClosed => Some("protected boundary".to_string()),
+        Ph1xContextCandidateKind::NewTopicFallback => Some("current turn".to_string()),
+        _ => thread_state.active_subject_ref.clone(),
+    }
+}
+
+fn ph1x_stage8_5c_active_intent(selected: &Ph1xContextCandidate) -> String {
+    match selected.directive {
+        HumanConversationDirective::RouteToTool => "continue_tool_with_resolved_context",
+        HumanConversationDirective::RouteToWrite => "continue_planning_or_public_answer",
+        HumanConversationDirective::ModifyPreviousOutput => "modify_active_artifact",
+        HumanConversationDirective::CorrectPreviousOutput => "correct_previous_answer",
+        HumanConversationDirective::HandOffToMemory => "ask_fresh_memory_for_context",
+        HumanConversationDirective::FailClosedProtected => "fail_closed_protected",
+        HumanConversationDirective::AnswerNewQuestion => "answer_new_question",
+        HumanConversationDirective::AskClarification => "ask_clarification",
+        HumanConversationDirective::ContinueCurrentTopic => "continue_current_topic",
+        HumanConversationDirective::WaitOrNoAction => "wait_or_no_action",
+    }
+    .to_string()
+}
+
+fn ph1x_stage8_5c_pending_slots(selected: &Ph1xContextCandidate) -> Vec<String> {
+    if selected.candidate_kind == Ph1xContextCandidateKind::OpenClarification {
+        vec!["tool_family".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+fn ph1x_stage8_5c_topic_stack(thread_state: &ThreadState) -> Vec<String> {
+    let mut topics = Vec::new();
+    if let Some(active_subject_ref) = &thread_state.active_subject_ref {
+        topics.push(active_subject_ref.clone());
+    }
+    if let Some(interrupted_subject_ref) = &thread_state.interrupted_subject_ref {
+        topics.push(interrupted_subject_ref.clone());
+    }
+    topics.extend(
+        thread_state
+            .pinned_context_refs
+            .iter()
+            .filter(|reference| reference.starts_with("ph1x:frame"))
+            .take(6)
+            .cloned(),
+    );
+    topics.sort();
+    topics.dedup();
+    topics
+}
+
+fn ph1x_stage8_5c_user_goal(
+    thread_state: &ThreadState,
+    features: &Stage8_5Features,
+) -> Option<String> {
+    if ph1x_stage8_5_has_planning_frame(thread_state) || ph1x_stage8_5_planning_seed(features) {
+        Some("continue active planning goal".to_string())
+    } else if ph1x_stage8_5_has_writing_frame(thread_state) {
+        Some("revise active writing artifact".to_string())
+    } else {
+        None
+    }
+}
+
+fn ph1x_stage8_5c_current_plan(thread_state: &ThreadState) -> Option<String> {
+    let topics = ph1x_stage8_5_frame_values(thread_state, "ph1x:topic:");
+    let constraints = ph1x_stage8_5_frame_values(thread_state, "ph1x:constraint:");
+    if topics.is_empty() && constraints.is_empty() {
+        None
+    } else {
+        Some(format!(
+            "topics: {}; constraints: {}",
+            ph1x_stage8_5_join_or_default(&topics, "none"),
+            ph1x_stage8_5_join_or_default(&constraints, "none")
+        ))
+    }
+}
+
+fn ph1x_stage8_5c_open_question(selected: &Ph1xContextCandidate) -> Option<String> {
+    match selected.candidate_kind {
+        Ph1xContextCandidateKind::ActivePlan => Some("resolve planning recommendation".to_string()),
+        Ph1xContextCandidateKind::OpenClarification => {
+            Some("answer pending clarification".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn ph1x_stage8_5c_unresolved_decision(selected: &Ph1xContextCandidate) -> Option<String> {
+    match selected.candidate_kind {
+        Ph1xContextCandidateKind::ActivePlan => {
+            Some("select best option from comparison set".to_string())
+        }
+        Ph1xContextCandidateKind::OpenClarification => {
+            Some("select tool family for target".to_string())
+        }
+        _ => None,
+    }
+}
+
+fn ph1x_stage8_5c_expected_answer_type(selected: &Ph1xContextCandidate) -> Option<String> {
+    Some(
+        match selected.directive {
+            HumanConversationDirective::RouteToTool => "tool_answer",
+            HumanConversationDirective::RouteToWrite => "recommendation",
+            HumanConversationDirective::ModifyPreviousOutput => "rewrite",
+            HumanConversationDirective::CorrectPreviousOutput => "correction",
+            HumanConversationDirective::FailClosedProtected => "safe_refusal",
+            HumanConversationDirective::HandOffToMemory => "fresh_memory_decision",
+            HumanConversationDirective::AnswerNewQuestion => "new_answer",
+            HumanConversationDirective::AskClarification => "clarification",
+            HumanConversationDirective::ContinueCurrentTopic => "continuation",
+            HumanConversationDirective::WaitOrNoAction => "no_action",
+        }
+        .to_string(),
+    )
+}
+
+fn ph1x_stage8_5c_discourse_state(selected: &Ph1xContextCandidate) -> &'static str {
+    match selected.directive {
+        HumanConversationDirective::AnswerNewQuestion => "topic_switch_or_new_topic",
+        HumanConversationDirective::AskClarification => "clarification_needed",
+        HumanConversationDirective::FailClosedProtected => "protected_boundary",
+        HumanConversationDirective::HandOffToMemory => "memory_handoff",
+        _ => "continuation_selected",
+    }
+}
+
+fn ph1x_stage8_5c_confidence_reason(features: &Stage8_5Features, score: u16) -> String {
+    if score >= 8_500 {
+        "selected candidate met high confidence active-frame threshold".to_string()
+    } else if score >= 6_500 {
+        "selected candidate met medium confidence threshold and may require clarification"
+            .to_string()
+    } else if features.new_topic {
+        "current turn has new-topic evidence stronger than active context".to_string()
+    } else {
+        "candidate confidence is weak and active context should not be forced".to_string()
+    }
+}
+
+fn ph1x_stage8_5c_has_hot_context(thread_state: &ThreadState) -> bool {
+    thread_state.active_subject_ref.is_some()
+        || thread_state.last_turn_context.is_some()
+        || !thread_state.pinned_context_refs.is_empty()
+}
+
+fn ph1x_stage8_5c_has_reference_signal(features: &Stage8_5Features) -> bool {
+    features.entity_fragment.is_some()
+        || features.selection_followup
+        || features.prior_options_followup
+        || features.timing_followup
+        || features.writing_modifier.is_some()
+        || features.definite_reference_followup
+        || ph1x_stage8_5_has_any(&features.tokens, STAGE8_5_REFERENCE_TERMS)
+}
+
+fn ph1x_stage8_5c_engine_label(engine: SuggestedNextEngine) -> &'static str {
+    match engine {
+        SuggestedNextEngine::None => "none",
+        SuggestedNextEngine::Ph1M => "PH1.M",
+        SuggestedNextEngine::Ph1E => "PH1.E",
+        SuggestedNextEngine::Ph1Write => "PH1.WRITE",
+        SuggestedNextEngine::ProtectedBoundary => "PROTECTED_BOUNDARY",
+    }
+}
+
+fn ph1x_stage8_5c_decision_suffix(normalized: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    normalized.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
 }
 
 pub fn ph1x_update_universal_active_context_after_turn(
@@ -4113,8 +5354,14 @@ pub fn ph1x_update_universal_active_context_after_turn(
         );
     }
 
+    if ph1x_stage8_5_direct_tool_turn(&features) {
+        return ph1x_stage8_5_suspend_stage8_5_context(thread_state);
+    }
+
     if ph1x_stage8_5_has_planning_frame(&thread_state)
         && (!features.constraints.is_empty()
+            || features.reference_followup
+            || features.definite_reference_followup
             || features.selection_followup
             || features.timing_followup
             || features.prior_options_followup)
@@ -4126,7 +5373,7 @@ pub fn ph1x_update_universal_active_context_after_turn(
         );
     }
 
-    if features.new_topic || features.explicit_tool_family.is_some() {
+    if features.new_topic {
         return ph1x_stage8_5_suspend_stage8_5_context(thread_state);
     }
 
@@ -4213,6 +5460,8 @@ fn ph1x_stage8_5_features(text: &str) -> Stage8_5Features {
     let selected_tool_family = ph1x_stage8_5_selected_tool_family(&tokens);
     let destination = ph1x_stage8_5_extract_destination(&tokens);
     let constraints = ph1x_stage8_5_extract_constraints(&tokens);
+    let reference_followup = ph1x_stage8_5_reference_followup(&tokens);
+    let definite_reference_followup = ph1x_stage8_5_definite_reference_followup(&tokens);
     let selection_followup = ph1x_stage8_5_selection_followup(&tokens);
     let timing_followup = ph1x_stage8_5_timing_followup(&tokens);
     let prior_options_followup = ph1x_stage8_5_prior_options_followup(&tokens);
@@ -4221,7 +5470,16 @@ fn ph1x_stage8_5_features(text: &str) -> Stage8_5Features {
     let correction_target = ph1x_stage8_5_correction_target(&tokens);
     let confirmation_followup = ph1x_stage8_5_confirmation_followup(&tokens);
     let entity_fragment = ph1x_stage8_5_entity_fragment(text, &tokens);
-    let new_topic = ph1x_stage8_5_new_topic(&tokens, explicit_tool_family, writing_seed);
+    let new_topic = ph1x_stage8_5_new_topic(
+        &tokens,
+        explicit_tool_family,
+        writing_seed,
+        correction_target,
+        definite_reference_followup,
+        selection_followup,
+        timing_followup,
+        prior_options_followup,
+    );
     Stage8_5Features {
         normalized,
         tokens,
@@ -4230,6 +5488,8 @@ fn ph1x_stage8_5_features(text: &str) -> Stage8_5Features {
         entity_fragment,
         destination,
         constraints,
+        reference_followup,
+        definite_reference_followup,
         selection_followup,
         timing_followup,
         prior_options_followup,
@@ -4260,6 +5520,30 @@ fn ph1x_stage8_5_selection_followup(tokens: &[String]) -> bool {
             || ph1x_stage8_5_has_any(tokens, &["suggest", "recommend", "choose", "pick"]))
 }
 
+fn ph1x_stage8_5_reference_followup(tokens: &[String]) -> bool {
+    ph1x_stage8_5_has_any(tokens, STAGE8_5_REFERENCE_TERMS)
+        && ph1x_stage8_5_has_any(
+            tokens,
+            &[
+                "what", "which", "where", "who", "how", "why", "do", "does", "did", "should",
+                "would", "could", "can", "give", "provide", "tell", "show",
+            ],
+        )
+}
+
+fn ph1x_stage8_5_definite_reference_followup(tokens: &[String]) -> bool {
+    ph1x_stage8_5_has_any(tokens, STAGE8_5_DEFINITE_REFERENCE_MARKERS)
+        && ph1x_stage8_5_has_any(tokens, STAGE8_5_DEFINITE_REFERENCE_TARGETS)
+        && ph1x_stage8_5_has_any(
+            tokens,
+            &[
+                "what", "which", "where", "who", "how", "why", "do", "does", "did", "should",
+                "would", "could", "can", "give", "provide", "tell", "show", "budget", "cost",
+                "price", "prices", "rate", "rates",
+            ],
+        )
+}
+
 fn ph1x_stage8_5_timing_followup(tokens: &[String]) -> bool {
     ph1x_stage8_5_has_any(tokens, STAGE8_5_TIMING_TARGETS)
         && ph1x_stage8_5_has_any(tokens, &["which", "what", "best", "go", "visit", "travel"])
@@ -4273,8 +5557,39 @@ fn ph1x_stage8_5_prior_options_followup(tokens: &[String]) -> bool {
 }
 
 fn ph1x_stage8_5_writing_seed(tokens: &[String]) -> bool {
-    ph1x_stage8_5_has_any(tokens, STAGE8_5_ARTIFACT_MARKERS)
-        && !ph1x_stage8_5_has_any(tokens, STAGE8_5_ARTIFACT_MODIFIERS)
+    let has_artifact = ph1x_stage8_5_has_any(tokens, STAGE8_5_ARTIFACT_MARKERS);
+    let has_modifier = ph1x_stage8_5_has_any(tokens, STAGE8_5_ARTIFACT_MODIFIERS);
+    let has_reference = ph1x_stage8_5_has_any(tokens, STAGE8_5_REFERENCE_TERMS);
+    let has_generation_posture = ph1x_stage8_5_generation_posture(tokens);
+    has_artifact && !(has_reference && has_modifier) && (has_generation_posture || !has_modifier)
+}
+
+fn ph1x_stage8_5_generation_posture(tokens: &[String]) -> bool {
+    tokens.iter().enumerate().any(|(idx, token)| {
+        if matches!(
+            token.as_str(),
+            "write" | "compose" | "create" | "tell" | "give"
+        ) {
+            return true;
+        }
+        if token != "draft" {
+            return false;
+        }
+        let previous = idx.checked_sub(1).and_then(|prev| tokens.get(prev));
+        !previous.is_some_and(|previous| {
+            STAGE8_5_DEFINITE_REFERENCE_MARKERS.contains(&previous.as_str())
+                || STAGE8_5_ARTIFACT_MODIFIERS.contains(&previous.as_str())
+        })
+    })
+}
+
+fn ph1x_stage8_5_direct_tool_turn(features: &Stage8_5Features) -> bool {
+    features.explicit_tool_family.is_some()
+        && features.correction_target.is_none()
+        && !features.selection_followup
+        && !features.timing_followup
+        && !features.prior_options_followup
+        && features.writing_modifier.is_none()
 }
 
 fn ph1x_stage8_5_writing_modifier(tokens: &[String]) -> Option<String> {
@@ -4335,7 +5650,20 @@ fn ph1x_stage8_5_new_topic(
     tokens: &[String],
     explicit_tool_family: Option<Stage8_5ToolFamily>,
     writing_seed: bool,
+    correction_target: Option<Stage8_5ToolFamily>,
+    definite_reference_followup: bool,
+    selection_followup: bool,
+    timing_followup: bool,
+    prior_options_followup: bool,
 ) -> bool {
+    if correction_target.is_some()
+        || definite_reference_followup
+        || selection_followup
+        || timing_followup
+        || prior_options_followup
+    {
+        return false;
+    }
     if explicit_tool_family.is_some() || writing_seed {
         return true;
     }
@@ -4491,15 +5819,23 @@ fn ph1x_stage8_5_rewrite_previous_artifact_prompt(
     let previous = thread_state
         .last_turn_context
         .as_ref()
+        .filter(|context| context.route_class != LastTurnRouteClass::Clarify)
         .map(|context| ph1x_stage8_5_truncate_chars(context.answer_text.trim(), 1200))
         .filter(|text| !text.trim().is_empty());
     let instruction = format!(
-        "Modify the active writing artifact according to this user instruction: {user_instruction}. Preserve the existing subject, recipient, commitments, and purpose unless the user explicitly changes them. Detected modification signal: {modifier}."
+        "Rewrite the previous text to satisfy the user's latest request. Return only the revised user-facing text. Do not mention prompts, drafts, active artifacts, context packets, or internal machinery. Preserve the existing subject, recipient, commitments, and purpose unless the user explicitly changes them. User request: {user_instruction}. Modification signal: {modifier}."
     );
     match previous {
-        Some(previous) => format!("{instruction}\n\nPrevious draft:\n{previous}"),
+        Some(previous) => format!("{instruction}\n\nPrevious text:\n{previous}"),
         None => instruction.to_string(),
     }
+}
+
+fn ph1x_stage8_5_latest_answer_prompt(latest_answer: &str, user_text: &str) -> String {
+    let latest_answer = ph1x_stage8_5_truncate_chars(latest_answer.trim(), 900);
+    format!(
+        "Answer the current user follow-up by resolving its references against the latest Selene answer. Use the latest answer as context, preserve any named people, entities, options, and facts from it, and answer naturally without exposing context machinery.\n\nLatest Selene answer:\n{latest_answer}\n\nUser follow-up:\n{user_text}"
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -4670,10 +6006,16 @@ fn ph1x_stage8_5_planning_prompt(
     user_text: &str,
     timing_followup: bool,
     prior_options_followup: bool,
+    reference_followup: bool,
 ) -> String {
     let topics = ph1x_stage8_5_frame_values(thread_state, "ph1x:topic:");
     let constraints = ph1x_stage8_5_frame_values(thread_state, "ph1x:constraint:");
     let options = ph1x_stage8_5_frame_values(thread_state, "ph1x:option:");
+    let previous_answer = thread_state
+        .last_turn_context
+        .as_ref()
+        .map(|context| ph1x_stage8_5_truncate_chars(context.answer_text.trim(), 900))
+        .filter(|answer| !answer.trim().is_empty());
     let topic_text = ph1x_stage8_5_join_or_default(&topics, "the active trip or planning topic");
     let constraint_text =
         ph1x_stage8_5_join_or_default(&constraints, "the user's stated constraints");
@@ -4683,12 +6025,19 @@ fn ph1x_stage8_5_planning_prompt(
         "The user is asking for timing guidance inside the current planning frame."
     } else if prior_options_followup {
         "The user is asking about prior recommendations inside the current planning frame."
+    } else if reference_followup {
+        "The user is referring to the active planning frame or the latest answer inside it."
     } else {
         "The user is asking for a recommendation inside the current planning frame."
     };
-    format!(
+    let mut prompt = format!(
         "Continue the active planning frame. Topic: {topic_text}. Constraints and interests: {constraint_text}. Prior options: {option_text}. {focus} Answer this follow-up inside that frame and do not switch to unrelated destinations unless the user asks to change topic: {user_text}"
-    )
+    );
+    if let Some(previous_answer) = previous_answer {
+        prompt.push_str("\n\nLatest Selene answer in this frame:\n");
+        prompt.push_str(&previous_answer);
+    }
+    prompt
 }
 
 fn ph1x_stage8_5_join_or_default(values: &[String], default: &str) -> String {
@@ -5092,9 +6441,10 @@ mod tests {
             ph1x_universal_active_context_followup_query(&thread, Some("Make it shorter."))
                 .expect("writing follow-up should resolve the previous story");
 
-        assert!(rewritten.contains("active writing artifact"));
+        assert!(rewritten.contains("Return only the revised user-facing text"));
+        assert!(!rewritten.contains("active writing artifact"));
         assert!(rewritten.contains("locked factory"));
-        assert!(rewritten.contains("Previous draft"));
+        assert!(rewritten.contains("Previous text"));
         assert!(thread
             .pinned_context_refs
             .iter()
@@ -5123,10 +6473,11 @@ mod tests {
         let darker = ph1x_universal_active_context_followup_query(&thread, Some("Make it darker."))
             .expect("style-edit verb should modify the writing artifact");
 
-        assert!(tighten.contains("active writing artifact"));
+        assert!(tighten.contains("Return only the revised user-facing text"));
+        assert!(!tighten.contains("active writing artifact"));
         assert!(tighten.contains("locked factory"));
         assert!(darker.contains("darker"));
-        assert!(darker.contains("Previous draft"));
+        assert!(darker.contains("Previous text"));
     }
 
     #[test]
@@ -5177,10 +6528,11 @@ mod tests {
         )
         .expect("add-detail instruction should modify the active artifact");
 
-        assert!(shorten.contains("active writing artifact"));
+        assert!(shorten.contains("Return only the revised user-facing text"));
+        assert!(!shorten.contains("active writing artifact"));
         assert!(shorten.contains("Mark"));
         assert!(add_detail.contains("confirm timing soon"));
-        assert!(add_detail.contains("Previous draft"));
+        assert!(add_detail.contains("Previous text"));
     }
 
     #[test]
@@ -5286,6 +6638,455 @@ mod tests {
             .pinned_context_refs
             .iter()
             .any(|item| item == STAGE8_5_FAIL_CLOSED_REF));
+    }
+
+    #[test]
+    fn stage8_5c_time_continuation_records_selected_and_rejected_candidates() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolTime,
+            "It's 9:40 AM in New York.",
+        ));
+
+        let decision = ph1x_stage8_5c_candidate_decision(&thread, Some("What about Sydney?"))
+            .expect("candidate decision should be produced");
+
+        assert_eq!(
+            decision.rewritten_query.as_deref(),
+            Some("what is the time in Sydney")
+        );
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActiveToolResult)
+        );
+        assert!(decision.candidates.len() >= 2);
+        assert!(!decision.rejection_ledger.rejected_candidates.is_empty());
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| rejection.rejection_reason_text.is_some()));
+        assert_eq!(
+            decision.owner_output_contract.owner_engine,
+            SuggestedNextEngine::Ph1E
+        );
+        assert_eq!(
+            decision.active_context_packet.selected_candidate.as_deref(),
+            Some("ph1x_candidate:active_tool_result")
+        );
+        assert!(decision
+            .active_context_packet
+            .candidate_rejection_ledger_ref
+            .is_some());
+    }
+
+    #[test]
+    fn stage8_5c_topic_switch_rejects_old_tool_context() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::ToolTime,
+            "It's 9:40 AM in New York.",
+        ));
+
+        let decision = ph1x_stage8_5c_candidate_decision(&thread, Some("What is your name?"))
+            .expect("new question still produces a candidate ledger");
+
+        assert!(decision.rewritten_query.is_none());
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::NewTopicFallback)
+        );
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| {
+                rejection.rejection_reason_code
+                    == Ph1xCandidateRejectionReasonCode::HardDisqualifierExplicitTopicSwitch
+            }));
+        assert_eq!(
+            decision.owner_output_contract.selected_directive,
+            HumanConversationDirective::AnswerNewQuestion
+        );
+    }
+
+    #[test]
+    fn stage8_5c_planning_candidate_records_owner_output_contract() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I want to plan a trip to Canada with snow and dining."),
+            Some("Canada has several mountain regions with strong dining scenes."),
+            Some("PUBLIC_CHAT"),
+        );
+
+        let decision =
+            ph1x_stage8_5c_candidate_decision(&thread, Some("Where would you base the trip?"))
+                .expect("planning follow-up should produce candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActivePlan)
+        );
+        assert_eq!(
+            decision.owner_output_contract.owner_engine,
+            SuggestedNextEngine::Ph1Write
+        );
+        assert_eq!(
+            decision
+                .owner_output_contract
+                .allowed_next_action
+                .as_deref(),
+            Some("route_to_ph1write")
+        );
+        assert!(decision
+            .active_context_packet
+            .user_goal
+            .as_deref()
+            .is_some_and(|goal| goal.contains("planning")));
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| rejection.candidate_ref == "ph1x_candidate:new_topic_fallback"));
+    }
+
+    #[test]
+    fn stage8_5c_planning_reference_followup_uses_latest_answer_context() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I want to plan a trip to Canada with snow and dining."),
+            Some("For the active trip, I would base it in Banff. The Fairmont Banff Springs is a strong lodging option."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "For the active trip, I would base it in Banff. The Fairmont Banff Springs is a strong lodging option.",
+        ));
+
+        let decision =
+            ph1x_stage8_5c_candidate_decision(&thread, Some("How much should we budget for that?"))
+                .expect("reference follow-up should produce candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActivePlan)
+        );
+        assert_eq!(
+            decision.owner_output_contract.owner_engine,
+            SuggestedNextEngine::Ph1Write
+        );
+        assert!(decision
+            .rewritten_query
+            .as_deref()
+            .is_some_and(|query| query.contains("Latest Selene answer")));
+        assert_eq!(
+            decision.active_context_packet.reference_target.as_deref(),
+            Some("plan")
+        );
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| rejection.candidate_ref == "ph1x_candidate:new_topic_fallback"));
+    }
+
+    #[test]
+    fn stage8_5c_planning_plural_option_reference_selects_active_plan() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I want to plan a two week alpine trip with skiing and food."),
+            Some("For your trip, consider basing yourself in Verbier. I would compare W Verbier and Hotel Cordee des Alpes for lodging."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "For your trip, consider basing yourself in Verbier. I would compare W Verbier and Hotel Cordee des Alpes for lodging.",
+        ));
+
+        let decision = ph1x_stage8_5c_candidate_decision(
+            &thread,
+            Some("How much should we budget for either of those options?"),
+        )
+        .expect("plural option reference should produce candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActivePlan)
+        );
+        assert!(decision
+            .rewritten_query
+            .as_deref()
+            .is_some_and(|query| query.contains("Latest Selene answer")));
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| rejection.candidate_ref == "ph1x_candidate:new_topic_fallback"));
+    }
+
+    #[test]
+    fn stage8_5c_definite_lodging_reference_selects_active_plan() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("I want to plan an alpine trip with skiing, dining, and lodging."),
+            Some(
+                "For lodging, I would compare Alpine House and Ridge Lodge because both fit the active trip.",
+            ),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "For lodging, I would compare Alpine House and Ridge Lodge because both fit the active trip.",
+        ));
+
+        let decision = ph1x_stage8_5c_candidate_decision(
+            &thread,
+            Some("What should we budget for the hotel?"),
+        )
+        .expect("definite lodging reference should produce candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActivePlan)
+        );
+        assert!(decision
+            .rewritten_query
+            .as_deref()
+            .is_some_and(|query| query.contains("Latest Selene answer")));
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| rejection.candidate_ref == "ph1x_candidate:new_topic_fallback"));
+    }
+
+    #[test]
+    fn stage8_5c_writing_candidate_keeps_rejection_ledger() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Write me a short story about a locked factory."),
+            Some("At midnight, the locked factory hummed back to life."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "At midnight, the locked factory hummed back to life.",
+        ));
+
+        let decision = ph1x_stage8_5c_candidate_decision(&thread, Some("Tighten it."))
+            .expect("writing modification should produce candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActiveWritingArtifact)
+        );
+        assert_eq!(
+            decision.owner_output_contract.selected_directive,
+            HumanConversationDirective::ModifyPreviousOutput
+        );
+        assert!(decision
+            .active_context_packet
+            .writing_artifact
+            .as_deref()
+            .is_some_and(|artifact| artifact == STAGE8_5_WRITING_SUBJECT));
+        assert!(!decision.rejection_ledger.rejected_candidates.is_empty());
+    }
+
+    #[test]
+    fn stage8_5c_writing_same_artifact_summary_selects_active_artifact_after_clarify() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Write me a compact scene about an empty observatory."),
+            Some("At dusk, the empty observatory opened its roof and caught the first star."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::Clarify,
+            "Could you please provide more details on what you would like?",
+        ));
+
+        let decision = ph1x_stage8_5c_candidate_decision(
+            &thread,
+            Some("I'd like a very short version of the same scene."),
+        )
+        .expect("same-artifact summary should produce candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActiveWritingArtifact)
+        );
+        assert_eq!(
+            decision.owner_output_contract.selected_directive,
+            HumanConversationDirective::ModifyPreviousOutput
+        );
+        assert!(decision
+            .rewritten_query
+            .as_deref()
+            .is_some_and(|query| query.contains("Return only the revised user-facing text")));
+        assert!(!decision
+            .rewritten_query
+            .as_deref()
+            .unwrap_or_default()
+            .contains("active writing artifact"));
+        assert!(!decision
+            .rewritten_query
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Could you please provide more details"));
+    }
+
+    #[test]
+    fn stage8_5c_tell_story_seed_supports_shorter_version_followup() {
+        let mut thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Tell me a brief story about an empty observatory."),
+            Some("At dusk, the empty observatory opened its roof and caught the first star."),
+            Some("PUBLIC_CHAT"),
+        );
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "At dusk, the empty observatory opened its roof and caught the first star.",
+        ));
+
+        let decision =
+            ph1x_stage8_5c_candidate_decision(&thread, Some("Give me a shorter version."))
+                .expect("story-generation posture should create a modifiable writing frame");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::ActiveWritingArtifact)
+        );
+        assert_eq!(
+            decision.owner_output_contract.selected_directive,
+            HumanConversationDirective::ModifyPreviousOutput
+        );
+        assert!(decision
+            .rewritten_query
+            .as_deref()
+            .is_some_and(|query| query.contains("Previous text")));
+    }
+
+    #[test]
+    fn stage8_5c_latest_answer_pronoun_reference_selects_latest_answer_candidate() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "The current chair is Morgan Lee. Morgan Lee started the role in 2022.",
+        ));
+
+        let decision =
+            ph1x_stage8_5c_candidate_decision(&thread, Some("How long has she been in that role?"))
+                .expect("pronoun follow-up should produce latest-answer candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::LatestSeleneAnswer)
+        );
+        assert_eq!(
+            decision.owner_output_contract.owner_engine,
+            SuggestedNextEngine::Ph1Write
+        );
+        assert!(decision
+            .rewritten_query
+            .as_deref()
+            .is_some_and(|query| query.contains("Latest Selene answer")));
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| rejection.candidate_ref == "ph1x_candidate:new_topic_fallback"));
+    }
+
+    #[test]
+    fn stage8_5c_definite_role_reference_selects_latest_answer_candidate() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "The current chair is Morgan Lee. Morgan Lee started the role in 2022.",
+        ));
+
+        let decision = ph1x_stage8_5c_candidate_decision(
+            &thread,
+            Some("How long has the chair had the role?"),
+        )
+        .expect("definite role follow-up should produce latest-answer candidate proof");
+
+        assert_eq!(
+            decision
+                .selected_candidate
+                .as_ref()
+                .map(|candidate| candidate.candidate_kind),
+            Some(Ph1xContextCandidateKind::LatestSeleneAnswer)
+        );
+        assert!(decision
+            .rewritten_query
+            .as_deref()
+            .is_some_and(|query| query.contains("Latest Selene answer")));
+    }
+
+    #[test]
+    fn stage8_5c_protected_candidate_records_hard_disqualifier() {
+        let thread = ph1x_update_universal_active_context_after_turn(
+            base_thread(),
+            Some("Organize payroll for Tim."),
+            Some("I can't perform or prepare that protected business action from this turn. NO_SIMULATION_NO_AUTHORITY_NO_PROTECTED_EXECUTION."),
+            Some("H411_PROTECTED_EXECUTION_FAIL_CLOSED_PRESERVED"),
+        );
+
+        let decision = ph1x_stage8_5c_candidate_decision(&thread, Some("Yes, do it."))
+            .expect("protected continuation should produce candidate proof");
+
+        assert_eq!(
+            decision.owner_output_contract.selected_directive,
+            HumanConversationDirective::FailClosedProtected
+        );
+        assert_eq!(
+            decision.owner_output_contract.owner_engine,
+            SuggestedNextEngine::ProtectedBoundary
+        );
+        assert!(decision
+            .owner_output_contract
+            .blocked_actions
+            .iter()
+            .any(|action| action == "protected_execution_without_authority"));
+        assert!(decision
+            .rejection_ledger
+            .rejected_candidates
+            .iter()
+            .any(|rejection| {
+                rejection.rejection_reason_code
+                    == Ph1xCandidateRejectionReasonCode::HardDisqualifierProtectedRisk
+            }));
     }
 
     fn id_text() -> IdentityContext {
