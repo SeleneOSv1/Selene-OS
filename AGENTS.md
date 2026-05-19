@@ -2111,6 +2111,268 @@ Codex must build real architecture, real code, real owner wiring, and real algor
 
 Codex must not build toys with phrases.
 
+5.11 Real Proof and Code Hygiene Law
+
+Cargo tests, cargo check, unit tests, mocked tests, and fixture tests are mandatory safety gates, but they are not product acceptance proof.
+
+Cargo proves only that code compiles and that selected test cases passed.
+
+Cargo does not prove:
+
+the real Desktop app works;
+
+the real runtime path used the code;
+
+the real adapter carrier preserved state;
+
+the correct engine owned the behavior;
+
+the visible user behavior worked;
+
+a stale or duplicate path did not win;
+
+previously working behavior still works.
+
+Core rule:
+
+Cargo is a gate.
+
+Live/runtime proof is acceptance.
+
+Codex must never claim user-visible behavior, engine routing, Desktop behavior, voice behavior, memory behavior, writing behavior, provider behavior, protected/public split, or active-context behavior is working only because cargo passed.
+
+For any user-visible or engine-routing change, Codex must provide real-path proof showing:
+
+1. user input entered the real runtime path;
+
+2. correct owner engine handled it;
+
+3. expected carrier/input field existed;
+
+4. correct output was produced;
+
+5. output reached the real app/user-visible surface;
+
+6. backend evidence agrees with visible behavior;
+
+7. no stale, duplicate, fallback, mock, or test-only path won.
+
+If live/user-visible behavior fails, cargo passing does not matter. The build failed.
+
+Codex must not commit or call the build complete when cargo passes but real behavior fails.
+
+This section reinforces Sections 7.15 and 7.16. It does not weaken their JD live testing, backend evidence, or current-app provenance requirements.
+
+Failed Patch Cleanup / No Layered Rubbish
+
+When a code change, repair, or build attempt fails targeted proof, live proof, JD live acceptance, or backend evidence verification, all code introduced by that failed attempt is untrusted by default.
+
+Codex must not keep layering new fixes on top of failed work in progress.
+
+Before attempting another fix, Codex must inspect and classify the current diff.
+
+Required commands:
+
+git status --short
+
+git diff --stat
+
+git diff
+
+Every changed hunk must be classified as:
+
+KEEP:
+
+proven necessary by backend evidence;
+
+directly tied to the correct owner repair;
+
+not duplicate logic;
+
+not fallback workaround;
+
+not Desktop/Adapter semantic drift;
+
+not phrase-patch behavior;
+
+not dead or temporary diagnostic logic.
+
+REMOVE:
+
+attempted fix that did not change the failed behavior;
+
+code added only because a previous test failed;
+
+workaround outside the correct owner;
+
+duplicate route, bridge, carrier, classifier, formatter, or fallback;
+
+temporary debug logic not required for final behavior;
+
+phrase-specific or example-specific branch;
+
+stale path made obsolete by the next repair.
+
+UNKNOWN:
+
+not proven necessary;
+
+not clearly tied to the accepted owner path;
+
+kept only because Codex is unsure.
+
+UNKNOWN must be treated as REMOVE unless JD explicitly approves keeping it.
+
+A failed patch must be removed, reverted, or surgically deleted before the next repair attempt unless Codex proves, with backend evidence, that a specific hunk is still required.
+
+Codex must not commit failed work in progress.
+
+Codex must not hide failed work in progress behind passing unit tests if live/user-visible behavior still fails.
+
+Codex must not build a second fix on top of a first failed fix unless the first fix has been proven necessary and documented.
+
+If the repo has accumulated several failed attempts and Codex cannot clearly prove which hunks are valid, Codex must stop and recommend returning to the last known-good commit/baseline.
+
+Core rule:
+
+Failed code does not get to stay just because it was written.
+
+If it did not help pass the real proof, remove it before building again.
+
+Engine Capability Reality / No Dead Functionality
+
+Codex must not treat existing code as valid merely because it exists.
+
+Before building, extending, or repairing any engine, Codex must classify relevant engine code paths by real runtime status:
+
+LIVE_ACTIVE:
+
+executed by the real runtime path;
+
+proven by backend evidence and live/user-visible proof.
+
+LIVE_PROVEN_KEEP:
+
+already proven working on the real runtime/live path;
+
+must not be deleted, bypassed, weakened, or casually rewritten.
+
+LIVE_PROVEN_EXTEND:
+
+already proven working, but current task requires narrow extension;
+
+Codex may add only through the smallest owner-correct seam.
+
+LIVE_PROVEN_REPLACE:
+
+proven working but explicitly approved for replacement;
+
+replacement must preserve all old accepted behavior before old path is removed.
+
+WIRED_UNPROVEN:
+
+reachable in code but not live-proven.
+
+DORMANT_APPROVED:
+
+intentionally present but disabled behind an explicit documented gate or future-build flag.
+
+TEST_ONLY:
+
+used only in tests/fixtures and impossible to enter from production/runtime paths.
+
+DEAD_REMOVE:
+
+unreachable, unused, obsolete, or not connected to the canonical runtime path.
+
+DUPLICATE_REMOVE:
+
+overlaps with another canonical owner/path.
+
+STALE_REMOVE:
+
+replaced by newer logic or no longer aligned with current architecture.
+
+FAILED_WIP_REMOVE:
+
+introduced during failed repair attempts and not proven necessary.
+
+UNKNOWN_REMOVE:
+
+Codex cannot prove why it exists.
+
+Rules:
+
+1. Code is not real capability unless it is wired, reachable, owner-correct, tested, and proven on the real path.
+
+2. Unused code must not remain in production merely because it compiles.
+
+3. Failed, stale, duplicate, or unreachable functionality must be removed before adding more functionality.
+
+4. Codex must not patch dead, duplicate, stale, or test-only code as if it were canonical owner code.
+
+5. If Codex cannot prove a function is used by the live runtime path, treat it as untrusted.
+
+6. Mock/unit tests alone do not prove capability is real.
+
+7. Desktop-visible behavior must agree with backend evidence before behavior can be called working.
+
+8. If an engine contains unused or partially wired capability, Codex must wire and prove it, remove it, or mark it DORMANT_APPROVED with JD approval.
+
+Core rule:
+
+A feature that exists only in code but is not wired, proven, and used by the real runtime is not a feature. It is repo noise.
+
+Proven Working Code Preservation / Safe Extension
+
+Codex must not delete, rewrite, bypass, or weaken code that is already proven working unless the task explicitly requires replacing it and the replacement is proven to preserve old behavior.
+
+When Codex needs to add behavior to a path that already works, Codex must follow this sequence:
+
+1. Baseline proof first.
+
+Reproduce the existing working behavior before edits, capture backend evidence, capture visible/live result, and record the exact owner path.
+
+2. Minimal seam extension.
+
+Add new behavior only at the correct owner seam. Do not create a parallel route, bypass the proven path, move ownership to Desktop or Adapter, add phrase patches, or change unrelated working behavior.
+
+3. Preserve old behavior.
+
+Rerun the old accepted live scenario. It must still pass. If old behavior breaks, the patch failed.
+
+4. Prove new behavior.
+
+Run the new target scenario. Backend evidence and visible behavior must agree.
+
+5. Failed patch cleanup.
+
+If new behavior fails, remove the new failed patch, return to the previously proven baseline, and do not layer a second fix on top of the failed first fix.
+
+6. Final report must state:
+
+what was already proven before the edit;
+
+what was changed;
+
+why the changed owner was correct;
+
+what old behavior was re-proven;
+
+what new behavior was proven;
+
+what failed/unused code was deleted;
+
+what code was protected from deletion.
+
+Core rule:
+
+Unproven code should be deleted.
+
+Proven working code should be protected.
+
+Codex must not confuse these two.
+
 6. Search, Provider, Evidence, and Presentation Law
 
 6.1 No Real Search-Name Hardcoding
