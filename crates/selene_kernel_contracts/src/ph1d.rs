@@ -744,6 +744,232 @@ impl Validate for Ph1dProviderTransportEvidence {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ph1dProviderErrorEvidence {
+    pub schema_version: SchemaVersion,
+    pub correlation_id: u64,
+    pub turn_id: u64,
+    pub request_id: RequestId,
+    pub provider_id: String,
+    pub provider_task: Ph1dProviderTask,
+    pub endpoint: String,
+    pub model_sent: String,
+    pub http_status: u16,
+    pub error_type: Option<String>,
+    pub error_code: Option<String>,
+    pub sanitized_message: Option<String>,
+    pub provider_request_id: Option<String>,
+    pub provider_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub fallback_model_used: bool,
+    pub cheaper_model_used: bool,
+    pub unapproved_model_used: bool,
+    pub raw_body_retained: bool,
+    pub secret_exposed: bool,
+    pub prompt_exposed: bool,
+    pub protected_execution_authorized: bool,
+    pub transport_owner: String,
+    pub provider_plumbing_owner: String,
+    pub semantic_owner: String,
+    pub output_owner: String,
+    pub reason_code: ReasonCodeId,
+}
+
+impl Ph1dProviderErrorEvidence {
+    #[allow(clippy::too_many_arguments)]
+    pub fn v1(
+        request: &Ph1dProviderCallRequest,
+        endpoint: String,
+        http_status: u16,
+        error_type: Option<String>,
+        error_code: Option<String>,
+        sanitized_message: Option<String>,
+        provider_request_id: Option<String>,
+        provider_attempt_count: u32,
+        provider_network_dispatch_count: u32,
+        reason_code: ReasonCodeId,
+    ) -> Result<Self, ContractViolation> {
+        request.validate()?;
+        let evidence = Self {
+            schema_version: PH1D_CONTRACT_VERSION,
+            correlation_id: request.correlation_id,
+            turn_id: request.turn_id,
+            request_id: request.request_id,
+            provider_id: request.provider_id.clone(),
+            provider_task: request.provider_task,
+            endpoint,
+            model_sent: request.model_id.clone(),
+            http_status,
+            error_type,
+            error_code,
+            sanitized_message,
+            provider_request_id,
+            provider_attempt_count,
+            provider_network_dispatch_count,
+            fallback_model_used: false,
+            cheaper_model_used: false,
+            unapproved_model_used: false,
+            raw_body_retained: false,
+            secret_exposed: false,
+            prompt_exposed: false,
+            protected_execution_authorized: false,
+            transport_owner: "Adapter".to_string(),
+            provider_plumbing_owner: "PH1.D".to_string(),
+            semantic_owner: "PH1.X".to_string(),
+            output_owner: "PH1.WRITE".to_string(),
+            reason_code,
+        };
+        evidence.validate()?;
+        Ok(evidence)
+    }
+}
+
+impl Validate for Ph1dProviderErrorEvidence {
+    fn validate(&self) -> Result<(), ContractViolation> {
+        if self.schema_version != PH1D_CONTRACT_VERSION {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.schema_version",
+                reason: "must match PH1D_CONTRACT_VERSION",
+            });
+        }
+        if self.correlation_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.correlation_id",
+                reason: "must be > 0",
+            });
+        }
+        if self.turn_id == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.turn_id",
+                reason: "must be > 0",
+            });
+        }
+        self.request_id.validate()?;
+        validate_provider_token(
+            "ph1d_provider_error_evidence.provider_id",
+            &self.provider_id,
+            64,
+        )?;
+        validate_provider_token("ph1d_provider_error_evidence.endpoint", &self.endpoint, 256)?;
+        validate_provider_token(
+            "ph1d_provider_error_evidence.model_sent",
+            &self.model_sent,
+            128,
+        )?;
+        if !(100..=599).contains(&self.http_status) {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.http_status",
+                reason: "must be within 100..=599",
+            });
+        }
+        validate_opt_provider_token(
+            "ph1d_provider_error_evidence.error_type",
+            &self.error_type,
+            128,
+        )?;
+        validate_opt_provider_token(
+            "ph1d_provider_error_evidence.error_code",
+            &self.error_code,
+            128,
+        )?;
+        validate_opt_provider_token(
+            "ph1d_provider_error_evidence.provider_request_id",
+            &self.provider_request_id,
+            128,
+        )?;
+        validate_opt_safe_provider_message(
+            "ph1d_provider_error_evidence.sanitized_message",
+            &self.sanitized_message,
+            240,
+        )?;
+        if self.provider_attempt_count == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.provider_attempt_count",
+                reason: "must be > 0 for provider error evidence",
+            });
+        }
+        if self.provider_network_dispatch_count > self.provider_attempt_count {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.provider_network_dispatch_count",
+                reason: "must be <= provider_attempt_count",
+            });
+        }
+        if self.fallback_model_used {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.fallback_model_used",
+                reason: "must be false without JD approval",
+            });
+        }
+        if self.cheaper_model_used {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.cheaper_model_used",
+                reason: "must be false without JD approval",
+            });
+        }
+        if self.unapproved_model_used {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.unapproved_model_used",
+                reason: "must be false",
+            });
+        }
+        if self.raw_body_retained {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.raw_body_retained",
+                reason: "must be false",
+            });
+        }
+        if self.secret_exposed {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.secret_exposed",
+                reason: "must be false",
+            });
+        }
+        if self.prompt_exposed {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.prompt_exposed",
+                reason: "must be false",
+            });
+        }
+        if self.protected_execution_authorized {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.protected_execution_authorized",
+                reason: "must be false",
+            });
+        }
+        if self.transport_owner != "Adapter" {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.transport_owner",
+                reason: "must be Adapter",
+            });
+        }
+        if self.provider_plumbing_owner != "PH1.D" {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.provider_plumbing_owner",
+                reason: "must be PH1.D",
+            });
+        }
+        if self.semantic_owner != "PH1.X" {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.semantic_owner",
+                reason: "must be PH1.X",
+            });
+        }
+        if self.output_owner != "PH1.WRITE" {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.output_owner",
+                reason: "must be PH1.WRITE",
+            });
+        }
+        if self.reason_code.0 == 0 {
+            return Err(ContractViolation::InvalidValue {
+                field: "ph1d_provider_error_evidence.reason_code",
+                reason: "must be > 0",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ph1dRequest {
     pub schema_version: SchemaVersion,
@@ -938,6 +1164,41 @@ fn validate_opt_provider_token(
 ) -> Result<(), ContractViolation> {
     if let Some(v) = value {
         validate_provider_token(field, v, max_len)?;
+    }
+    Ok(())
+}
+
+fn validate_opt_safe_provider_message(
+    field: &'static str,
+    value: &Option<String>,
+    max_len: usize,
+) -> Result<(), ContractViolation> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.trim().is_empty() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not be empty when present",
+        });
+    }
+    if value.len() > max_len {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "exceeds max length",
+        });
+    }
+    if value.chars().any(|c| c.is_control()) {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not contain control characters",
+        });
+    }
+    if value.to_ascii_lowercase().find("sk-").is_some() {
+        return Err(ContractViolation::InvalidValue {
+            field,
+            reason: "must not contain provider secrets",
+        });
     }
     Ok(())
 }

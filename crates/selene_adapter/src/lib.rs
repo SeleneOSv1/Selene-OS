@@ -76,9 +76,10 @@ use selene_kernel_contracts::ph1c::{
 use selene_kernel_contracts::ph1context::{Ph1ContextRequest, Ph1ContextResponse};
 use selene_kernel_contracts::ph1d::{
     Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse,
-    Ph1dProviderInputPayloadKind, Ph1dProviderRouteClass, Ph1dProviderStatus, Ph1dProviderTask,
-    Ph1dProviderTransportEvidence, Ph1dProviderValidationStatus, Ph1dRequest, Ph1dResponse,
-    PolicyContextRef, RequestId, SafetyTier, SchemaHash,
+    Ph1dProviderErrorEvidence, Ph1dProviderInputPayloadKind, Ph1dProviderRouteClass,
+    Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderTransportEvidence,
+    Ph1dProviderValidationStatus, Ph1dRequest, Ph1dResponse, PolicyContextRef, RequestId,
+    SafetyTier, SchemaHash,
     PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1e::{
@@ -1768,6 +1769,11 @@ struct AdapterPh1dProviderTransportEvidenceState {
     rows: Vec<Ph1dProviderTransportEvidence>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct AdapterPh1dProviderErrorEvidenceState {
+    rows: Vec<Ph1dProviderErrorEvidence>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AdapterRuntime {
     ingress: AppServerIngressRuntime,
@@ -1779,6 +1785,7 @@ pub struct AdapterRuntime {
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
     public_brain_trace_state: Arc<Mutex<AdapterPublicBrainTraceState>>,
     ph1d_provider_transport_evidence_state: Arc<Mutex<AdapterPh1dProviderTransportEvidenceState>>,
+    ph1d_provider_error_evidence_state: Arc<Mutex<AdapterPh1dProviderErrorEvidenceState>>,
     public_discourse_state: Arc<Mutex<AdapterPublicDiscourseState>>,
     public_answer_state: Arc<Mutex<AdapterPublicAnswerState>>,
     active_session_context_state: Arc<Mutex<BTreeMap<String, String>>>,
@@ -4573,6 +4580,10 @@ struct Ph1cLiveTurnOutcomeSummary {
 
 const SLICE3C_APPROVED_PH1D_MODEL_ID: &str = "gpt-5.5";
 const PH1D_PROVIDER_TRANSPORT_EVIDENCE_MAX_ROWS: usize = 20;
+const PH1D_PROVIDER_ERROR_EVIDENCE_MAX_ROWS: usize = 20;
+const PH1D_PROVIDER_ERROR_BODY_MAX_CHARS: usize = 4096;
+const PH1D_PROVIDER_ERROR_MESSAGE_MAX_CHARS: usize = 240;
+const PH1D_CURL_HTTP_STATUS_MARKER: &str = "\nSELENE_HTTP_STATUS:";
 
 #[derive(Clone)]
 struct EnvPh1dLiveAdapter {
@@ -4581,6 +4592,20 @@ struct EnvPh1dLiveAdapter {
     endpoint: String,
     api_key: String,
     timeout_ms: u32,
+}
+
+#[derive(Debug, Clone)]
+struct Ph1dProviderOpenAiErrorDetails {
+    error_type: Option<String>,
+    error_code: Option<String>,
+    sanitized_message: Option<String>,
+    provider_request_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct Ph1dProviderExecuteFailure {
+    error: Ph1dProviderAdapterError,
+    evidence: Option<Ph1dProviderErrorEvidence>,
 }
 
 impl std::fmt::Debug for EnvPh1dLiveAdapter {
@@ -4742,39 +4767,76 @@ impl EnvPh1dLiveAdapter {
         )
         .map_err(|err| format!("ph1d provider transport evidence rejected: {err:?}"))
     }
-}
 
-impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
-    fn execute(
+    fn build_error_evidence_for_openai_response(
+        &self,
+        request: &Ph1dProviderCallRequest,
+        http_status: u16,
+        details: Ph1dProviderOpenAiErrorDetails,
+    ) -> Result<Ph1dProviderErrorEvidence, String> {
+        if request.provider_id != self.provider_id {
+            return Err("adapter provider_id does not match PH1.D request".to_string());
+        }
+        if request.model_id != self.model_id {
+            return Err("adapter model_id does not match PH1.D request".to_string());
+        }
+        Ph1dProviderErrorEvidence::v1(
+            request,
+            safe_provider_endpoint(&self.endpoint),
+            http_status,
+            details.error_type,
+            details.error_code,
+            details.sanitized_message,
+            details.provider_request_id,
+            1,
+            1,
+            ph1d_reason_codes::D_PROVIDER_CONTRACT_MISMATCH,
+        )
+        .map_err(|err| format!("ph1d provider error evidence rejected: {err:?}"))
+    }
+
+    fn execute_with_error_evidence(
         &self,
         req: &Ph1dProviderCallRequest,
-    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError> {
+    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderExecuteFailure> {
+        self.execute_openai_request(req).map_err(|failure| failure)
+    }
+
+    fn execute_openai_request(
+        &self,
+        req: &Ph1dProviderCallRequest,
+    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderExecuteFailure> {
         if req.provider_task != Ph1dProviderTask::LlmInterpret {
-            return Err(Ph1dProviderAdapterError::terminal(format!(
-                "ph1d live provider adapter does not support provider_task={}",
-                req.provider_task.as_str()
-            )));
+            return Err(Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::terminal(format!(
+                    "ph1d live provider adapter does not support provider_task={}",
+                    req.provider_task.as_str()
+                )),
+                evidence: None,
+            });
         }
         let input = req
             .input_payload_inline
             .as_deref()
             .map(str::trim)
             .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                Ph1dProviderAdapterError::terminal(
+            .ok_or_else(|| Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::terminal(
                     "ph1d llm interpret request missing input_payload_inline".to_string(),
-                )
+                ),
+                evidence: None,
             })?;
         let output_language = output_language_from_content_type(req.input_content_type.as_deref());
         let payload = openai_llm_interpret_payload(&self.model_id, input, output_language.as_str());
-        let payload_text = serde_json::to_string(&payload).map_err(|_| {
-            Ph1dProviderAdapterError::terminal("ph1d openai payload encode failed".to_string())
+        let payload_text = serde_json::to_string(&payload).map_err(|_| Ph1dProviderExecuteFailure {
+            error: Ph1dProviderAdapterError::terminal("ph1d openai payload encode failed".to_string()),
+            evidence: None,
         })?;
         let start = Instant::now();
         let timeout_seconds = ((self.timeout_ms / 1000).max(1)).to_string();
         let mut child = Command::new("sh")
             .arg("-c")
-            .arg("curl -fsS --connect-timeout \"$SELENE_CURL_CONNECT_TIMEOUT\" --max-time \"$SELENE_CURL_MAX_TIME\" -H 'Content-Type: application/json' -H 'Accept: application/json' -H \"Authorization: Bearer $OPENAI_API_KEY\" --data-binary @- \"$OPENAI_RESPONSES_URL\"")
+            .arg("curl -sS --fail-with-body --connect-timeout \"$SELENE_CURL_CONNECT_TIMEOUT\" --max-time \"$SELENE_CURL_MAX_TIME\" --write-out '\\nSELENE_HTTP_STATUS:%{http_code}' -H 'Content-Type: application/json' -H 'Accept: application/json' -H \"Authorization: Bearer $OPENAI_API_KEY\" --data-binary @- \"$OPENAI_RESPONSES_URL\"")
             .env("OPENAI_API_KEY", &self.api_key)
             .env("OPENAI_RESPONSES_URL", &self.endpoint)
             .env("SELENE_CURL_CONNECT_TIMEOUT", &timeout_seconds)
@@ -4783,51 +4845,86 @@ impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|err| {
-                Ph1dProviderAdapterError::retryable(format!(
+            .map_err(|err| Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::retryable(format!(
                     "ph1d openai provider launch failed: {}",
                     err.kind()
-                ))
+                )),
+                evidence: None,
             })?;
         if let Some(stdin) = child.stdin.as_mut() {
-            stdin.write_all(payload_text.as_bytes()).map_err(|err| {
-                Ph1dProviderAdapterError::retryable(format!(
-                    "ph1d openai provider payload write failed: {}",
-                    err.kind()
-                ))
-            })?;
+            stdin
+                .write_all(payload_text.as_bytes())
+                .map_err(|err| Ph1dProviderExecuteFailure {
+                    error: Ph1dProviderAdapterError::retryable(format!(
+                        "ph1d openai provider payload write failed: {}",
+                        err.kind()
+                    )),
+                    evidence: None,
+                })?;
         }
-        let output = child.wait_with_output().map_err(|err| {
-            Ph1dProviderAdapterError::retryable(format!(
+        let output = child.wait_with_output().map_err(|err| Ph1dProviderExecuteFailure {
+            error: Ph1dProviderAdapterError::retryable(format!(
                 "ph1d openai provider wait failed: {}",
                 err.kind()
-            ))
+            )),
+            evidence: None,
         })?;
         let latency_ms = start.elapsed().as_millis().min(120_000) as u32;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let (response_body, http_status) = split_curl_body_and_http_status(&stdout);
         if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(Ph1dProviderAdapterError::retryable(format!(
-                "ph1d openai provider failed status={} detail={}",
-                output.status.code().unwrap_or_default(),
-                safe_provider_error_detail(&stderr)
-            )));
+            if let Some(status) = http_status.filter(|status| (400..=599).contains(status)) {
+                let details = openai_error_details_from_body(&response_body, Some(input));
+                let evidence = self
+                    .build_error_evidence_for_openai_response(req, status, details.clone())
+                    .ok();
+                return Err(Ph1dProviderExecuteFailure {
+                    error: Ph1dProviderAdapterError::retryable(format!(
+                        "ph1d openai provider failed http_status={} error_type={} error_code={} detail={}",
+                        status,
+                        details.error_type.as_deref().unwrap_or("unknown"),
+                        details.error_code.as_deref().unwrap_or("none"),
+                        details.sanitized_message.as_deref().unwrap_or("none")
+                    )),
+                    evidence,
+                });
+            }
+            return Err(Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::retryable(format!(
+                    "ph1d openai provider failed status={} detail={}",
+                    output.status.code().unwrap_or_default(),
+                    safe_provider_error_detail(&stderr)
+                )),
+                evidence: None,
+            });
         }
-        let root: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| {
-            Ph1dProviderAdapterError::retryable("ph1d openai response json_parse".to_string())
-        })?;
+        let root: serde_json::Value =
+            serde_json::from_str(response_body.as_str()).map_err(|_| Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::retryable(
+                    "ph1d openai response json_parse".to_string(),
+                ),
+                evidence: None,
+            })?;
         let provider_call_id = root
             .get("id")
             .and_then(|value| value.as_str())
             .map(|value| truncate_ascii(value.trim(), 128))
             .filter(|value| !value.is_empty());
-        let answer_text = extract_openai_output_text(&root).ok_or_else(|| {
-            Ph1dProviderAdapterError::retryable("ph1d openai response empty_output".to_string())
+        let answer_text = extract_openai_output_text(&root).ok_or_else(|| Ph1dProviderExecuteFailure {
+            error: Ph1dProviderAdapterError::retryable(
+                "ph1d openai response empty_output".to_string(),
+            ),
+            evidence: None,
         })?;
-        let normalized_json = ph1d_chat_json_from_provider_text(&answer_text).map_err(|err| {
-            Ph1dProviderAdapterError::terminal(format!(
-                "ph1d openai normalized output rejected: {err}"
-            ))
-        })?;
+        let normalized_json =
+            ph1d_chat_json_from_provider_text(&answer_text).map_err(|err| Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::terminal(format!(
+                    "ph1d openai normalized output rejected: {err}"
+                )),
+                evidence: None,
+            })?;
         Ph1dProviderCallResponse::v1(
             req.correlation_id,
             req.turn_id,
@@ -4846,12 +4943,143 @@ impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
             Ph1dProviderValidationStatus::SchemaOk,
             ph1d_reason_codes::D_PROVIDER_OK,
         )
-        .map_err(|err| {
-            Ph1dProviderAdapterError::terminal(format!(
+        .map_err(|err| Ph1dProviderExecuteFailure {
+            error: Ph1dProviderAdapterError::terminal(format!(
                 "ph1d provider response contract failed: {err:?}"
-            ))
+            )),
+            evidence: None,
         })
     }
+}
+
+impl Ph1dProviderAdapter for EnvPh1dLiveAdapter {
+    fn execute(
+        &self,
+        req: &Ph1dProviderCallRequest,
+    ) -> Result<Ph1dProviderCallResponse, Ph1dProviderAdapterError> {
+        self.execute_with_error_evidence(req)
+            .map_err(|failure| failure.error)
+    }
+}
+
+fn split_curl_body_and_http_status(stdout: &str) -> (String, Option<u16>) {
+    let Some((body, status)) = stdout.rsplit_once(PH1D_CURL_HTTP_STATUS_MARKER) else {
+        return (
+            truncate_ascii(stdout, PH1D_PROVIDER_ERROR_BODY_MAX_CHARS),
+            None,
+        );
+    };
+    let parsed_status = status.trim().parse::<u16>().ok();
+    (
+        truncate_ascii(body, PH1D_PROVIDER_ERROR_BODY_MAX_CHARS),
+        parsed_status,
+    )
+}
+
+fn openai_error_details_from_body(
+    body: &str,
+    prompt_to_redact: Option<&str>,
+) -> Ph1dProviderOpenAiErrorDetails {
+    let bounded_body = truncate_ascii(body.trim(), PH1D_PROVIDER_ERROR_BODY_MAX_CHARS);
+    let parsed = serde_json::from_str::<serde_json::Value>(&bounded_body);
+    let Ok(root) = parsed else {
+        return Ph1dProviderOpenAiErrorDetails {
+            error_type: Some("non_json_error_body".to_string()),
+            error_code: None,
+            sanitized_message: sanitize_openai_error_message(&bounded_body, prompt_to_redact),
+            provider_request_id: None,
+        };
+    };
+    let error = root.get("error").unwrap_or(&root);
+    let error_type = error
+        .get("type")
+        .and_then(|value| value.as_str())
+        .and_then(|value| sanitize_provider_error_token(value, 128));
+    let error_code = error
+        .get("code")
+        .and_then(|value| value.as_str())
+        .and_then(|value| sanitize_provider_error_token(value, 128));
+    let sanitized_message = error
+        .get("message")
+        .and_then(|value| value.as_str())
+        .and_then(|value| sanitize_openai_error_message(value, prompt_to_redact))
+        .or_else(|| Some("openai_error_body_without_message".to_string()));
+    let provider_request_id = root
+        .get("request_id")
+        .or_else(|| error.get("request_id"))
+        .or_else(|| root.get("id"))
+        .and_then(|value| value.as_str())
+        .and_then(|value| sanitize_provider_error_token(value, 128));
+    Ph1dProviderOpenAiErrorDetails {
+        error_type,
+        error_code,
+        sanitized_message,
+        provider_request_id,
+    }
+}
+
+fn sanitize_provider_error_token(value: &str, max_len: usize) -> Option<String> {
+    let mut out = String::with_capacity(value.len().min(max_len));
+    for c in value.trim().chars() {
+        if c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '/') {
+            out.push(c);
+        } else if c.is_whitespace() {
+            out.push('_');
+        }
+        if out.len() >= max_len {
+            break;
+        }
+    }
+    if out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
+fn sanitize_openai_error_message(value: &str, prompt_to_redact: Option<&str>) -> Option<String> {
+    let mut normalized = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if let Some(prompt) = prompt_to_redact {
+        let normalized_prompt = prompt.split_whitespace().collect::<Vec<_>>().join(" ");
+        if !normalized_prompt.is_empty() {
+            normalized = normalized.replace(&normalized_prompt, "[prompt_redacted]");
+            let prompt_prefix = truncate_ascii(&normalized_prompt, 64);
+            if !prompt_prefix.is_empty() {
+                normalized = normalized.replace(&prompt_prefix, "[prompt_redacted]");
+            }
+        }
+    }
+    let redacted = normalized
+        .split_whitespace()
+        .map(|token| {
+            let lower = token.to_ascii_lowercase();
+            if lower.find("sk-").is_some()
+                || lower.find("authorization").is_some()
+                || lower.find("bearer").is_some()
+                || lower.find("api_key").is_some()
+            {
+                "[redacted]"
+            } else {
+                token
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    let printable = redacted
+        .chars()
+        .filter(|c| !c.is_control())
+        .collect::<String>();
+    let truncated = truncate_ascii(&printable, PH1D_PROVIDER_ERROR_MESSAGE_MAX_CHARS);
+    if truncated.trim().is_empty() {
+        None
+    } else {
+        Some(truncated)
+    }
+}
+
+fn safe_provider_endpoint(value: &str) -> String {
+    let without_query = value.split_once('?').map(|(left, _)| left).unwrap_or(value);
+    sanitize_provider_error_token(without_query, 256).unwrap_or_else(|| "openai_responses".to_string())
 }
 
 fn sanitize_output_language_tag(value: &str) -> String {
@@ -5071,6 +5299,9 @@ impl Default for AdapterRuntime {
             ph1d_provider_transport_evidence_state: Arc::new(Mutex::new(
                 AdapterPh1dProviderTransportEvidenceState::default(),
             )),
+            ph1d_provider_error_evidence_state: Arc::new(Mutex::new(
+                AdapterPh1dProviderErrorEvidenceState::default(),
+            )),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
@@ -5117,6 +5348,9 @@ impl AdapterRuntime {
             ph1d_provider_transport_evidence_state: Arc::new(Mutex::new(
                 AdapterPh1dProviderTransportEvidenceState::default(),
             )),
+            ph1d_provider_error_evidence_state: Arc::new(Mutex::new(
+                AdapterPh1dProviderErrorEvidenceState::default(),
+            )),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
@@ -5157,6 +5391,9 @@ impl AdapterRuntime {
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
             ph1d_provider_transport_evidence_state: Arc::new(Mutex::new(
                 AdapterPh1dProviderTransportEvidenceState::default(),
+            )),
+            ph1d_provider_error_evidence_state: Arc::new(Mutex::new(
+                AdapterPh1dProviderErrorEvidenceState::default(),
             )),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
@@ -6443,6 +6680,13 @@ impl AdapterRuntime {
             .unwrap_or_default()
     }
 
+    pub fn ph1d_provider_error_evidence_snapshot(&self) -> Vec<Ph1dProviderErrorEvidence> {
+        self.ph1d_provider_error_evidence_state
+            .lock()
+            .map(|state| state.rows.clone())
+            .unwrap_or_default()
+    }
+
     fn record_ph1d_provider_transport_evidence(
         &self,
         evidence: Ph1dProviderTransportEvidence,
@@ -6472,6 +6716,41 @@ impl AdapterRuntime {
                 .rows
                 .len()
                 .saturating_sub(PH1D_PROVIDER_TRANSPORT_EVIDENCE_MAX_ROWS);
+            state.rows.drain(0..overflow);
+        }
+        Ok(())
+    }
+
+    fn record_ph1d_provider_error_evidence(
+        &self,
+        evidence: Ph1dProviderErrorEvidence,
+    ) -> Result<(), String> {
+        let mut state = self
+            .ph1d_provider_error_evidence_state
+            .lock()
+            .map_err(|_| "adapter ph1d provider error evidence lock poisoned".to_string())?;
+        eprintln!(
+            "selene_adapter ph1d_provider_error_evidence provider_id={} endpoint={} model_sent={} http_status={} error_type={} error_code={} provider_attempt_count={} provider_network_dispatch_count={} raw_body_retained={} secret_exposed={} prompt_exposed={} protected_execution_authorized={} sanitized_message={}",
+            evidence.provider_id,
+            evidence.endpoint,
+            evidence.model_sent,
+            evidence.http_status,
+            evidence.error_type.as_deref().unwrap_or("none"),
+            evidence.error_code.as_deref().unwrap_or("none"),
+            evidence.provider_attempt_count,
+            evidence.provider_network_dispatch_count,
+            evidence.raw_body_retained,
+            evidence.secret_exposed,
+            evidence.prompt_exposed,
+            evidence.protected_execution_authorized,
+            evidence.sanitized_message.as_deref().unwrap_or("none")
+        );
+        state.rows.push(evidence);
+        if state.rows.len() > PH1D_PROVIDER_ERROR_EVIDENCE_MAX_ROWS {
+            let overflow = state
+                .rows
+                .len()
+                .saturating_sub(PH1D_PROVIDER_ERROR_EVIDENCE_MAX_ROWS);
             state.rows.drain(0..overflow);
         }
         Ok(())
@@ -8186,12 +8465,18 @@ impl AdapterRuntime {
             user_text,
             ph1d_language_tag_for_build1c(language_packet).as_str(),
         )?;
-        let provider_response = adapter.execute(&provider_request).map_err(|err| {
-            format!(
-                "provider_call_failed retryable={} {}",
-                err.retryable, err.message
-            )
-        })?;
+        let provider_response =
+            adapter
+                .execute_with_error_evidence(&provider_request)
+                .map_err(|failure| {
+                    if let Some(evidence) = failure.evidence {
+                        let _ = self.record_ph1d_provider_error_evidence(evidence);
+                    }
+                    format!(
+                        "provider_call_failed retryable={} {}",
+                        failure.error.retryable, failure.error.message
+                    )
+                })?;
         if provider_response.provider_status != Ph1dProviderStatus::Ok
             || provider_response.validation_status != Ph1dProviderValidationStatus::SchemaOk
         {
@@ -41815,6 +42100,243 @@ mod tests {
 
     fn spawn_openai_responses_endpoint_for_public_answer_test(output_text: &'static str) -> String {
         spawn_openai_responses_endpoint_for_public_answer_sequence(vec![output_text])
+    }
+
+    fn spawn_openai_error_endpoint_for_public_answer_test(status: u16, body: String) -> String {
+        use std::io::{Read, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("mock OpenAI error listener bind");
+        let address = listener.local_addr().expect("mock OpenAI error address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request_buffer = [0_u8; 4096];
+            let _ = stream.read(&mut request_buffer);
+            let status_text = match status {
+                400 => "Bad Request",
+                401 => "Unauthorized",
+                403 => "Forbidden",
+                429 => "Too Many Requests",
+                500 => "Internal Server Error",
+                _ => "Error",
+            };
+            let response = format!(
+                "HTTP/1.1 {} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                status,
+                status_text,
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        format!("http://{address}/v1/responses")
+    }
+
+    fn run_public_prompt_with_mock_error(
+        status: u16,
+        body: String,
+        prompt: &str,
+    ) -> (VoiceTurnAdapterResponse, Vec<Ph1dProviderErrorEvidence>) {
+        let endpoint = spawn_openai_error_endpoint_for_public_answer_test(status, body);
+        with_isolated_device_vault(
+            "slice3c-error-openai-evidence",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_MODEL", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 304_001;
+                req.turn_id = 304_101;
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some(prompt.to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("mocked OpenAI error should safe-degrade");
+                let evidence_rows = runtime.ph1d_provider_error_evidence_snapshot();
+                (out, evidence_rows)
+            },
+        )
+    }
+
+    #[test]
+    fn slice3c_error_http_400_json_is_captured_safely() {
+        let body = serde_json::json!({
+            "error": {
+                "message": "Model gpt-5.5 is not available for this endpoint.",
+                "type": "invalid_request_error",
+                "code": "model_not_found"
+            },
+            "request_id": "req_slice3c_400"
+        })
+        .to_string();
+        let (out, evidence_rows) = run_public_prompt_with_mock_error(
+            400,
+            body,
+            "Explain why provider governance matters in one short paragraph.",
+        );
+
+        assert_eq!(out.status, "ok");
+        assert_eq!(out.outcome, "FINAL");
+        assert_eq!(evidence_rows.len(), 1);
+        let evidence = &evidence_rows[0];
+        assert_eq!(evidence.provider_id, "openai");
+        assert_eq!(evidence.endpoint.rsplit('/').next(), Some("responses"));
+        assert_eq!(evidence.model_sent, SLICE3C_APPROVED_PH1D_MODEL_ID);
+        assert_eq!(evidence.http_status, 400);
+        assert_eq!(evidence.error_type.as_deref(), Some("invalid_request_error"));
+        assert_eq!(evidence.error_code.as_deref(), Some("model_not_found"));
+        assert_eq!(evidence.provider_request_id.as_deref(), Some("req_slice3c_400"));
+        assert_eq!(evidence.provider_attempt_count, 1);
+        assert_eq!(evidence.provider_network_dispatch_count, 1);
+        assert!(!evidence.raw_body_retained);
+        assert!(!evidence.secret_exposed);
+        assert!(!evidence.prompt_exposed);
+        assert!(!evidence.protected_execution_authorized);
+        assert!(evidence
+            .sanitized_message
+            .as_deref()
+            .unwrap_or_default()
+            .find("gpt-5.5")
+            .is_some());
+        assert!(out.response_text.find("invalid_request_error").is_none());
+        assert!(out.response_text.find("model_not_found").is_none());
+    }
+
+    #[test]
+    fn slice3c_error_http_400_malformed_body_is_captured_without_raw_body() {
+        let prompt = "Provider governance matters because it keeps provider output bounded.";
+        let body = format!(
+            "not json sk-test-secret {} repeated diagnostics",
+            prompt
+        );
+        let (out, evidence_rows) = run_public_prompt_with_mock_error(400, body, prompt);
+
+        assert_eq!(out.status, "ok");
+        assert_eq!(evidence_rows.len(), 1);
+        let evidence = &evidence_rows[0];
+        assert_eq!(evidence.http_status, 400);
+        assert_eq!(evidence.error_type.as_deref(), Some("non_json_error_body"));
+        assert!(!evidence.raw_body_retained);
+        assert!(!evidence.secret_exposed);
+        assert!(!evidence.prompt_exposed);
+        let message = evidence.sanitized_message.as_deref().unwrap_or_default();
+        assert!(message.find("sk-test-secret").is_none());
+        assert!(message.find(prompt).is_none());
+        assert!(message.find("[prompt_redacted]").is_some());
+        assert!(out.response_text.find("sk-test-secret").is_none());
+        assert!(out.response_text.find(prompt).is_none());
+    }
+
+    #[test]
+    fn slice3c_error_http_auth_rate_limit_and_server_statuses_are_evidenced() {
+        let cases = [
+            (
+                401_u16,
+                serde_json::json!({
+                    "error": {
+                        "message": "Missing authentication.",
+                        "type": "invalid_request_error",
+                        "code": "invalid_api_key"
+                    }
+                })
+                .to_string(),
+                "invalid_api_key",
+            ),
+            (
+                403_u16,
+                serde_json::json!({
+                    "error": {
+                        "message": "This account cannot access this model.",
+                        "type": "insufficient_quota",
+                        "code": "forbidden"
+                    }
+                })
+                .to_string(),
+                "forbidden",
+            ),
+            (
+                429_u16,
+                serde_json::json!({
+                    "error": {
+                        "message": "Rate limit reached.",
+                        "type": "rate_limit_error",
+                        "code": "rate_limit_exceeded"
+                    }
+                })
+                .to_string(),
+                "rate_limit_exceeded",
+            ),
+            (
+                500_u16,
+                serde_json::json!({
+                    "error": {
+                        "message": "Provider temporarily failed.",
+                        "type": "server_error",
+                        "code": "internal_error"
+                    }
+                })
+                .to_string(),
+                "internal_error",
+            ),
+        ];
+
+        for (status, body, expected_code) in cases {
+            let (_out, evidence_rows) =
+                run_public_prompt_with_mock_error(status, body, "Give me a safe public answer.");
+            assert_eq!(evidence_rows.len(), 1);
+            let evidence = &evidence_rows[0];
+            assert_eq!(evidence.http_status, status);
+            assert_eq!(evidence.error_code.as_deref(), Some(expected_code));
+            assert_eq!(evidence.model_sent, SLICE3C_APPROVED_PH1D_MODEL_ID);
+            assert!(!evidence.fallback_model_used);
+            assert!(!evidence.cheaper_model_used);
+            assert!(!evidence.unapproved_model_used);
+            assert!(!evidence.protected_execution_authorized);
+        }
+    }
+
+    #[test]
+    fn slice3c_error_body_cap_secret_redaction_and_prompt_exclusion_hold() {
+        let prompt = "Explain provider governance without leaking private context.";
+        let long_tail = " diagnostic".repeat(700);
+        let body = serde_json::json!({
+            "error": {
+                "message": format!(
+                    "Authorization Bearer sk-test-secret failed for {} {}",
+                    prompt,
+                    long_tail
+                ),
+                "type": "invalid_request_error",
+                "code": "bad_request"
+            }
+        })
+        .to_string();
+        let (_out, evidence_rows) = run_public_prompt_with_mock_error(400, body, prompt);
+
+        assert_eq!(evidence_rows.len(), 1);
+        let evidence = &evidence_rows[0];
+        let message = evidence.sanitized_message.as_deref().unwrap_or_default();
+        assert!(message.len() <= PH1D_PROVIDER_ERROR_MESSAGE_MAX_CHARS);
+        assert!(message.find("sk-test-secret").is_none());
+        assert!(message.find("Authorization").is_none());
+        assert!(message.find("Bearer").is_none());
+        assert!(message.find(prompt).is_none());
+        assert!(!evidence.raw_body_retained);
+        assert!(!evidence.secret_exposed);
+        assert!(!evidence.prompt_exposed);
+        assert!(!format!("{evidence:?}").find(&long_tail).is_some());
     }
 
     fn spawn_openai_responses_endpoint_for_public_answer_sequence(
