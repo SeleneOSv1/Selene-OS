@@ -4063,6 +4063,149 @@ pub struct Stage8_5CandidateDecision {
     pub active_context_packet: ActiveContextPacket,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slice3aProviderProposalOperation {
+    OneLineRewrite,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slice3aProviderProposalTarget {
+    PreviousAssistantAnswer,
+    StaleOrWrongTarget,
+    ProtectedAction,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slice3aOneLineProviderProposal {
+    pub provider_id: String,
+    pub provider_enabled: bool,
+    pub operation: Slice3aProviderProposalOperation,
+    pub target: Slice3aProviderProposalTarget,
+    pub likely_owner: SuggestedNextEngine,
+    pub protected_risk: ProtectedRisk,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub raw_provider_output_exposed: bool,
+    pub protected_execution_authorized: bool,
+    pub simulation_authorized: bool,
+    pub authority_authorized: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Slice3aOneLineValidationError {
+    ProviderOff,
+    ProviderNetworkDispatchAttempted,
+    MalformedProposal,
+    WrongTarget,
+    WrongOwner,
+    CurrentTurnHijack,
+    MissingPreviousAssistantAnswer,
+    ProtectedRiskRejected,
+    RawProviderOutputRejected,
+    ProviderAuthorityRejected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slice3aOneLineValidatedDirective {
+    pub directive: HumanConversationDirective,
+    pub owner_engine: SuggestedNextEngine,
+    pub target_ref: String,
+    pub evidence_refs: Vec<String>,
+    pub provider_id: String,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub raw_provider_output_exposed: bool,
+    pub protected_execution_authorized: bool,
+    pub simulation_authorized: bool,
+    pub authority_authorized: bool,
+}
+
+pub fn slice3a_validate_one_line_provider_contract_prep(
+    thread_state: &ThreadState,
+    current_user_text: &str,
+    proposal: &Slice3aOneLineProviderProposal,
+) -> Result<Slice3aOneLineValidatedDirective, Slice3aOneLineValidationError> {
+    if !proposal.provider_enabled {
+        return Err(Slice3aOneLineValidationError::ProviderOff);
+    }
+    if proposal.provider_id.trim().is_empty()
+        || proposal.operation != Slice3aProviderProposalOperation::OneLineRewrite
+    {
+        return Err(Slice3aOneLineValidationError::MalformedProposal);
+    }
+    if proposal.provider_network_dispatch_count != 0 {
+        return Err(Slice3aOneLineValidationError::ProviderNetworkDispatchAttempted);
+    }
+    if proposal.raw_provider_output_exposed {
+        return Err(Slice3aOneLineValidationError::RawProviderOutputRejected);
+    }
+    if proposal.protected_execution_authorized
+        || proposal.simulation_authorized
+        || proposal.authority_authorized
+    {
+        return Err(Slice3aOneLineValidationError::ProviderAuthorityRejected);
+    }
+    if proposal.protected_risk == ProtectedRisk::Protected
+        || proposal.target == Slice3aProviderProposalTarget::ProtectedAction
+        || ph1x_stage8_5_protected_request_from_subject(thread_state).is_some()
+    {
+        return Err(Slice3aOneLineValidationError::ProtectedRiskRejected);
+    }
+    if proposal.target != Slice3aProviderProposalTarget::PreviousAssistantAnswer {
+        return Err(Slice3aOneLineValidationError::WrongTarget);
+    }
+    if proposal.likely_owner != SuggestedNextEngine::Ph1Write {
+        return Err(Slice3aOneLineValidationError::WrongOwner);
+    }
+
+    let current_features = ph1x_stage8_5_features(current_user_text);
+    if current_features.new_topic
+        && !ph1x_stage8_5c_has_reference_signal(&current_features)
+        && current_features.writing_modifier.is_none()
+    {
+        return Err(Slice3aOneLineValidationError::CurrentTurnHijack);
+    }
+
+    let previous = thread_state
+        .last_turn_context
+        .as_ref()
+        .filter(|context| context.route_class != LastTurnRouteClass::Clarify)
+        .filter(|context| !context.answer_text.trim().is_empty())
+        .ok_or(Slice3aOneLineValidationError::MissingPreviousAssistantAnswer)?;
+
+    let answer_ref = format!(
+        "ph1x:slice3a:previous_answer:{}",
+        ph1x_stage8_5c_decision_suffix(&previous.answer_text)
+    );
+    Ok(Slice3aOneLineValidatedDirective {
+        directive: HumanConversationDirective::ModifyPreviousOutput,
+        owner_engine: SuggestedNextEngine::Ph1Write,
+        target_ref: answer_ref,
+        evidence_refs: vec![
+            "ph1x:slice3a:provider_contract_prep".to_string(),
+            "ph1x:target:previous_assistant_answer".to_string(),
+            "ph1x:owner:PH1.WRITE".to_string(),
+            format!(
+                "provider:attempt_count:{}",
+                proposal.provider_call_attempt_count
+            ),
+            format!(
+                "provider:network_dispatch_count:{}",
+                proposal.provider_network_dispatch_count
+            ),
+        ],
+        provider_id: proposal.provider_id.clone(),
+        provider_call_attempt_count: proposal.provider_call_attempt_count,
+        provider_network_dispatch_count: proposal.provider_network_dispatch_count,
+        raw_provider_output_exposed: false,
+        protected_execution_authorized: false,
+        simulation_authorized: false,
+        authority_authorized: false,
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Stage8_5CandidateWork {
     candidate: Ph1xContextCandidate,
@@ -6192,6 +6335,23 @@ mod tests {
         .unwrap()
     }
 
+    fn slice3a_fake_one_line_proposal() -> Slice3aOneLineProviderProposal {
+        Slice3aOneLineProviderProposal {
+            provider_id: "TEST_FAKE_PROVIDER".to_string(),
+            provider_enabled: true,
+            operation: Slice3aProviderProposalOperation::OneLineRewrite,
+            target: Slice3aProviderProposalTarget::PreviousAssistantAnswer,
+            likely_owner: SuggestedNextEngine::Ph1Write,
+            protected_risk: ProtectedRisk::None,
+            provider_call_attempt_count: 1,
+            provider_network_dispatch_count: 0,
+            raw_provider_output_exposed: false,
+            protected_execution_authorized: false,
+            simulation_authorized: false,
+            authority_authorized: false,
+        }
+    }
+
     fn base_thread_with_continuity(subject_ref: &str, active_speaker_user_id: &str) -> ThreadState {
         ThreadState::empty_v1()
             .with_continuity(
@@ -6638,6 +6798,137 @@ mod tests {
             .pinned_context_refs
             .iter()
             .any(|item| item == STAGE8_5_FAIL_CLOSED_REF));
+    }
+
+    #[test]
+    fn slice3a_fake_provider_one_line_proposal_reaches_ph1x_validation() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "Provider governance matters because it keeps external model output advisory, bounded, auditable, and unable to bypass Selene's canonical owners.",
+        ));
+        let proposal = slice3a_fake_one_line_proposal();
+
+        let validated = slice3a_validate_one_line_provider_contract_prep(
+            &thread,
+            "Can you give me one line?",
+            &proposal,
+        )
+        .expect("fake provider proposal should validate as owner-local prep");
+
+        assert_eq!(
+            validated.directive,
+            HumanConversationDirective::ModifyPreviousOutput
+        );
+        assert_eq!(validated.owner_engine, SuggestedNextEngine::Ph1Write);
+        assert!(validated
+            .target_ref
+            .starts_with("ph1x:slice3a:previous_answer:"));
+        assert_eq!(validated.provider_call_attempt_count, 1);
+        assert_eq!(validated.provider_network_dispatch_count, 0);
+        assert!(!validated.raw_provider_output_exposed);
+        assert!(!validated.protected_execution_authorized);
+        assert!(!validated.simulation_authorized);
+        assert!(!validated.authority_authorized);
+        assert!(validated
+            .evidence_refs
+            .iter()
+            .any(|evidence| evidence == "ph1x:target:previous_assistant_answer"));
+    }
+
+    #[test]
+    fn slice3a_provider_off_and_malformed_proposals_fail_before_authority() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "A short prior answer exists for target validation.",
+        ));
+        let mut provider_off = slice3a_fake_one_line_proposal();
+        provider_off.provider_enabled = false;
+        provider_off.provider_call_attempt_count = 0;
+
+        assert_eq!(
+            slice3a_validate_one_line_provider_contract_prep(
+                &thread,
+                "Can you give me one line?",
+                &provider_off,
+            ),
+            Err(Slice3aOneLineValidationError::ProviderOff)
+        );
+
+        let mut malformed = slice3a_fake_one_line_proposal();
+        malformed.operation = Slice3aProviderProposalOperation::Unknown;
+        assert_eq!(
+            slice3a_validate_one_line_provider_contract_prep(
+                &thread,
+                "Can you give me one line?",
+                &malformed,
+            ),
+            Err(Slice3aOneLineValidationError::MalformedProposal)
+        );
+
+        let mut dispatched = slice3a_fake_one_line_proposal();
+        dispatched.provider_network_dispatch_count = 1;
+        assert_eq!(
+            slice3a_validate_one_line_provider_contract_prep(
+                &thread,
+                "Can you give me one line?",
+                &dispatched,
+            ),
+            Err(Slice3aOneLineValidationError::ProviderNetworkDispatchAttempted)
+        );
+    }
+
+    #[test]
+    fn slice3a_rejects_wrong_target_unrelated_question_and_protected_authority() {
+        let mut thread = base_thread();
+        thread.last_turn_context = Some(last_turn_context(
+            LastTurnRouteClass::PublicChat,
+            "The previous answer should remain the only allowed rewrite target.",
+        ));
+
+        let mut wrong_target = slice3a_fake_one_line_proposal();
+        wrong_target.target = Slice3aProviderProposalTarget::StaleOrWrongTarget;
+        assert_eq!(
+            slice3a_validate_one_line_provider_contract_prep(
+                &thread,
+                "Can you give me one line?",
+                &wrong_target,
+            ),
+            Err(Slice3aOneLineValidationError::WrongTarget)
+        );
+
+        assert_eq!(
+            slice3a_validate_one_line_provider_contract_prep(
+                &thread,
+                "What is your name?",
+                &slice3a_fake_one_line_proposal(),
+            ),
+            Err(Slice3aOneLineValidationError::CurrentTurnHijack)
+        );
+
+        let mut protected = slice3a_fake_one_line_proposal();
+        protected.protected_risk = ProtectedRisk::Protected;
+        protected.protected_execution_authorized = true;
+        assert_eq!(
+            slice3a_validate_one_line_provider_contract_prep(
+                &thread,
+                "Can you give me one line?",
+                &protected,
+            ),
+            Err(Slice3aOneLineValidationError::ProviderAuthorityRejected)
+        );
+
+        let mut protected_target = slice3a_fake_one_line_proposal();
+        protected_target.target = Slice3aProviderProposalTarget::ProtectedAction;
+        assert_eq!(
+            slice3a_validate_one_line_provider_contract_prep(
+                &thread,
+                "Can you give me one line?",
+                &protected_target,
+            ),
+            Err(Slice3aOneLineValidationError::ProtectedRiskRejected)
+        );
     }
 
     #[test]

@@ -18,6 +18,8 @@ pub mod reason_codes {
     pub const WRITE_FALLBACK_CRITICAL_TOKEN_DRIFT: ReasonCodeId = ReasonCodeId(0x5752_00F2);
     pub const WRITE_FALLBACK_REFUSAL_POLICY_LOCK: ReasonCodeId = ReasonCodeId(0x5752_00F3);
     pub const WRITE_FALLBACK_EMPTY_FORMAT: ReasonCodeId = ReasonCodeId(0x5752_00F4);
+    pub const WRITE_OK_ONE_LINE_CURRENT_EQUIVALENT: ReasonCodeId = ReasonCodeId(0x5752_0003);
+    pub const WRITE_FAIL_RAW_PROVIDER_METADATA_EXPOSED: ReasonCodeId = ReasonCodeId(0x5752_00F5);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -95,6 +97,65 @@ impl Ph1WriteRuntime {
         .expect("formatted output must be valid");
         Ph1WriteResponse::Ok(ok)
     }
+
+    pub fn run_one_line_current_equivalent(&self, req: &Ph1WriteRequest) -> Ph1WriteResponse {
+        if req.validate().is_err() {
+            return Ph1WriteResponse::Refuse(
+                Ph1WriteRefuse::v1(
+                    reason_codes::WRITE_FAIL_INPUT_SCHEMA_INVALID,
+                    "PH1.WRITE request failed contract validation".to_string(),
+                )
+                .expect("static refuse payload must be valid"),
+            );
+        }
+        if looks_like_raw_provider_metadata(&req.response_text) {
+            return Ph1WriteResponse::Refuse(
+                Ph1WriteRefuse::v1(
+                    reason_codes::WRITE_FAIL_RAW_PROVIDER_METADATA_EXPOSED,
+                    "PH1.WRITE refused raw provider metadata exposure".to_string(),
+                )
+                .expect("static refuse payload must be valid"),
+            );
+        }
+        if req.is_refusal_or_policy_text || looks_like_refusal_or_policy_text(&req.response_text) {
+            return fallback_ok(
+                req,
+                reason_codes::WRITE_FALLBACK_REFUSAL_POLICY_LOCK,
+                &req.response_text,
+            );
+        }
+
+        let formatted = match req.render_style {
+            WriteRenderStyle::Preserve => req.response_text.clone(),
+            WriteRenderStyle::Professional => normalize_professional_text(&req.response_text),
+        };
+        let one_line = collapse_to_one_line(&formatted);
+        if one_line.trim().is_empty() || one_line.chars().count() > self.config.max_output_chars {
+            return fallback_ok(
+                req,
+                reason_codes::WRITE_FALLBACK_EMPTY_FORMAT,
+                &req.response_text,
+            );
+        }
+        let critical_tokens = combined_critical_tokens(req);
+        if !critical_tokens_preserved(&critical_tokens, &one_line) {
+            return fallback_ok(
+                req,
+                reason_codes::WRITE_FALLBACK_CRITICAL_TOKEN_DRIFT,
+                &req.response_text,
+            );
+        }
+        let ok = Ph1WriteOk::v1(
+            req.correlation_id,
+            req.turn_id,
+            one_line,
+            WriteFormatMode::FormattedText,
+            reason_codes::WRITE_OK_ONE_LINE_CURRENT_EQUIVALENT,
+            true,
+        )
+        .expect("one-line output must be valid");
+        Ph1WriteResponse::Ok(ok)
+    }
 }
 
 fn fallback_ok(
@@ -139,6 +200,13 @@ fn normalize_professional_text(input: &str) -> String {
     }
 
     no_space_before_punct
+}
+
+fn collapse_to_one_line(input: &str) -> String {
+    normalize_professional_text(input)
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn combined_critical_tokens(req: &Ph1WriteRequest) -> Vec<CriticalToken> {
@@ -231,6 +299,24 @@ fn looks_like_refusal_or_policy_text(text: &str) -> bool {
         "cannot proceed",
     ];
     guardrails.iter().any(|p| lower.contains(p))
+}
+
+fn looks_like_raw_provider_metadata(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower
+        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|token| {
+            matches!(
+                token,
+                "provider_call_attempt_count"
+                    | "provider_network_dispatch_count"
+                    | "normalized_output_json"
+                    | "raw_provider_output"
+                    | "openai_api_key"
+                    | "provider_metadata"
+                    | "provider_trace"
+            )
+        })
 }
 
 fn is_sentence_punctuation(c: char) -> bool {
@@ -331,6 +417,53 @@ mod tests {
                 );
             }
             _ => panic!("expected fallback"),
+        }
+    }
+
+    #[test]
+    fn slice3a_one_line_output_uses_formatted_text_current_equivalent() {
+        let input = req(
+            "  Provider governance keeps model output advisory.\nIt records evidence and prevents owner bypass.  ",
+            false,
+        );
+
+        let out = runtime().run_one_line_current_equivalent(&input);
+        match out {
+            Ph1WriteResponse::Ok(ok) => {
+                assert_eq!(ok.format_mode, WriteFormatMode::FormattedText);
+                assert_eq!(
+                    ok.reason_code,
+                    reason_codes::WRITE_OK_ONE_LINE_CURRENT_EQUIVALENT
+                );
+                assert_eq!(
+                    ok.formatted_text,
+                    "Provider governance keeps model output advisory. It records evidence and prevents owner bypass."
+                );
+                assert!(!ok.formatted_text.chars().any(char::is_control));
+                assert!(ok.validate().is_ok());
+            }
+            _ => panic!("expected one-line ok"),
+        }
+    }
+
+    #[test]
+    fn slice3a_one_line_output_refuses_raw_provider_metadata() {
+        let input = req(
+            "provider_call_attempt_count=1 normalized_output_json={\"mode\":\"chat\"}",
+            false,
+        );
+
+        let out = runtime().run_one_line_current_equivalent(&input);
+        match out {
+            Ph1WriteResponse::Refuse(refuse) => {
+                assert_eq!(
+                    refuse.reason_code,
+                    reason_codes::WRITE_FAIL_RAW_PROVIDER_METADATA_EXPOSED
+                );
+                assert!(!refuse.refusal_text.contains("provider_call_attempt_count"));
+                assert!(refuse.validate().is_ok());
+            }
+            _ => panic!("expected raw-provider metadata refusal"),
         }
     }
 }
