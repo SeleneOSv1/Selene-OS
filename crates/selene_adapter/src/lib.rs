@@ -77,8 +77,9 @@ use selene_kernel_contracts::ph1context::{Ph1ContextRequest, Ph1ContextResponse}
 use selene_kernel_contracts::ph1d::{
     Ph1dFailureKind, Ph1dOk, Ph1dProviderCallRequest, Ph1dProviderCallResponse,
     Ph1dProviderInputPayloadKind, Ph1dProviderRouteClass, Ph1dProviderStatus, Ph1dProviderTask,
-    Ph1dProviderValidationStatus, Ph1dRequest, Ph1dResponse, PolicyContextRef, RequestId,
-    SafetyTier, SchemaHash, PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
+    Ph1dProviderTransportEvidence, Ph1dProviderValidationStatus, Ph1dRequest, Ph1dResponse,
+    PolicyContextRef, RequestId, SafetyTier, SchemaHash,
+    PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SearchImagePacket, ToolCatalogRef, ToolName, ToolResponse, ToolResult, ToolStatus,
@@ -4701,6 +4702,36 @@ impl EnvPh1dLiveAdapter {
             false,
         )
         .map_err(|err| format!("ph1d provider request contract failed: {err:?}"))
+    }
+
+    #[allow(dead_code)]
+    #[allow(clippy::too_many_arguments)]
+    fn build_transport_evidence_for_provider_response(
+        &self,
+        request: &Ph1dProviderCallRequest,
+        response: &Ph1dProviderCallResponse,
+        expected_model_id: &str,
+        provider_attempt_count: u32,
+        provider_network_dispatch_count: u32,
+        ph1x_directive_ref: &str,
+        ph1write_output_ref: &str,
+    ) -> Result<Ph1dProviderTransportEvidence, String> {
+        if request.provider_id != self.provider_id {
+            return Err("adapter provider_id does not match PH1.D request".to_string());
+        }
+        if request.model_id != self.model_id {
+            return Err("adapter model_id does not match PH1.D request".to_string());
+        }
+        Ph1dProviderTransportEvidence::v1(
+            request,
+            response,
+            expected_model_id.to_string(),
+            provider_attempt_count,
+            provider_network_dispatch_count,
+            truncate_ascii(ph1x_directive_ref, 128),
+            truncate_ascii(ph1write_output_ref, 128),
+        )
+        .map_err(|err| format!("ph1d provider transport evidence rejected: {err:?}"))
     }
 }
 
@@ -41462,6 +41493,141 @@ mod tests {
                 );
             },
         );
+    }
+
+    fn slice3b_offline_adapter(model_id: &str) -> EnvPh1dLiveAdapter {
+        EnvPh1dLiveAdapter {
+            provider_id: "openai".to_string(),
+            model_id: model_id.to_string(),
+            endpoint: "offline_endpoint".to_string(),
+            api_key: "redacted_test_key".to_string(),
+            timeout_ms: 1_000,
+        }
+    }
+
+    fn slice3b_provider_request_response_pair(
+        model_id: &str,
+    ) -> (Ph1dProviderCallRequest, Ph1dProviderCallResponse) {
+        let adapter = slice3b_offline_adapter(model_id);
+        let request = adapter
+            .build_llm_interpret_request(
+                CorrelationId(63_001),
+                TurnId(73_001),
+                "tenant_public",
+                "Give me a compact public answer.",
+            )
+            .expect("slice3b request should be contract-valid");
+        let response = Ph1dProviderCallResponse::v1(
+            request.correlation_id,
+            request.turn_id,
+            request.request_id,
+            request.idempotency_key.clone(),
+            Some("ph1d_provider_call:slice3b".to_string()),
+            request.provider_id.clone(),
+            request.provider_task,
+            model_id.to_string(),
+            Ph1dProviderStatus::Ok,
+            12,
+            0,
+            Some(9_000),
+            Some(PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1),
+            Some(
+                serde_json::json!({
+                    "mode": "chat",
+                    "response_text": "This is a compact answer.",
+                    "reason_code": ph1d_reason_codes::D_PROVIDER_OK.0
+                })
+                .to_string(),
+            ),
+            Ph1dProviderValidationStatus::SchemaOk,
+            ph1d_reason_codes::D_PROVIDER_OK,
+        )
+        .expect("slice3b response should be contract-valid");
+        (request, response)
+    }
+
+    #[test]
+    fn slice3b_adapter_ph1d_transport_evidence_preserves_model_and_owner_refs() {
+        let adapter = slice3b_offline_adapter("gpt-5.5");
+        let (request, response) = slice3b_provider_request_response_pair("gpt-5.5");
+        let evidence = adapter
+            .build_transport_evidence_for_provider_response(
+                &request,
+                &response,
+                "gpt-5.5",
+                1,
+                0,
+                "ph1x:slice3a:previous_answer_target",
+                "ph1write:slice3a:formatted_text",
+            )
+            .expect("slice3b transport evidence should validate");
+
+        assert_eq!(evidence.provider_id, "openai");
+        assert_eq!(evidence.expected_model_id, "gpt-5.5");
+        assert_eq!(evidence.actual_model_id, "gpt-5.5");
+        assert_eq!(evidence.provider_attempt_count, 1);
+        assert_eq!(evidence.provider_network_dispatch_count, 0);
+        assert_eq!(
+            evidence.ph1x_directive_ref,
+            "ph1x:slice3a:previous_answer_target"
+        );
+        assert_eq!(
+            evidence.ph1write_output_ref,
+            "ph1write:slice3a:formatted_text"
+        );
+        assert_eq!(evidence.transport_owner, "Adapter");
+        assert_eq!(evidence.semantic_owner, "PH1.X");
+        assert_eq!(evidence.output_owner, "PH1.WRITE");
+        assert!(!evidence.fallback_model_used);
+        assert!(!evidence.cheaper_model_used);
+        assert!(!evidence.unapproved_model_used);
+        assert!(!evidence.raw_provider_output_exposed);
+        assert!(!evidence.protected_execution_authorized);
+        assert!(!format!("{evidence:?}").contains("This is a compact answer."));
+    }
+
+    #[test]
+    fn slice3b_model_id_mismatch_is_not_accepted_backend_evidence() {
+        let adapter = slice3b_offline_adapter("unapproved_fixture_model");
+        let (request, response) =
+            slice3b_provider_request_response_pair("unapproved_fixture_model");
+        let err = adapter
+            .build_transport_evidence_for_provider_response(
+                &request,
+                &response,
+                "gpt-5.5",
+                1,
+                0,
+                "ph1x:slice3a:previous_answer_target",
+                "ph1write:slice3a:formatted_text",
+            )
+            .expect_err("model mismatch must not be accepted for Slice 3C live proof");
+        assert!(err.contains("actual_model_id"));
+    }
+
+    #[test]
+    fn slice3b_transport_evidence_rejects_raw_output_and_protected_authority() {
+        let adapter = slice3b_offline_adapter("gpt-5.5");
+        let (request, response) = slice3b_provider_request_response_pair("gpt-5.5");
+        let evidence = adapter
+            .build_transport_evidence_for_provider_response(
+                &request,
+                &response,
+                "gpt-5.5",
+                1,
+                0,
+                "ph1x:slice3a:previous_answer_target",
+                "ph1write:slice3a:formatted_text",
+            )
+            .expect("base evidence should validate");
+
+        let mut raw_output_leak = evidence.clone();
+        raw_output_leak.raw_provider_output_exposed = true;
+        assert!(raw_output_leak.validate().is_err());
+
+        let mut protected_authority = evidence;
+        protected_authority.protected_execution_authorized = true;
+        assert!(protected_authority.validate().is_err());
     }
 
     fn spawn_openai_responses_endpoint_for_public_answer_test(output_text: &'static str) -> String {
