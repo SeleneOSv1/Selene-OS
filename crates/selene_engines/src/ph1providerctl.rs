@@ -4016,6 +4016,214 @@ mod tests {
         assert!(!timeout.protected_execution_authorized);
     }
 
+    fn slice2_default_off_decision(
+        route: ProviderControlRoute,
+        provider: ProviderControlProvider,
+    ) -> ProviderGateDecision {
+        evaluate_provider_gate(
+            &ProviderNetworkPolicy::default(),
+            ProviderUsageContext::unknown(route, provider, "synthetic slice2 off proof"),
+            ProviderControlMode::Live,
+            ProviderCallCounter::default(),
+        )
+    }
+
+    #[test]
+    fn slice2_provider_off_pack_blocks_before_attempt_or_dispatch_for_all_governed_routes() {
+        for (route, provider, capability) in [
+            (
+                ProviderControlRoute::WebSearch,
+                ProviderControlProvider::BraveWebSearch,
+                ProviderCapability::WebSearch,
+            ),
+            (
+                ProviderControlRoute::NewsSearch,
+                ProviderControlProvider::BraveNewsSearch,
+                ProviderCapability::NewsSearch,
+            ),
+            (
+                ProviderControlRoute::DeepResearch,
+                ProviderControlProvider::BraveWebSearch,
+                ProviderCapability::DeepResearch,
+            ),
+            (
+                ProviderControlRoute::UrlFetch,
+                ProviderControlProvider::UrlFetch,
+                ProviderCapability::PageFetch,
+            ),
+            (
+                ProviderControlRoute::ImageSearch,
+                ProviderControlProvider::BraveImageSearch,
+                ProviderCapability::ImageSearch,
+            ),
+            (
+                ProviderControlRoute::StartupProbe,
+                ProviderControlProvider::StartupProbe,
+                ProviderCapability::StartupProbe,
+            ),
+        ] {
+            let decision = slice2_default_off_decision(route, provider);
+            let envelope =
+                ProviderGovernanceEvidenceEnvelope::from_gate_decision(capability, &decision);
+
+            assert!(!decision.allowed);
+            assert!(envelope.disabled_zero_dispatch());
+            assert_eq!(envelope.billable_class, BLOCKED_NOT_BILLABLE);
+            assert!(!envelope.raw_provider_output_exposed);
+            assert!(!envelope.protected_execution_authorized);
+            assert!(!envelope.simulation_authorized);
+            assert!(!envelope.authority_authorized);
+        }
+    }
+
+    #[test]
+    fn slice2_fake_provider_pack_records_success_disabled_budget_failure_and_unsupported() {
+        let fake_success = fake_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::CheapGeneralSearch,
+            "synthetic slice2 fake success proof",
+            1,
+        );
+        let fake_success_envelope = ProviderGovernanceEvidenceEnvelope::from_gate_decision(
+            ProviderCapability::WebSearch,
+            &fake_success,
+        );
+
+        assert!(fake_success_envelope.allowed);
+        assert_eq!(fake_success_envelope.provider_call_attempt_count, 1);
+        assert_eq!(fake_success_envelope.provider_network_dispatch_count, 0);
+        assert_eq!(fake_success_envelope.billable_class, TEST_FAKE_PROVIDER);
+
+        let disabled = slice2_default_off_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::CheapGeneralSearch,
+        );
+        let disabled_envelope = ProviderGovernanceEvidenceEnvelope::from_gate_decision(
+            ProviderCapability::WebSearch,
+            &disabled,
+        );
+        assert!(!disabled_envelope.allowed);
+        assert!(disabled_envelope.disabled_zero_dispatch());
+        assert_eq!(
+            disabled_envelope.deny_reason.as_deref(),
+            Some(WEB_ADMIN_DISABLED)
+        );
+
+        let budget = evaluate_provider_gate(
+            &ProviderNetworkPolicy::fake_test_allowing(1),
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::WebSearch,
+                ProviderControlProvider::CheapGeneralSearch,
+                "synthetic slice2 budget proof",
+            ),
+            ProviderControlMode::TestFake,
+            fake_success.counter,
+        );
+        let budget_envelope = ProviderGovernanceEvidenceEnvelope::from_gate_decision(
+            ProviderCapability::WebSearch,
+            &budget,
+        );
+        assert!(!budget_envelope.allowed);
+        assert_eq!(
+            budget_envelope.deny_reason.as_deref(),
+            Some(PROVIDER_BUDGET_EXHAUSTED)
+        );
+        assert_eq!(budget_envelope.provider_network_dispatch_count, 0);
+        assert_eq!(budget_envelope.provider_budget_denied_count, 1);
+
+        let malformed = normalize_provider_result_fixture(
+            ProviderControlProvider::CheapGeneralSearch,
+            ProviderTier::Cheap,
+            ProviderRawResultFixture {
+                title: String::new(),
+                url: "not-public-url".to_string(),
+                snippet: "synthetic snippet".to_string(),
+                published_at: None,
+                source_type: None,
+                provider_rank: 1,
+                provider_confidence: Some(50),
+                raw_provider_metadata_redacted_hash: "hash_only".to_string(),
+            },
+            1_772_000_000_000,
+        )
+        .expect_err("malformed fake result should be rejected");
+        let malformed_failure = provider_failure_evidence(
+            ProviderControlProvider::CheapGeneralSearch,
+            ProviderCapability::WebSearch,
+            ProviderFixtureFailureKind::MalformedResult,
+            &ProviderCallCounter::default(),
+        );
+        assert_eq!(malformed, "title_missing");
+        assert_eq!(
+            malformed_failure.failure_reason,
+            ProviderFixtureFailureKind::MalformedResult.as_str()
+        );
+        assert_eq!(malformed_failure.provider_network_dispatch_count, 0);
+        assert!(!malformed_failure.raw_provider_output_exposed);
+
+        let mut timeout_counter = fake_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::CheapGeneralSearch,
+            "synthetic slice2 timeout proof",
+            1,
+        )
+        .counter;
+        timeout_counter.record_failure();
+        let timeout_failure = provider_failure_evidence(
+            ProviderControlProvider::CheapGeneralSearch,
+            ProviderCapability::WebSearch,
+            ProviderFixtureFailureKind::Timeout,
+            &timeout_counter,
+        );
+        assert_eq!(
+            timeout_failure.failure_reason,
+            ProviderFixtureFailureKind::Timeout.as_str()
+        );
+        assert_eq!(timeout_failure.provider_call_attempt_count, 1);
+        assert_eq!(timeout_failure.provider_network_dispatch_count, 0);
+        assert!(!timeout_failure.raw_provider_output_exposed);
+
+        let registry = provider_registry(&ProviderNetworkPolicy::default());
+        let cheap = registry_entry(&registry, ProviderControlProvider::CheapGeneralSearch);
+        let unsupported = provider_capability_decision(cheap, ProviderCapability::ImageSearch);
+        assert!(!unsupported.supported);
+        assert_eq!(
+            unsupported.deny_reason.as_deref(),
+            Some(ProviderFixtureFailureKind::UnsupportedCapability.as_str())
+        );
+    }
+
+    #[test]
+    fn slice2_raw_output_and_protected_boundary_pack_stays_evidence_only() {
+        let report = run_stage9_offline_search_certification();
+        let protected = report
+            .case_results
+            .iter()
+            .find(|case| case.case_id == "stage9_case_024_protected_mixed")
+            .expect("protected mixed case should exist");
+        let fake_success = fake_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::CheapGeneralSearch,
+            "synthetic slice2 boundary proof",
+            1,
+        );
+        let envelope = ProviderGovernanceEvidenceEnvelope::from_gate_decision(
+            ProviderCapability::WebSearch,
+            &fake_success,
+        );
+
+        assert_eq!(report.live_provider_call_attempt_count, 0);
+        assert_eq!(report.live_provider_network_dispatch_count, 0);
+        assert!(protected.protected_fail_closed);
+        assert!(protected.response_text.find("provider json").is_none());
+        assert!(protected.response_text.find("debug trace").is_none());
+        assert!(protected.tts_text.find("source").is_none());
+        assert!(!envelope.raw_provider_output_exposed);
+        assert!(!envelope.protected_execution_authorized);
+        assert!(!envelope.simulation_authorized);
+        assert!(!envelope.authority_authorized);
+    }
+
     fn stage34k_provider_registry_and_offline_eval_boundary_impl() {
         let policy = ProviderNetworkPolicy::fake_test_allowing(2);
         let registry = provider_registry(&policy);
