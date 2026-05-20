@@ -1763,6 +1763,11 @@ pub struct PublicBrainTraceReportResponse {
     pub traces: Vec<PublicBrainTraceRow>,
 }
 
+#[derive(Debug, Clone, Default)]
+struct AdapterPh1dProviderTransportEvidenceState {
+    rows: Vec<Ph1dProviderTransportEvidence>,
+}
+
 #[derive(Debug, Clone)]
 pub struct AdapterRuntime {
     ingress: AppServerIngressRuntime,
@@ -1773,6 +1778,7 @@ pub struct AdapterRuntime {
     improvement_counters: Arc<Mutex<AdapterImprovementCounters>>,
     transcript_state: Arc<Mutex<AdapterTranscriptState>>,
     public_brain_trace_state: Arc<Mutex<AdapterPublicBrainTraceState>>,
+    ph1d_provider_transport_evidence_state: Arc<Mutex<AdapterPh1dProviderTransportEvidenceState>>,
     public_discourse_state: Arc<Mutex<AdapterPublicDiscourseState>>,
     public_answer_state: Arc<Mutex<AdapterPublicAnswerState>>,
     active_session_context_state: Arc<Mutex<BTreeMap<String, String>>>,
@@ -4565,6 +4571,9 @@ struct Ph1cLiveTurnOutcomeSummary {
     provider_call_trace: Vec<Ph1dProviderCallResponse>,
 }
 
+const SLICE3C_APPROVED_PH1D_MODEL_ID: &str = "gpt-5.5";
+const PH1D_PROVIDER_TRANSPORT_EVIDENCE_MAX_ROWS: usize = 20;
+
 #[derive(Clone)]
 struct EnvPh1dLiveAdapter {
     provider_id: String,
@@ -5059,6 +5068,9 @@ impl Default for AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
+            ph1d_provider_transport_evidence_state: Arc::new(Mutex::new(
+                AdapterPh1dProviderTransportEvidenceState::default(),
+            )),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
@@ -5102,6 +5114,9 @@ impl AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
+            ph1d_provider_transport_evidence_state: Arc::new(Mutex::new(
+                AdapterPh1dProviderTransportEvidenceState::default(),
+            )),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
@@ -5140,6 +5155,9 @@ impl AdapterRuntime {
             improvement_counters: Arc::new(Mutex::new(AdapterImprovementCounters::default())),
             transcript_state: Arc::new(Mutex::new(AdapterTranscriptState::default())),
             public_brain_trace_state: Arc::new(Mutex::new(AdapterPublicBrainTraceState::default())),
+            ph1d_provider_transport_evidence_state: Arc::new(Mutex::new(
+                AdapterPh1dProviderTransportEvidenceState::default(),
+            )),
             public_discourse_state: Arc::new(Mutex::new(AdapterPublicDiscourseState::default())),
             public_answer_state: Arc::new(Mutex::new(AdapterPublicAnswerState::default())),
             active_session_context_state: Arc::new(Mutex::new(BTreeMap::new())),
@@ -6416,6 +6434,47 @@ impl AdapterRuntime {
             note,
             traces,
         }
+    }
+
+    pub fn ph1d_provider_transport_evidence_snapshot(&self) -> Vec<Ph1dProviderTransportEvidence> {
+        self.ph1d_provider_transport_evidence_state
+            .lock()
+            .map(|state| state.rows.clone())
+            .unwrap_or_default()
+    }
+
+    fn record_ph1d_provider_transport_evidence(
+        &self,
+        evidence: Ph1dProviderTransportEvidence,
+    ) -> Result<(), String> {
+        let mut state = self
+            .ph1d_provider_transport_evidence_state
+            .lock()
+            .map_err(|_| "adapter ph1d provider transport evidence lock poisoned".to_string())?;
+        eprintln!(
+            "selene_adapter ph1d_provider_transport_evidence provider_id={} expected_model_id={} actual_model_id={} provider_attempt_count={} provider_network_dispatch_count={} fallback_model_used={} cheaper_model_used={} unapproved_model_used={} raw_provider_output_exposed={} protected_execution_authorized={} ph1x_directive_ref={} ph1write_output_ref={}",
+            evidence.provider_id,
+            evidence.expected_model_id,
+            evidence.actual_model_id,
+            evidence.provider_attempt_count,
+            evidence.provider_network_dispatch_count,
+            evidence.fallback_model_used,
+            evidence.cheaper_model_used,
+            evidence.unapproved_model_used,
+            evidence.raw_provider_output_exposed,
+            evidence.protected_execution_authorized,
+            evidence.ph1x_directive_ref,
+            evidence.ph1write_output_ref
+        );
+        state.rows.push(evidence);
+        if state.rows.len() > PH1D_PROVIDER_TRANSPORT_EVIDENCE_MAX_ROWS {
+            let overflow = state
+                .rows
+                .len()
+                .saturating_sub(PH1D_PROVIDER_TRANSPORT_EVIDENCE_MAX_ROWS);
+            state.rows.drain(0..overflow);
+        }
+        Ok(())
     }
 
     fn record_public_brain_trace(&self, trace: PublicBrainTraceRow) -> Result<(), String> {
@@ -8138,6 +8197,21 @@ impl AdapterRuntime {
         {
             return Err("provider_call_not_schema_ok".to_string());
         }
+        let ph1x_directive_ref =
+            format!("ph1x:live_public_answer:{}:{}", correlation_id.0, turn_id.0);
+        let ph1write_output_ref = format!(
+            "ph1write:ph1d_chat_response:{}:{}",
+            correlation_id.0, turn_id.0
+        );
+        let provider_transport_evidence = adapter.build_transport_evidence_for_provider_response(
+            &provider_request,
+            &provider_response,
+            SLICE3C_APPROVED_PH1D_MODEL_ID,
+            1,
+            1,
+            &ph1x_directive_ref,
+            &ph1write_output_ref,
+        )?;
         let raw_json = provider_response
             .normalized_output_json
             .clone()
@@ -8177,7 +8251,10 @@ impl AdapterRuntime {
             .ph1d_runtime
             .run(&ph1d_request, Ph1dModelCallOutcome::Ok { raw_json })
         {
-            Ph1dResponse::Ok(Ph1dOk::Chat(chat)) => Ok(chat.response_text),
+            Ph1dResponse::Ok(Ph1dOk::Chat(chat)) => {
+                self.record_ph1d_provider_transport_evidence(provider_transport_evidence)?;
+                Ok(chat.response_text)
+            }
             Ph1dResponse::Ok(_) => Err("ph1d provider returned non-chat mode".to_string()),
             Ph1dResponse::Fail(fail) => Err(format!(
                 "ph1d runtime fail kind={:?} reason_code={}",
@@ -41630,6 +41707,112 @@ mod tests {
         assert!(protected_authority.validate().is_err());
     }
 
+    #[test]
+    fn slice3c_evidence_live_route_records_accepted_transport_evidence() {
+        let endpoint = spawn_openai_responses_endpoint_for_public_answer_test(
+            "Good safeguards keep outside help logged, bounded, and separate from business actions.",
+        );
+        with_isolated_device_vault(
+            "slice3c-evidence-live-route-records",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_MODEL", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 303_001;
+                req.turn_id = 303_101;
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some(
+                    "Explain why provider governance matters in one short paragraph.".to_string(),
+                );
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("mocked live PH1.D route should complete");
+                assert_eq!(out.status, "ok");
+                assert_eq!(out.outcome, "FINAL");
+                assert_eq!(
+                    out.response_text,
+                    "Good safeguards keep outside help logged, bounded, and separate from business actions."
+                );
+
+                let evidence_rows = runtime.ph1d_provider_transport_evidence_snapshot();
+                assert_eq!(evidence_rows.len(), 1);
+                let evidence = &evidence_rows[0];
+                assert_eq!(evidence.provider_id, "openai");
+                assert_eq!(evidence.expected_model_id, SLICE3C_APPROVED_PH1D_MODEL_ID);
+                assert_eq!(evidence.actual_model_id, SLICE3C_APPROVED_PH1D_MODEL_ID);
+                assert_eq!(evidence.provider_attempt_count, 1);
+                assert_eq!(evidence.provider_network_dispatch_count, 1);
+                assert_eq!(evidence.transport_owner, "Adapter");
+                assert_eq!(evidence.semantic_owner, "PH1.X");
+                assert_eq!(evidence.output_owner, "PH1.WRITE");
+                assert!(evidence
+                    .ph1x_directive_ref
+                    .starts_with("ph1x:live_public_answer:303001:303101"));
+                assert!(evidence
+                    .ph1write_output_ref
+                    .starts_with("ph1write:ph1d_chat_response:303001:303101"));
+                assert!(!evidence.fallback_model_used);
+                assert!(!evidence.cheaper_model_used);
+                assert!(!evidence.unapproved_model_used);
+                assert!(!evidence.raw_provider_output_exposed);
+                assert!(!evidence.protected_execution_authorized);
+                assert!(!format!("{evidence:?}").contains("Good safeguards keep"));
+            },
+        );
+    }
+
+    #[test]
+    fn slice3c_evidence_model_mismatch_is_not_recorded_by_live_route() {
+        let endpoint = spawn_openai_responses_endpoint_for_public_answer_test(
+            "This mocked answer must not become accepted backend evidence.",
+        );
+        with_isolated_device_vault(
+            "slice3c-evidence-model-mismatch",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", "unapproved_fixture_model"),
+                ("OPENAI_MODEL", "unapproved_fixture_model"),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 303_002;
+                req.turn_id = 303_102;
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some("Tell me a concise public answer.".to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("model mismatch should safe-degrade, not panic");
+                assert_eq!(out.status, "ok");
+                assert_ne!(
+                    out.response_text,
+                    "This mocked answer must not become accepted backend evidence."
+                );
+                assert!(runtime
+                    .ph1d_provider_transport_evidence_snapshot()
+                    .is_empty());
+            },
+        );
+    }
+
     fn spawn_openai_responses_endpoint_for_public_answer_test(output_text: &'static str) -> String {
         spawn_openai_responses_endpoint_for_public_answer_sequence(vec![output_text])
     }
@@ -41719,6 +41902,8 @@ mod tests {
             &[
                 ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
                 ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_MODEL", SLICE3C_APPROVED_PH1D_MODEL_ID),
                 ("OPENAI_RESPONSES_URL", endpoint.as_str()),
                 ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
                 ("SELENE_CURL_MAX_TIME", "5"),
@@ -41773,6 +41958,8 @@ mod tests {
             &[
                 ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
                 ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_MODEL", SLICE3C_APPROVED_PH1D_MODEL_ID),
                 ("OPENAI_RESPONSES_URL", endpoint.as_str()),
                 ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
                 ("SELENE_CURL_MAX_TIME", "5"),
