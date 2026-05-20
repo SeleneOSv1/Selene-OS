@@ -9,6 +9,17 @@ ARCHITECTURE / IMPLEMENTATION MASTER PLAN
 CORE DIRECTION:
 Move Selene toward OpenAI-assisted probabilistic intelligence behind Selene-owned provider interfaces, while keeping deterministic enterprise control inside existing canonical Selene engines.
 
+---
+
+# Related Documents
+
+This master build plan is paired with:
+
+- [Selene Provider-First Function Architecture Cards](SELENE_PROVIDER_FIRST_FUNCTION_ARCHITECTURE_CARDS.md)
+
+The master build plan remains the controlling architecture / law / direction.
+The function architecture cards document is the practical function-by-function design reference.
+
 0. Executive Target
 
 Selene’s target architecture is:
