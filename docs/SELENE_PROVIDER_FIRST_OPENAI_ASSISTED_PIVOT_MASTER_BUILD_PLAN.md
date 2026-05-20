@@ -11,14 +11,21 @@ Move Selene toward OpenAI-assisted probabilistic intelligence behind Selene-owne
 
 ---
 
-# Related Documents
+# Related Provider-First Reference Documents
 
-This master build plan is paired with:
+These documents must be read together as one provider-first reference set:
 
-- [Selene Provider-First Function Architecture Cards](SELENE_PROVIDER_FIRST_FUNCTION_ARCHITECTURE_CARDS.md)
+1. [Selene Provider-First OpenAI Assisted Pivot Master Build Plan](SELENE_PROVIDER_FIRST_OPENAI_ASSISTED_PIVOT_MASTER_BUILD_PLAN.md)
+   Controlling architecture / law / direction.
 
-The master build plan remains the controlling architecture / law / direction.
-The function architecture cards document is the practical function-by-function design reference.
+2. [Selene Provider-First Function Architecture Cards](SELENE_PROVIDER_FIRST_FUNCTION_ARCHITECTURE_CARDS.md)
+   Function-by-function design reference.
+
+3. [Selene Provider-First Vertical Slice Build Pack](SELENE_PROVIDER_FIRST_VERTICAL_SLICE_BUILD_PACK.md)
+   First executable slice per function.
+
+Codex must not treat any one of these documents as standalone implementation approval.
+Implementation instructions must be derived from the full reference set plus AGENTS.md.
 
 0. Executive Target
 

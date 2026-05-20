@@ -9,6 +9,24 @@ Selene Provider-First OpenAI Assisted Pivot Master Build Plan
 PURPOSE:
 Define each major Selene function as a provider-first architecture card so Codex can implement one clean vertical slice at a time inside existing canonical engines.
 
+---
+
+# Related Provider-First Reference Documents
+
+These documents must be read together as one provider-first reference set:
+
+1. [Selene Provider-First OpenAI Assisted Pivot Master Build Plan](SELENE_PROVIDER_FIRST_OPENAI_ASSISTED_PIVOT_MASTER_BUILD_PLAN.md)
+   Controlling architecture / law / direction.
+
+2. [Selene Provider-First Function Architecture Cards](SELENE_PROVIDER_FIRST_FUNCTION_ARCHITECTURE_CARDS.md)
+   Function-by-function design reference.
+
+3. [Selene Provider-First Vertical Slice Build Pack](SELENE_PROVIDER_FIRST_VERTICAL_SLICE_BUILD_PACK.md)
+   First executable slice per function.
+
+Codex must not treat any one of these documents as standalone implementation approval.
+Implementation instructions must be derived from the full reference set plus AGENTS.md.
+
 0. Controlling Rule
 
 This document does not replace the master build plan.
