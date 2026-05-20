@@ -638,6 +638,114 @@ impl ProviderGateDecision {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderGovernanceEvidenceEnvelope {
+    pub provider_id: String,
+    pub capability: String,
+    pub enabled: bool,
+    pub allowed: bool,
+    pub deny_reason: Option<String>,
+    pub billable_class: String,
+    pub billing_scope: String,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub provider_budget_denied_count: u32,
+    pub provider_failure_count: u32,
+    pub raw_provider_output_exposed: bool,
+    pub protected_execution_authorized: bool,
+    pub simulation_authorized: bool,
+    pub authority_authorized: bool,
+}
+
+impl ProviderGovernanceEvidenceEnvelope {
+    pub fn from_gate_decision(
+        capability: ProviderCapability,
+        decision: &ProviderGateDecision,
+    ) -> Self {
+        Self {
+            provider_id: decision.usage_event.provider.clone(),
+            capability: capability.as_str().to_string(),
+            enabled: !provider_disabled_deny_reason(decision.deny_reason.as_deref()),
+            allowed: decision.allowed,
+            deny_reason: decision.deny_reason.clone(),
+            billable_class: decision.usage_event.billable_class.clone(),
+            billing_scope: decision.usage_event.billing_scope.clone(),
+            provider_call_attempt_count: decision.counter.provider_call_attempt_count,
+            provider_network_dispatch_count: decision.counter.provider_network_dispatch_count,
+            provider_budget_denied_count: decision.counter.provider_budget_denied_count,
+            provider_failure_count: decision.counter.provider_failure_count,
+            raw_provider_output_exposed: false,
+            protected_execution_authorized: false,
+            simulation_authorized: false,
+            authority_authorized: false,
+        }
+    }
+
+    pub fn disabled_zero_dispatch(&self) -> bool {
+        !self.allowed
+            && self.provider_call_attempt_count == 0
+            && self.provider_network_dispatch_count == 0
+    }
+}
+
+fn provider_disabled_deny_reason(reason: Option<&str>) -> bool {
+    matches!(
+        reason,
+        Some(WEB_ADMIN_DISABLED)
+            | Some(PROVIDER_DISABLED)
+            | Some(PAID_PROVIDER_DISABLED)
+            | Some(STARTUP_PROVIDER_PROBES_DISABLED)
+            | Some(DEEP_RESEARCH_DISABLED)
+            | Some(NEWS_SEARCH_DISABLED)
+            | Some(URL_FETCH_DISABLED)
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProviderFixtureFailureKind {
+    MalformedResult,
+    Timeout,
+    UnsupportedCapability,
+}
+
+impl ProviderFixtureFailureKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MalformedResult => "PROVIDER_MALFORMED_RESULT",
+            Self::Timeout => "PROVIDER_TIMEOUT",
+            Self::UnsupportedCapability => "PROVIDER_CAPABILITY_UNSUPPORTED",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderFailureEvidence {
+    pub provider_id: String,
+    pub capability: String,
+    pub failure_reason: String,
+    pub provider_call_attempt_count: u32,
+    pub provider_network_dispatch_count: u32,
+    pub raw_provider_output_exposed: bool,
+    pub protected_execution_authorized: bool,
+}
+
+pub fn provider_failure_evidence(
+    provider: ProviderControlProvider,
+    capability: ProviderCapability,
+    failure_kind: ProviderFixtureFailureKind,
+    counter: &ProviderCallCounter,
+) -> ProviderFailureEvidence {
+    ProviderFailureEvidence {
+        provider_id: provider.as_str().to_string(),
+        capability: capability.as_str().to_string(),
+        failure_reason: failure_kind.as_str().to_string(),
+        provider_call_attempt_count: counter.provider_call_attempt_count,
+        provider_network_dispatch_count: counter.provider_network_dispatch_count,
+        raw_provider_output_exposed: false,
+        protected_execution_authorized: false,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum ProviderLane {
     NoSearch,
@@ -848,6 +956,70 @@ pub struct ProviderRegistryEntry {
     pub cost_estimate_unit: ProviderCostClass,
     pub trust_notes: String,
     pub data_retention_notes: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ProviderCapability {
+    WebSearch,
+    NewsSearch,
+    ImageSearch,
+    PageFetch,
+    DeepResearch,
+    StartupProbe,
+}
+
+impl ProviderCapability {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::WebSearch => "web_search",
+            Self::NewsSearch => "news_search",
+            Self::ImageSearch => "image_search",
+            Self::PageFetch => "page_fetch",
+            Self::DeepResearch => "deep_research",
+            Self::StartupProbe => "startup_provider_probe",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderCapabilityDecision {
+    pub provider_id: String,
+    pub capability: String,
+    pub supported: bool,
+    pub deny_reason: Option<String>,
+}
+
+pub fn provider_supports_capability(
+    entry: &ProviderRegistryEntry,
+    capability: ProviderCapability,
+) -> bool {
+    match capability {
+        ProviderCapability::WebSearch => entry.supports_web,
+        ProviderCapability::NewsSearch => entry.supports_news,
+        ProviderCapability::ImageSearch => entry.supports_images,
+        ProviderCapability::PageFetch => entry.supports_page_fetch,
+        ProviderCapability::DeepResearch => entry.supports_deep_research,
+        ProviderCapability::StartupProbe => {
+            entry.provider_id == ProviderControlProvider::StartupProbe.as_str()
+        }
+    }
+}
+
+pub fn provider_capability_decision(
+    entry: &ProviderRegistryEntry,
+    capability: ProviderCapability,
+) -> ProviderCapabilityDecision {
+    let supported = provider_supports_capability(entry, capability);
+    ProviderCapabilityDecision {
+        provider_id: entry.provider_id.clone(),
+        capability: capability.as_str().to_string(),
+        supported,
+        deny_reason: if supported {
+            None
+        } else {
+            Some("PROVIDER_CAPABILITY_UNSUPPORTED".to_string())
+        },
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1109,6 +1281,125 @@ pub fn provider_registry(policy: &ProviderNetworkPolicy) -> Vec<ProviderRegistry
             cost_estimate_unit: ProviderCostClass::PremiumCost,
             trust_notes: "premium news fallback; not default news lane".to_string(),
             data_retention_notes: "no raw provider JSON in normal output".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::BraveImageSearch
+                .as_str()
+                .to_string(),
+            provider_name: "Brave Image Search premium metadata".to_string(),
+            provider_lane: ProviderLane::ImageMetadata,
+            provider_tier: ProviderTier::Premium,
+            enabled: policy.is_provider_enabled(ProviderControlProvider::BraveImageSearch),
+            paid_provider: true,
+            secret_id: Some("brave_search_api_key".to_string()),
+            live_test_allowed: policy.live_brave_proof_enabled,
+            test_fake_provider: false,
+            supports_web: false,
+            supports_news: false,
+            supports_images: true,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::PremiumCost,
+            trust_notes: "image metadata lane; never auto-triggered from text search".to_string(),
+            data_retention_notes: "no raw provider JSON in normal output".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::OpenAiWebSearch
+                .as_str()
+                .to_string(),
+            provider_name: "OpenAI web search provider".to_string(),
+            provider_lane: ProviderLane::PremiumFallback,
+            provider_tier: ProviderTier::Premium,
+            enabled: policy.web_search_enabled
+                && policy.is_provider_enabled(ProviderControlProvider::OpenAiWebSearch),
+            paid_provider: true,
+            secret_id: Some("openai_api_key".to_string()),
+            live_test_allowed: false,
+            test_fake_provider: false,
+            supports_web: true,
+            supports_news: false,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::PremiumCost,
+            trust_notes:
+                "declared for provider governance only; no live OpenAI route is selected here"
+                    .to_string(),
+            data_retention_notes: "no raw provider JSON in normal output".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::GdeltNewsAssist
+                .as_str()
+                .to_string(),
+            provider_name: "GDELT news assist provider".to_string(),
+            provider_lane: ProviderLane::NewsCurrentEvents,
+            provider_tier: ProviderTier::FreeOrInternal,
+            enabled: policy.news_search_enabled
+                && policy.is_provider_enabled(ProviderControlProvider::GdeltNewsAssist),
+            paid_provider: false,
+            secret_id: None,
+            live_test_allowed: false,
+            test_fake_provider: false,
+            supports_web: false,
+            supports_news: true,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::FreeOrInternal,
+            trust_notes: "news assist lane; live use remains gated/deferred".to_string(),
+            data_retention_notes: "no raw provider JSON in normal output".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::UrlFetch.as_str().to_string(),
+            provider_name: "URL fetch read provider".to_string(),
+            provider_lane: ProviderLane::UrlFetchRead,
+            provider_tier: ProviderTier::Standard,
+            enabled: policy.url_fetch_enabled
+                && policy.is_provider_enabled(ProviderControlProvider::UrlFetch),
+            paid_provider: false,
+            secret_id: None,
+            live_test_allowed: false,
+            test_fake_provider: false,
+            supports_web: false,
+            supports_news: false,
+            supports_images: false,
+            supports_page_fetch: true,
+            supports_deep_research: false,
+            default_max_calls: policy.max_calls_this_turn,
+            default_retry_max: policy.max_retries,
+            cost_estimate_unit: ProviderCostClass::StandardCost,
+            trust_notes:
+                "read-only page fetch lane; never selected unless URL fetch is explicitly enabled"
+                    .to_string(),
+            data_retention_notes: "no raw provider JSON in normal output".to_string(),
+        },
+        ProviderRegistryEntry {
+            provider_id: ProviderControlProvider::StartupProbe.as_str().to_string(),
+            provider_name: "Startup provider probe".to_string(),
+            provider_lane: ProviderLane::Disabled,
+            provider_tier: ProviderTier::Disabled,
+            enabled: policy.is_provider_enabled(ProviderControlProvider::StartupProbe)
+                && policy.startup_provider_probes_enabled,
+            paid_provider: false,
+            secret_id: None,
+            live_test_allowed: false,
+            test_fake_provider: false,
+            supports_web: false,
+            supports_news: false,
+            supports_images: false,
+            supports_page_fetch: false,
+            supports_deep_research: false,
+            default_max_calls: 0,
+            default_retry_max: 0,
+            cost_estimate_unit: ProviderCostClass::Disabled,
+            trust_notes: "diagnostic-only; startup probes stay disabled by default".to_string(),
+            data_retention_notes: "no startup provider probes without explicit policy".to_string(),
         },
     ]
 }
@@ -3527,6 +3818,202 @@ mod tests {
             assert!(!case_text.contains("http://"));
             assert!(!case_text.contains("https://"));
         }
+    }
+
+    fn registry_entry(
+        registry: &[ProviderRegistryEntry],
+        provider: ProviderControlProvider,
+    ) -> &ProviderRegistryEntry {
+        registry
+            .iter()
+            .find(|entry| entry.provider_id == provider.as_str())
+            .expect("provider registry entry must exist")
+    }
+
+    #[test]
+    fn slice1_provider_registry_covers_governed_provider_capabilities_without_live_routes() {
+        let policy = ProviderNetworkPolicy::default();
+        let registry = provider_registry(&policy);
+        let expected_providers = [
+            ProviderControlProvider::CacheOnly,
+            ProviderControlProvider::CheapGeneralSearch,
+            ProviderControlProvider::NewsCurrentEvents,
+            ProviderControlProvider::BraveWebSearch,
+            ProviderControlProvider::BraveNewsSearch,
+            ProviderControlProvider::BraveImageSearch,
+            ProviderControlProvider::OpenAiWebSearch,
+            ProviderControlProvider::GdeltNewsAssist,
+            ProviderControlProvider::UrlFetch,
+            ProviderControlProvider::StartupProbe,
+        ];
+
+        for provider in expected_providers {
+            assert_eq!(
+                registry
+                    .iter()
+                    .filter(|entry| entry.provider_id == provider.as_str())
+                    .count(),
+                1
+            );
+        }
+
+        let image = registry_entry(&registry, ProviderControlProvider::BraveImageSearch);
+        let openai = registry_entry(&registry, ProviderControlProvider::OpenAiWebSearch);
+        let gdelt = registry_entry(&registry, ProviderControlProvider::GdeltNewsAssist);
+        let url_fetch = registry_entry(&registry, ProviderControlProvider::UrlFetch);
+        let startup_probe = registry_entry(&registry, ProviderControlProvider::StartupProbe);
+        let cheap = registry_entry(&registry, ProviderControlProvider::CheapGeneralSearch);
+
+        assert!(provider_supports_capability(
+            image,
+            ProviderCapability::ImageSearch
+        ));
+        assert!(provider_supports_capability(
+            openai,
+            ProviderCapability::WebSearch
+        ));
+        assert!(provider_supports_capability(
+            gdelt,
+            ProviderCapability::NewsSearch
+        ));
+        assert!(provider_supports_capability(
+            url_fetch,
+            ProviderCapability::PageFetch
+        ));
+        assert!(provider_supports_capability(
+            startup_probe,
+            ProviderCapability::StartupProbe
+        ));
+        assert!(!provider_supports_capability(
+            cheap,
+            ProviderCapability::ImageSearch
+        ));
+        assert!(!openai.live_test_allowed);
+        assert!(!gdelt.live_test_allowed);
+        assert!(!url_fetch.live_test_allowed);
+        assert!(!startup_probe.enabled);
+    }
+
+    #[test]
+    fn slice1_governance_envelope_proves_provider_off_budget_fake_and_no_authority() {
+        let disabled = disabled_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::BraveWebSearch,
+            "synthetic governance disabled proof",
+        );
+        let disabled_envelope = ProviderGovernanceEvidenceEnvelope::from_gate_decision(
+            ProviderCapability::WebSearch,
+            &disabled,
+        );
+
+        assert!(!disabled_envelope.allowed);
+        assert!(!disabled_envelope.enabled);
+        assert!(disabled_envelope.disabled_zero_dispatch());
+        assert_eq!(disabled_envelope.billable_class, BLOCKED_NOT_BILLABLE);
+        assert!(!disabled_envelope.raw_provider_output_exposed);
+        assert!(!disabled_envelope.protected_execution_authorized);
+        assert!(!disabled_envelope.simulation_authorized);
+        assert!(!disabled_envelope.authority_authorized);
+
+        let fake = fake_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::CheapGeneralSearch,
+            "synthetic governance fake proof",
+            1,
+        );
+        let fake_envelope = ProviderGovernanceEvidenceEnvelope::from_gate_decision(
+            ProviderCapability::WebSearch,
+            &fake,
+        );
+
+        assert!(fake_envelope.allowed);
+        assert!(fake_envelope.enabled);
+        assert_eq!(fake_envelope.provider_call_attempt_count, 1);
+        assert_eq!(fake_envelope.provider_network_dispatch_count, 0);
+        assert_eq!(fake_envelope.billable_class, TEST_FAKE_PROVIDER);
+        assert!(!fake_envelope.protected_execution_authorized);
+
+        let budget = evaluate_provider_gate(
+            &ProviderNetworkPolicy::fake_test_allowing(1),
+            ProviderUsageContext::unknown(
+                ProviderControlRoute::WebSearch,
+                ProviderControlProvider::CheapGeneralSearch,
+                "synthetic governance budget proof",
+            ),
+            ProviderControlMode::TestFake,
+            fake.counter,
+        );
+        let budget_envelope = ProviderGovernanceEvidenceEnvelope::from_gate_decision(
+            ProviderCapability::WebSearch,
+            &budget,
+        );
+
+        assert!(!budget_envelope.allowed);
+        assert!(budget_envelope.enabled);
+        assert_eq!(
+            budget_envelope.deny_reason.as_deref(),
+            Some(PROVIDER_BUDGET_EXHAUSTED)
+        );
+        assert_eq!(budget_envelope.provider_call_attempt_count, 1);
+        assert_eq!(budget_envelope.provider_network_dispatch_count, 0);
+        assert_eq!(budget_envelope.provider_budget_denied_count, 1);
+        assert!(!budget_envelope.raw_provider_output_exposed);
+    }
+
+    #[test]
+    fn slice1_fake_provider_malformed_timeout_and_unsupported_capability_are_evidence_only() {
+        let malformed = normalize_provider_result_fixture(
+            ProviderControlProvider::CheapGeneralSearch,
+            ProviderTier::Cheap,
+            ProviderRawResultFixture {
+                title: " ".to_string(),
+                url: "https://synthetic-source.invalid/item".to_string(),
+                snippet: "synthetic snippet".to_string(),
+                published_at: None,
+                source_type: None,
+                provider_rank: 1,
+                provider_confidence: Some(50),
+                raw_provider_metadata_redacted_hash: "hash_only".to_string(),
+            },
+            1_772_000_000_000,
+        )
+        .expect_err("malformed provider fixture should be rejected");
+
+        assert_eq!(malformed, "title_missing");
+
+        let registry = provider_registry(&ProviderNetworkPolicy::default());
+        let cheap = registry_entry(&registry, ProviderControlProvider::CheapGeneralSearch);
+        let unsupported = provider_capability_decision(cheap, ProviderCapability::ImageSearch);
+
+        assert!(!unsupported.supported);
+        assert_eq!(
+            unsupported.deny_reason.as_deref(),
+            Some(ProviderFixtureFailureKind::UnsupportedCapability.as_str())
+        );
+
+        let mut timeout_counter = fake_provider_decision(
+            ProviderControlRoute::WebSearch,
+            ProviderControlProvider::CheapGeneralSearch,
+            "synthetic governance timeout proof",
+            1,
+        )
+        .counter;
+        timeout_counter.record_failure();
+        let timeout = provider_failure_evidence(
+            ProviderControlProvider::CheapGeneralSearch,
+            ProviderCapability::WebSearch,
+            ProviderFixtureFailureKind::Timeout,
+            &timeout_counter,
+        );
+
+        assert_eq!(
+            timeout.failure_reason,
+            ProviderFixtureFailureKind::Timeout.as_str()
+        );
+        assert_eq!(timeout.provider_call_attempt_count, 1);
+        assert_eq!(timeout.provider_network_dispatch_count, 0);
+        assert!(!timeout.raw_provider_output_exposed);
+        assert!(!timeout.protected_execution_authorized);
     }
 
     fn stage34k_provider_registry_and_offline_eval_boundary_impl() {
