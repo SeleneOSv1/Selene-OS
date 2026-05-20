@@ -24,6 +24,11 @@ These documents must be read together as one provider-first reference set:
 3. [Selene Provider-First Vertical Slice Build Pack](SELENE_PROVIDER_FIRST_VERTICAL_SLICE_BUILD_PACK.md)
    First executable slice per function.
 
+4. [Selene OpenAI Model Routing Policy](SELENE_OPENAI_MODEL_ROUTING_POLICY.md)
+   JD-controlled model routing policy. Codex must not choose, change, upgrade, downgrade, replace, fallback, or cost-optimize OpenAI models without explicit JD approval.
+
+The model routing policy controls OpenAI model choices until JD explicitly changes it.
+
 Codex must not treat any one of these documents as standalone implementation approval.
 Implementation instructions must be derived from the full reference set plus AGENTS.md.
 

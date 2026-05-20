@@ -24,6 +24,11 @@ These documents must be read together as one provider-first reference set:
 3. [Selene Provider-First Vertical Slice Build Pack](SELENE_PROVIDER_FIRST_VERTICAL_SLICE_BUILD_PACK.md)
    First executable slice per function.
 
+4. [Selene OpenAI Model Routing Policy](SELENE_OPENAI_MODEL_ROUTING_POLICY.md)
+   JD-controlled model routing policy. Codex must not choose, change, upgrade, downgrade, replace, fallback, or cost-optimize OpenAI models without explicit JD approval.
+
+The model routing policy controls OpenAI model choices until JD explicitly changes it.
+
 Codex must not treat any one of these documents as standalone implementation approval.
 Implementation instructions must be derived from the full reference set plus AGENTS.md.
 
@@ -1290,6 +1295,8 @@ provider-off proof
 fake provider proof
 
 8E. Model Governance and Model Pinning
+
+JD-controlled concrete model choices are defined in [Selene OpenAI Model Routing Policy](SELENE_OPENAI_MODEL_ROUTING_POLICY.md). Codex must follow that policy until JD explicitly changes it. This master plan defines model governance; the model routing policy defines the approved OpenAI model IDs and routing choices.
 
 Selene must not call arbitrary OpenAI models by convenience. Model use must be governed, pinned, routed, and auditable.
 

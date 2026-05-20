@@ -11,6 +11,29 @@ CONTROLLING DOCUMENTS:
 PURPOSE:
 Define the first executable vertical slice for each major Selene function so Codex can build one narrow, provable slice at a time inside existing canonical engines.
 
+---
+
+# Related Provider-First Reference Documents
+
+These documents must be read together as one provider-first reference set:
+
+1. [Selene Provider-First OpenAI Assisted Pivot Master Build Plan](SELENE_PROVIDER_FIRST_OPENAI_ASSISTED_PIVOT_MASTER_BUILD_PLAN.md)
+   Controlling architecture / law / direction.
+
+2. [Selene Provider-First Function Architecture Cards](SELENE_PROVIDER_FIRST_FUNCTION_ARCHITECTURE_CARDS.md)
+   Function-by-function design reference.
+
+3. [Selene Provider-First Vertical Slice Build Pack](SELENE_PROVIDER_FIRST_VERTICAL_SLICE_BUILD_PACK.md)
+   First executable slice per function.
+
+4. [Selene OpenAI Model Routing Policy](SELENE_OPENAI_MODEL_ROUTING_POLICY.md)
+   JD-controlled model routing policy. Codex must not choose, change, upgrade, downgrade, replace, fallback, or cost-optimize OpenAI models without explicit JD approval.
+
+The model routing policy controls OpenAI model choices until JD explicitly changes it.
+
+Codex must not treat any one of these documents as standalone implementation approval.
+Implementation instructions must be derived from the full reference set plus AGENTS.md.
+
 0. Controlling Rule
 
 This document does not replace the master build plan or the function architecture cards.
