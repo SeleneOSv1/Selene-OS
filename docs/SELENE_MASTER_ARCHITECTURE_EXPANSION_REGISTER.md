@@ -186,6 +186,21 @@ OpenAI may assist only where governed. Selene remains the owner of validation, r
 - Required presentation/audit implications: Retirement reports must preserve evidence, route provenance, test proof, and final clean tree proof.
 - Recommended next architecture/build action: Create an old-path retirement register after activation packs map active callers. ACTIVATION_PACK_REQUIRED.
 
+## 15. Conversational Experience + Quick Assist Stack
+
+- Intent: Use GPT-5.5 through Selene-owned provider interfaces to make Selene natural, helpful, comforting, clarifying, and adaptive during user interaction.
+- Covers: wake acknowledgements; listening/session reassurance; quick clarify; quick confirm; quick suggest; “where am I?” process help; “what should I do next?” guidance; deterministic process explanation; failed-step recovery wording; time/weather/forecast presentation; tool/search/result explanation; short/long/bullet/paragraph/table formatting; multilingual guidance; TTS-safe friendly phrasing.
+- Repo evidence from the audit / current repo truth: PH1.WRITE, PH1.X, PH1.W, PH1.C, PH1.L, PH1.TTS, PH1.E, PH1.M, Desktop/iPhone render surfaces, and Adapter transport surfaces are mapped in `docs/SELENE_OVERALL_REPO_TRUTH_ACTIVATION_PACK.md`; existing compatibility risks include deterministic wake/help/weather/follow-up wording and Adapter/PH1.X phrase-style helper paths.
+- Current six-document coverage gap: Existing architecture covers writing, presentation, wake/session, search/tool answers, and memory preference boundaries, but it did not name normal guided conversational experience as a first-class cross-cutting stack.
+- Likely canonical owner or owner family: PH1.WRITE for final wording; PH1.X for validated user/process intent; PH1.W / PH1.C / PH1.L for wake/session state; PH1.TTS for approved speech; PH1.E for facts/tools/search/weather/time; PH1.M for preference/personalization only where memory law allows; Desktop/iPhone render/play only; Adapter transport only.
+- OpenAI role: GPT-5.5 may propose natural wording, clarification, comfort, explanation, options, next-step guidance, formatting, and TTS-safe phrasing.
+- Selene-owned validation role: Selene validates state, scope, risk, evidence, and final output. GPT-5.5 does not grant access, authority, memory permission, tool permission, or protected execution.
+- Identity/access/authority/protected-risk implications: Human communication may be probabilistic-first wherever lawful, but private personalization requires memory/access scope and protected or mutating behavior remains deterministic-gated.
+- Required architecture rule: Human communication with Selene is probabilistic-first wherever lawful. Deterministic gates remain for identity, access, provider governance, memory scope, source acceptance, tool permission, authority, simulation, audit, and state mutation.
+- Forbidden: hardcoded wake greetings; phrase-list clarification logic; hardcoded weather/time templates as primary UX; stack-local language understanding outside SemanticInterpreterProvider / PH1.X; Desktop or Adapter conversational brain; deterministic user-help behavior without JD approval.
+- Required presentation/audit implications: PH1.WRITE must approve final `display_text` / `tts_text`; PH1.TTS may speak only approved text; backend evidence must show the deterministic state/fact owner, provider wording proposal where used, PH1.WRITE validation, and client render/play provenance.
+- Recommended next architecture/build action: Create Quick Assist Activation Pack before implementation. First implementation must be provider-off/fake-provider safe and must route final wording through PH1.WRITE. ACTIVATION_PACK_REQUIRED.
+
 ## Final Register Status
 
 - Architecture reference: READY

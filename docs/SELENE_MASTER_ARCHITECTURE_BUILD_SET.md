@@ -18,6 +18,8 @@ These documents are one architecture set. They must be read together. None overr
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
+The Expansion Register also includes the Conversational Experience + Quick Assist Stack, which makes GPT-5.5-assisted user guidance, clarification, reassurance, wake acknowledgements, and natural presentation an official cross-cutting architecture stack.
+
 The Final Overall Architecture Build Plan converts the seven-document architecture set and repo-truth stack audit into the ordered implementation roadmap.
 
 The Overall Repo-Truth Activation Pack maps the eight-document architecture set to exact current repo owners, symbols, packet equivalents, tests, old paths, implementation slices, and activation dependencies.

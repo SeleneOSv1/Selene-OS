@@ -41,7 +41,7 @@ This plan accounts for:
 | --- | --- | --- |
 | All seven architecture docs | INCLUDED | Listed in Section 0 and indexed in `SELENE_MASTER_ARCHITECTURE_BUILD_SET.md`. |
 | All Function Stack Map stacks A-U | INCLUDED | Section 4 and Section 13. |
-| All 14 Expansion Register stacks | INCLUDED | Section 4 and Section 13. |
+| All 15 Expansion Register stacks | INCLUDED | Section 4 and Section 13. |
 | All major repo engine families | INCLUDED | Section 6 and Section 13 map PH1.X, PH1.WRITE, PH1.M, PH1.E, PH1.D, PH1.W/C/L/TTS/Voice ID, access/gov/policy, ops, media, broadcast, onboarding, storage, clients, adapter, and SimulationExecutor. |
 | All OpenAI capability surfaces | INCLUDED | Section 5 maps every required surface and marks missing/unclear model policy where repo truth is incomplete. |
 | Presentation surfaces | INCLUDED | Section 10 covers text, bullets, tables, reports, email, source chips, image/video/artifact cards, multilingual output, and TTS-safe split. |
@@ -112,6 +112,7 @@ Global flow:
 | Expansion 12. Deterministic Compute / Consensus / Calculation Authority | Calculation and consensus authority. | `ph1comp`, computation fixtures, PH1.COST/QUOTA. | PH1.COMP, PH1.E, SimulationExecutor where official. | Explain/draft, not calculation authority unless validated. | Deterministic calculation/consensus validation. | Official/protected calculations gated. | Tables/reports. | Calculation/consensus refs. | Provider-off deterministic path required. | Required where visible. | MEDIUM | PARTIAL |
 | Expansion 13. Client Route Presentation / App Open / Invite Rendering | App open, route display, invite rendering. | iPhone `SessionShellView.swift`, Desktop runtime bridge, `ph1link`. | PH1.LINK/ONB/runtime, clients render only. | None for routing authority. | Server/runtime route validation. | Invite/access bootstrap. | App-open and invite UI. | Client provenance refs. | Provider not required. | Required. | HIGH | PARTIAL |
 | Expansion 14. Old Compatibility Path Retirement Register | Controlled cleanup after proof. | Adapter `lib.rs`, Stage 8.5 reports, Desktop/iPhone route parsing. | Correct canonical owner per old path. | None. | Replacement proof, active-caller checks. | Prevent wrong-owner authority. | No user-visible regression. | Retirement evidence. | Provider-off/fake as relevant. | Required where visible. | HIGH | ACTIVATION_PACK_REQUIRED |
+| Expansion 15. Conversational Experience + Quick Assist | Natural user guidance, reassurance, clarification, wake acknowledgements, process help, result explanation, weather/time presentation, and friendly TTS-safe phrasing. | Expansion Register stack 15; activation pack maps PH1.WRITE, PH1.X, PH1.W/C/L, PH1.TTS, PH1.E, PH1.M, Desktop/iPhone, and Adapter surfaces. | PH1.WRITE final wording; PH1.X validated intent/state; PH1.W/C/L state; PH1.E facts/tools; PH1.M lawful preferences; clients render/play only. | GPT-5.5 may propose wording, clarification, comfort, options, next-step guidance, formatting, and TTS-safe phrasing. | Selene validates state, scope, evidence, risk, provider governance, and final output. | No access, authority, memory permission, tool permission, protected execution, or mutation may come from GPT-5.5. | Natural display_text/tts_text through PH1.WRITE, never Desktop/Adapter brain. | Provider wording proposal, deterministic state/fact owner refs, PH1.WRITE validation, client provenance. | Required for provider-assisted wording; first slice must be provider-off/fake-provider safe. | Required where visible/audible. | HIGH | ACTIVATION_PACK_REQUIRED |
 
 ## 5. OpenAI Capability to Selene Stack Mapping
 
@@ -131,6 +132,7 @@ Global flow:
 | Image generation | P, Expansion 7 | Generate/edit images after JD approval. | Request validation, safety, provenance, presentation. | No provider call; no fabricated media. | Generated media provenance and safety tests. |
 | Video generation | Q, Expansion 8 | Generate video after JD approval. | Request validation, cost, safety, provenance. | No provider call. | Video provenance/cost/safety proof. |
 | Writing | E, F, PH1.WRITE | Draft/rewrite text. | Final output, evidence limits, tone/format policy. | Deterministic PH1.WRITE or clarification. | WriteOutput refs and leak checks. |
+| Conversational guidance / Quick Assist | Expansion 15, E, F, L | Propose natural guidance, reassurance, clarification, next-step explanations, wake acknowledgements, and TTS-safe phrasing. | State/fact/risk validation, PH1.X where needed, PH1.WRITE final text, no authority or mutation. | No provider attempt; safe deterministic state display or clarification without hardcoded language becoming production law. | Provider-off/fake-provider wording proof and PH1.WRITE output evidence. |
 | Summarization | N, E | Summarize/compress. | Target validation, scope, evidence preservation. | Deterministic summary or clarification where lawful. | Summary target/evidence proof. |
 | Translation | M | Translate/adapt language. | Language policy, fact preservation, TTS compatibility. | Deterministic/unsupported degrade. | Translation validation evidence. |
 | Code assistance | S | Explain/draft/suggest code/instructions. | AGENTS law, repo truth, approved file scope, tests. | No provider attempt if disabled. | Build instruction/test proof. |
@@ -183,6 +185,7 @@ No future build may substitute, downgrade, fallback, or optimize model choice un
 | Persona/Learning | Persona/preferences/emotion/feedback/learning under memory and scope law. | Identity proof, protected authority, hidden manipulation. |
 | Provider Assist/Cost/Prefetch | Provider assist, budget, cost, cache/prefetch, arbitration evidence. | Hidden provider calls, model downgrade, semantic authority. |
 | Deterministic Compute | Calculations, consensus, quantitative authority where deterministic proof is required. | Provider-only math authority for official decisions. |
+| Conversational Experience + Quick Assist | Provider-assisted natural communication only after deterministic state/fact owners provide context and PH1.WRITE approves output. | Access, authority, memory permission, tool permission, protected execution, state mutation, Desktop/Adapter conversational brain. |
 | Desktop/iPhone | Capture, render, playback, app-open display, approved client UI. | Meaning, memory, access, authority, provider calls, protected execution. |
 | Adapter | Transport, provenance, health bridge, evidence carriage. | Semantic decisions, target selection, rewrite, access, authority, memory/tool owner behavior. |
 
@@ -196,11 +199,11 @@ PHASE 2 - Provider Governance Baseline
 PHASE 3 - Wake / Session / Voice ID / Access Posture Baseline
 PHASE 4 - Semantic Meaning Proposal Baseline
 PHASE 5 - PH1.X Deterministic Validation Against Identity/Access
-PHASE 6 - PH1.WRITE Presentation Baseline
+PHASE 6 - PH1.WRITE Presentation + Quick Assist Baseline
 PHASE 7 - Web Search + Source Evidence + Source Chips
 PHASE 8 - Memory Scope + Preference Boundary
 PHASE 9 - Tool/File/Connector Scope
-PHASE 10 - Voice/Wake/Session/Realtime Route Proof
+PHASE 10 - Voice/Wake/Session/Realtime + Quick Assist Route Proof
 PHASE 11 - Visual Recognition + OCR + Media Evidence
 PHASE 12 - Visual Rendering + Image Cards + Media Presentation
 PHASE 13 - Broadcast/Delivery/Reminder/Messaging
@@ -222,15 +225,15 @@ PHASE 24 - Old Compatibility Path Retirement
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | 0 | Confirm docs/index complete. | All architecture docs. | Docs only. | None beyond clean tree. | `docs/SELENE_MASTER_ARCHITECTURE_BUILD_SET.md`. | None. | Docs law only. | Not applicable. | Commit proof. | No. | No deletion. | Missing docs. | CODEX_TESTED |
 | 1 | Produce repo-truth activation packs. | All stacks. | Current repo owners. | Full owner/path/test/evidence map. | `crates`, `apple`, `docs`, migrations, reports. | None unless docs-only analysis. | Identify owners and gaps. | Plan only. | Activation report. | No. | Inventory only. | Repo truth incomplete. | CODEX_TESTED |
-| 2 | Provider governance baseline. | T, Expansion 11. | PH1.D, PH1.PROVIDERCTL, PH1.COST, PH1.QUOTA. | Provider Governance Activation Pack. | `ph1d`, `ph1providerctl`, model policy, adapter route. | Governed/fake only. | Model, budget, privacy, counters. | Mandatory. | Provider preflight/counter refs. | If visible. | No provider bypass deletion. | Missing off/fake proof. | CODEX_TESTED |
-| 3 | Early human-interface permission spine. | K, L, Expansion 3/4/13. | Wake, PH1.C/L, Voice ID, Access/Gov/Policy. | VIA Activation Pack. | `ph1w`, `ph1c`, `ph1l`, `ph1_voice_id`, `ph1access`, clients. | No authority role. | Evidence-only identity, access scope, defaults false. | Provider-independent. | Wake/session/identity/access refs. | Yes for voice/app paths. | No client authority cleanup yet. | Voice ID grants authority. | JD_LIVE where visible |
-| 4 | Semantic proposal baseline. | A, T. | Provider Governance, SemanticInterpreterProvider, PH1.X. | GHCS 0A/0C + model map. | PH1.D/Adapter/PH1.X contracts. | Schema-bound proposal. | Reject malformed/authority-granting output. | Mandatory. | Proposal/provider refs. | If visible. | No phrase path deletion. | Provider bypass. | CODEX_TESTED |
+| 2 | Provider governance baseline. | T, Expansion 11, Expansion 15 dependency. | PH1.D, PH1.PROVIDERCTL, PH1.COST, PH1.QUOTA. | Provider Governance Activation Pack. | `ph1d`, `ph1providerctl`, model policy, adapter route. | Governed/fake only, including future Quick Assist wording provider. | Model, budget, privacy, counters. | Mandatory. | Provider preflight/counter refs. | If visible. | No provider bypass deletion. | Missing off/fake proof. | CODEX_TESTED |
+| 3 | Early human-interface permission spine. | K, L, Expansion 3/4/13/15. | Wake, PH1.C/L, Voice ID, Access/Gov/Policy. | VIA Activation Pack plus Quick Assist Activation Pack before wording implementation. | `ph1w`, `ph1c`, `ph1l`, `ph1_voice_id`, `ph1access`, clients. | Natural wake/session wording proposal only after state owner facts. | Evidence-only identity, access scope, defaults false; Quick Assist cannot grant scope. | Provider-independent for gates; provider-off/fake required for wording. | Wake/session/identity/access refs plus PH1.WRITE refs where wording appears. | Yes for voice/app paths. | No client authority cleanup yet. | Voice ID grants authority or hardcoded wake language expands. | JD_LIVE where visible |
+| 4 | Semantic proposal baseline. | A, T, Expansion 15. | Provider Governance, SemanticInterpreterProvider, PH1.X. | GHCS 0A/0C + model map + Quick Assist Activation Pack. | PH1.D/Adapter/PH1.X contracts. | Schema-bound proposal, including Quick Assist intent/wording proposals. | Reject malformed/authority-granting output; PH1.X validates user/process state before Quick Assist. | Mandatory. | Proposal/provider refs. | If visible. | No phrase path deletion. | Provider bypass. | CODEX_TESTED |
 | 5 | PH1.X deterministic validation. | A, J, K. | PH1.X. | PH1.X activation pack. | `ph1x`, active frame, previous answer, risk ledgers. | Proposal only. | Directive, target, owner, access/risk validation. | Fake semantic provider. | HumanConversationDirective refs. | Required for conversation routes. | Old PH1.X compat retained. | Target/wrong-owner drift. | JD_LIVE where visible |
-| 6 | PH1.WRITE presentation baseline. | E, F, N, M. | PH1.WRITE, PH1.TTS. | PH1.WRITE activation pack. | `ph1write`, `ph1tts`, output contracts. | Draft text only. | Final output validation. | Required where provider-assisted. | WriteOutput/TTS refs. | Required. | No adapter rewrite deletion yet. | Raw provider output leak. | JD_LIVE where visible |
+| 6 | PH1.WRITE presentation and Quick Assist baseline. | E, F, N, M, Expansion 15. | PH1.WRITE, PH1.TTS, PH1.X where state/intent is needed. | PH1.WRITE activation pack + Quick Assist Activation Pack. | `ph1write`, `ph1tts`, output contracts, wake/session/tool presentation surfaces. | Draft natural user guidance, clarification, formatting, and TTS-safe wording. | Final output validation; no access/authority/memory/tool permission/protected execution. | Required where provider-assisted. | WriteOutput/TTS refs plus deterministic state/fact owner refs. | Required. | No adapter rewrite deletion yet. | Raw provider output leak or deterministic language patch. | JD_LIVE where visible |
 | 7 | Web search and source chips. | B, C. | PH1.E, PH1.WRITE. | Web Search Source Evidence pack. | `ph1e`, `web_search_plan`, tools. | Search/synthesis. | Source acceptance, claim verification. | Mandatory. | Source/chip/claim refs. | Required. | No old search path deletion. | Source acceptance missing. | JD_LIVE |
 | 8 | Memory scope and preferences. | G, Expansion 10. | PH1.M, PH1.M/PERSONA/LEARN. | Memory Scope Activation Pack. | `ph1m`, `ph1persona`, `ph1learn`, storage. | Salience/embedding/summarize. | Memory permission/scope/staleness. | Required where provider-assisted. | Memory/preference refs. | Required. | Adapter memory shortcuts retained. | Unknown speaker private memory. | JD_LIVE |
 | 9 | Tool/file/connector scope. | H, I. | PH1.E, Access/Authority, SimulationExecutor. | Tool/File Connector Activation Pack. | `ph1e`, `ph1doc`, blueprints, tools. | Proposal/extraction. | Tool/file permission and prompt-injection defense. | Mandatory. | Tool/file decision refs. | Required. | No tool shortcut deletion. | Provider executes tool. | JD_LIVE |
-| 10 | Voice/realtime route proof. | L, F, K. | Wake/C/L/TTS/Voice ID, Adapter transport, clients render. | Voice Runtime Activation Pack. | Desktop/iPhone, adapter bins, voice contracts. | STT/realtime/TTS where governed. | Transcript admission, TTS approval, no client brain. | Mandatory. | Transcript/voice/session refs. | Required. | No client path deletion. | Desktop/Adapter meaning. | JD_LIVE |
+| 10 | Voice/realtime and Quick Assist route proof. | L, F, K, Expansion 15. | Wake/C/L/TTS/Voice ID, PH1.WRITE, Adapter transport, clients render. | Voice Runtime Activation Pack + Quick Assist Activation Pack. | Desktop/iPhone, adapter bins, voice contracts, PH1.WRITE output contracts. | STT/realtime/TTS and natural wake/listening/session wording where governed. | Transcript admission, state validation, TTS approval, no client brain. | Mandatory. | Transcript/voice/session/write/client refs. | Required. | No client path deletion. | Desktop/Adapter meaning or local conversational brain. | JD_LIVE |
 | 11 | Visual recognition/media evidence. | Expansion 6, H, C. | PH1.VISION, PH1.E. | Visual/Media Activation Pack. | `ph1vision`, `ph1vision_media`, OCR routes. | Vision/OCR. | Media scope, visual evidence validation. | Mandatory. | Vision/OCR refs. | Required. | No visual old path deletion. | Private media leak. | JD_LIVE where visible |
 | 12 | Visual rendering/media presentation. | Expansion 7, C, F. | PH1.WRITE, PH1.E, clients render. | Visual Presentation Pack. | PH1.E image cards, client render state. | Optional captions. | Approved cards only. | Required if provider-assisted. | Visual presentation refs. | Required. | No client rendering cleanup. | Raw URL/image leaks. | JD_LIVE |
 | 13 | Broadcast/delivery/reminder/messaging. | Expansion 1. | PH1.BCAST, PH1.DELIVERY, PH1.REM. | Broadcast/Delivery Activation Pack. | `ph1bcast`, `ph1delivery`, `ph1rem`, blueprints. | Draft text only. | Recipient/timing/delivery validation. | Required if provider-assisted. | Delivery/audit refs. | Required. | Retain old delivery until proof. | Unauthorized delivery. | JD_LIVE |
@@ -243,7 +246,7 @@ PHASE 24 - Old Compatibility Path Retirement
 | 20 | Deterministic compute/consensus/calculation. | R, Expansion 12. | PH1.COMP, PH1.E, SimulationExecutor. | Compute Activation Pack. | `ph1comp`, analytics fixtures. | Explain/draft only unless validated. | Deterministic compute and official/protected split. | Provider-off deterministic baseline. | Calculation refs. | Required where visible. | No compute cleanup. | Provider-only official math. | JD_LIVE where visible |
 | 21 | Video recognition/rendering/generation. | Q, Expansion 8. | Media/vision/artifact, Provider Governance. | Video model only after JD approval. | Safety, cost, provenance. | Mandatory. | Video evidence/provenance refs. | Required. | No video cleanup. | Exact model/policy missing. | JD_LIVE |
 | 22 | Client route presentation/app-open/invite rendering. | Expansion 13. | PH1.LINK/ONB/runtime; clients render only. | None for route authority. | Runtime route validation. | Not applicable. | Client provenance refs. | Required. | No client route cleanup. | Client decides access. | JD_LIVE |
-| 23 | Evaluation/JD live acceptance system. | U. | Eval harness, Storage/Audit, JD live. | Optional graders after governance. | Acceptance matrix and backend agreement. | Required if provider-assisted. | Eval/backend/JD refs. | Required. | No old eval deletion. | Backend evidence missing. | CODEX/JD |
+| 23 | Evaluation/JD live acceptance system. | U, Expansion 15. | Eval harness, Storage/Audit, JD live, PH1.WRITE evidence. | Optional graders after governance. | Acceptance matrix and backend agreement, including Quick Assist visible/audible prompts. | Required if provider-assisted. | Eval/backend/JD refs. | Required. | No old eval deletion. | Backend evidence missing. | CODEX/JD |
 | 24 | Old compatibility path retirement. | Expansion 14. | Correct owner per path. | None. | Replacement proof and active-caller checks. | Provider-off/fake as relevant. | Retirement evidence. | Required where visible. | Only retire after proof. | Active callers remain. | JD_LIVE where visible |
 
 ## 9. Stack-by-Stack Activation Packs Required
@@ -257,6 +260,7 @@ Required activation packs before implementation:
 - Wake/Session/Voice ID/Access Early Product Spine Activation Pack
 - PH1.X Deterministic Validation Activation Pack
 - PH1.WRITE Presentation Activation Pack
+- Conversational Experience + Quick Assist Activation Pack
 - Web Search Source Evidence Activation Pack
 - Memory Scope and Preference Boundary Activation Pack
 - Tool/File/Connector Scope Activation Pack
@@ -295,6 +299,7 @@ Required presentation capabilities:
 - artifact cards;
 - multilingual output;
 - TTS-safe text;
+- GPT-5.5-assisted Quick Assist guidance, reassurance, clarification, wake acknowledgements, failed-step recovery, process help, result explanation, and weather/time presentation through PH1.WRITE validation;
 - protected refusal wording;
 - clarification wording;
 - Desktop/iPhone render-only proof.
@@ -302,6 +307,8 @@ Required presentation capabilities:
 PH1.WRITE must prevent raw provider JSON, source dumps, unsupported claims, source metadata in TTS, protected action overclaim, private-memory leak, stale-topic output, and provider metadata leakage.
 
 Desktop and iPhone may render approved packets, play approved audio, show approved source/media/artifact cards, and capture input. They must not rewrite, route, select targets, decide access, or call providers directly.
+
+User communication, explanation, clarification, comfort, formatting, guidance, wake acknowledgement wording, and weather/time presentation are probabilistic-first wherever lawful. Deterministic gates remain mandatory for identity, access, provider governance, memory permission, source acceptance, tool permission, authority, simulation, audit, protected execution, and state mutation. Deterministic user-language behavior requires JD approval and may not become phrase-patch production law.
 
 ## 11. Evidence and Audit Plan
 
@@ -373,7 +380,7 @@ Old paths are not deleted by this plan. They retire only after canonical replace
 | T Cost / Provider Governance / Observability | 4, 5, 6 | 2, 19 | PARTIAL |
 | U Evaluation / Regression / JD Live Acceptance | 4, 11 | 23 | PARTIAL |
 
-### Expansion Register 1-14
+### Expansion Register 1-15
 
 | Expansion stack | Included section | Phase | Status |
 | --- | --- | --- | --- |
@@ -391,6 +398,7 @@ Old paths are not deleted by this plan. They retire only after canonical replace
 | Deterministic Compute / Consensus / Calculation Authority | 4, 5 | 20 | PARTIAL |
 | Client Route Presentation / App Open / Invite Rendering | 4, 12 | 22 | PARTIAL |
 | Old Compatibility Path Retirement Register | 12, 13 | 24 | ACTIVATION_PACK_REQUIRED |
+| Conversational Experience + Quick Assist | 4, 5, 8, 10, 13 | 2, 3, 4, 6, 10, 23 | ACTIVATION_PACK_REQUIRED |
 
 ### Repo Engine Inventory Families
 

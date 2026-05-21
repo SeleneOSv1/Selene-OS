@@ -159,7 +159,7 @@ Repo areas inspected:
 | Deterministic Compute / Consensus / Calculation Authority Stack | 20 | PH1.COMP, PH1.E, SimulationExecutor | PARTIAL | Compute activation | 4 | Computation packet authority boundary | Provider numeric authority drift. |
 | Client Route Presentation / App Open / Invite Rendering Stack | 22 | Desktop/iPhone session shells and runtime bridge | PARTIAL | Client route activation | 4 | Client render-only route proof | Client route parsing authority drift. |
 | Old Compatibility Path Retirement Register | 24 | Adapter, PH1.X, clients, PH1.D public answer route | PARTIAL | Old path retirement activation | 6 | Active-caller ledger | Destructive cleanup before proof. |
-| Conversational Experience + Quick Assist Stack | 3/5/10 | PH1.WRITE, PH1.X, PH1.W/C/L/TTS, PH1.E, PH1.M, clients, Adapter | ARCHITECTURE_PATCH_REQUIRED | Quick Assist activation | 5 | Provider-assisted wording under PH1.WRITE approval | CONVERSATIONAL_EXPERIENCE_STACK_PATCH_REQUIRED; deterministic user-help wording drift. |
+| Conversational Experience + Quick Assist Stack | 3/5/10 | PH1.WRITE, PH1.X, PH1.W/C/L/TTS, PH1.E, PH1.M, clients, Adapter | OFFICIAL_ARCHITECTURE / ACTIVATION_PACK_REQUIRED | Quick Assist activation | 5 | Provider-assisted wording under PH1.WRITE approval | Official Expansion Register stack #15; Quick Assist Activation Pack required; deterministic user-help wording drift. |
 
 ### Global Semantic Proposal Wiring Gate
 
@@ -246,7 +246,7 @@ Any stack receiving raw user language directly without PH1.X validation must be 
 | Provider Assist / Cost / Arbitration | REQUIRED_DETERMINISTIC_GATE | None for policy | Budget/circuit/model gates | Hidden prefetch or fallback | Evidence required. |
 | Deterministic Compute | DETERMINISTIC_PROTECTED_EXECUTION | Explain/propose formula | PH1.COMP replayable compute | Provider final math | Calculation authority. |
 | Client Route Presentation | MIXED_PROBABILISTIC_WITH_DETERMINISTIC_GATES | Upstream wording only | Cloud-authored route state | Client semantic routing | Client is render-only. |
-| Conversational Experience + Quick Assist | PROBABILISTIC_FIRST | Comfort, guide, clarify, explain, format | State/risk/scope validation + PH1.WRITE approval | Hardcoded wake/weather/help wording | CONVERSATIONAL_EXPERIENCE_STACK_PATCH_REQUIRED. |
+| Conversational Experience + Quick Assist | PROBABILISTIC_FIRST | Comfort, guide, clarify, explain, format | State/risk/scope validation + PH1.WRITE approval | Hardcoded wake/weather/help wording | Official Expansion Register stack #15; Quick Assist Activation Pack required before runtime implementation. |
 | Old Compatibility Retirement | REQUIRED_DETERMINISTIC_GATE | None | Active-caller/proof ledger | Delete because it looks old | No deletion now. |
 
 Detected drift risks from repo truth:
@@ -485,7 +485,7 @@ Missing presentation packet contracts:
 - Exact `WriteOutputPacket` not found; repo equivalents exist.
 - Video card packet not mapped.
 - Artifact card packet needs artifact/export activation.
-- Conversational Experience + Quick Assist is not clearly covered by the eight docs and is marked `CONVERSATIONAL_EXPERIENCE_STACK_PATCH_REQUIRED`.
+- Conversational Experience + Quick Assist is now official in the Expansion Register as stack #15, but still requires a Quick Assist Activation Pack before runtime implementation.
 
 First presentation slices:
 
@@ -775,7 +775,7 @@ Deletion is not authorized by this ledger.
 - Exact approved model for image generation is not named beyond `ImageGenerationProvider`.
 - Exact approved model for video generation requires JD approval and current official provider/model confirmation.
 - File search and eval/grader exact model/function mapping is unclear: mark `MODEL_POLICY_MISSING` for exact activation until policy is explicit.
-- Quick Assist / Conversational Experience is required by JD and not clearly first-class in existing architecture: `CONVERSATIONAL_EXPERIENCE_STACK_PATCH_REQUIRED`.
+- Quick Assist / Conversational Experience is now official in the Expansion Register as stack #15; runtime implementation remains blocked until a Quick Assist Activation Pack defines exact owners, tests, provider-off/fake-provider proof, backend evidence, and JD live scenarios.
 - Existing deterministic phrase/follow-up/weather/time paths are active compatibility surfaces; do not extend.
 - Desktop/iPhone route parsing must be proven render-only before client route expansion.
 - Adapter `lib.rs` is a large compatibility surface; no cleanup is lawful until active-caller and replacement proof.
@@ -804,7 +804,7 @@ Future implementation must stop with `DETERMINISTIC_IMPLEMENTATION_APPROVAL_REQU
 - All eight architecture docs linked/read: yes
 - Every Function Stack Map stack mapped: yes
 - Every Expansion Register stack mapped: yes
-- Conversational Experience + Quick Assist Stack included: yes
+- Conversational Experience + Quick Assist Stack official in Expansion Register and included: yes
 - Global semantic proposal wiring gate included: yes
 - Probabilistic human interaction doctrine matrix included: yes
 - Deterministic implementation approval gate included: yes
