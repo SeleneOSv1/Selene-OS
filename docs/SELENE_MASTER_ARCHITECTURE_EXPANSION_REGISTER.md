@@ -129,6 +129,7 @@ OpenAI may assist only where governed. Selene remains the owner of validation, r
 ## 10. Persona / Preference / Emotion / Feedback / Learning Stack
 
 - Intent: Define safe user adaptation, persona hints, emotional guidance, feedback capture, learning artifacts, preference application, and non-authoritative learning boundaries.
+- Memory lifecycle cross-reference: Detailed memory lifecycle architecture is controlled by `docs/SELENE_PH1M_HUMAN_MEMORY_CORE_MASTER_DESIGN.md`.
 - Repo evidence from the audit / current repo truth: `PH1.PERSONA`, `PH1.EMO.GUIDE`, `PH1.EMO.CORE`, `PH1.FEEDBACK`, `PH1.LEARN`, `PH1.LISTEN`, `PH1.CACHE`, `PH1.KNOW`, `PH1.KG`, `PH1.PATTERN`, and `PH1.RLL` are listed in `docs/SELENE_AUTHORITATIVE_ENGINE_INVENTORY.md`; matching code exists across contracts, engines, and OS files.
 - Current six-document coverage gap: Memory/preference and presentation are covered, but learning, emotion, persona, feedback, and adaptation are not a full stack.
 - Likely canonical owner or owner family: PH1.M, PH1.PERSONA, PH1.EMO.GUIDE, PH1.EMO.CORE, PH1.FEEDBACK, PH1.LEARN, PH1.KNOW, PH1.KG, PH1.WRITE.

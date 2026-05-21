@@ -20,7 +20,7 @@ The governing lane for this activation pack is:
 - normal answer allowed: yes
 - fail-closed required: no, because this is read-only/docs-only activation planning
 
-## 1. Eight-Document Architecture Set Verification
+## 1. Architecture Set Verification
 
 | # | Architecture document | Actual path | Found | Purpose | Read in this run |
 |---|---|---|---|---|---|
@@ -32,6 +32,7 @@ The governing lane for this activation pack is:
 | 6 | Selene Function Stack Architecture - Intent and Enterprise Stack Map | `docs/SELENE_FUNCTION_STACK_ARCHITECTURE_INTENT_AND_STACK_MAP.md` | yes | Enterprise function-stack map connecting OpenAI capabilities to Selene-owned stacks | yes |
 | 7 | Selene Master Architecture Expansion Register | `docs/SELENE_MASTER_ARCHITECTURE_EXPANSION_REGISTER.md` | yes | Repo-truth gap register for missing or underdefined stacks | yes |
 | 8 | Selene Final Overall Architecture Build Plan | `docs/SELENE_FINAL_OVERALL_ARCHITECTURE_BUILD_PLAN.md` | yes | Ordered implementation roadmap from the architecture set and repo-truth audit | yes |
+| 9 | Selene PH1.M Human Memory Core Master Design | `docs/SELENE_PH1M_HUMAN_MEMORY_CORE_MASTER_DESIGN.md` | yes | Dedicated PH1.M governed human-like memory lifecycle master design | yes |
 
 ## 2. Repo-Truth Inspection Method
 
@@ -130,7 +131,7 @@ Repo areas inspected:
 | D. Deep Research Stack | 6/23 | PH1.E, providerctl, model policy | ARCHITECTURE_ONLY/PARTIAL | Deep research activation | 3 | Deep research disabled-by-default proof | Cost/budget/live provider drift. |
 | E. Writing + Transformation Stack | 5 | PH1.WRITE, PH1.X | PARTIAL | PH1.WRITE activation | 4 | One-line target handoff canonical path | Deterministic wording patches; unsupported claim insertion. |
 | F. Presentation + TTS-Safe Output Stack | 5/10 | PH1.WRITE, PH1.TTS, PH1.E, clients | PARTIAL | Presentation activation | 5 | Display/tts/source split baseline | Client wording/fallback leakage; TTS metadata. |
-| G. Memory + Recall + Preference Stack | 8 | PH1.M, PH1.X, access/session | PARTIAL | Memory/access activation | 5 | Access-scoped memory recall baseline | Adapter memory shortcuts; current-vs-recent confusion. |
+| G. Memory + Recall + Preference Stack | 8 | PH1.M, PH1.X, PH1.L, PH1.E, PH1.WRITE, access/session, Adapter/Desktop compatibility surfaces | PARTIAL / MASTER_DESIGN_ADDED | PH1.M Human Memory Core activation | 11 | Build 0 - PH1.M Repo Truth And Gap Audit | Session-search drift; duplicate memory owner; Adapter/Desktop/PH1.X/PH1.E/PH1.WRITE memory shortcuts; current-vs-recent confusion. |
 | H. File QA + Document Stack | 9/17 | PH1.E, PH1.DOC, PH1.EXPORT | PARTIAL | File/document activation | 4 | File evidence admission and injection defense | File text as instruction; private file scope gaps. |
 | I. Tool / Connector / MCP Stack | 9 | PH1.E, `crates/selene_tools`, providerctl | PARTIAL | Tool/connector activation | 5 | Read-only tool proposal validation | Provider tool execution authority drift. |
 | J. Protected Action + Simulation Stack | 7/17/20 | PH1.X, runtime_law, SimulationExecutor, access/gov | PARTIAL | Protected execution activation | 5 | Protected risk fail-closed evidence | Provider/voice/client authority drift. |
@@ -283,7 +284,7 @@ This activation pack plans no runtime deterministic logic. Future deterministic 
 | 5 | PH1.WRITE Presentation Baseline | E, F, M, N, Quick Assist, Celine Persona | PH1.WRITE, PH1.TTS, PH1.E presentation packet, PH1.PERSONA, PH1.EMO, PH1.M, clients | PH1.WRITE activation + Celine Persona + Emotional Presentation activation | 6 | display/tts split; one-line rewrite; style/format; Quick Assist final wording; Celine persona final wording; raw provider output guard | formatted/display/tts/persona evidence | yes/yes if provider wording | yes for visible text/TTS | deterministic formatting/persona helpers retained |
 | 6 | Web Search + Source Evidence + Source Chips | B, D | PH1.E, PH1.SEARCH, web_search_plan, providerctl | PH1.E search activation | 6 | search need directive; provider-off; fake search; source acceptance; claim verification; source chips | accepted-source and claim ledger | yes/yes | yes for user-visible search | no live search by default |
 | 7 | Identity + Access + Authority Baseline | K, J | PH1.W/L/C, Voice ID, access/policy/gov, runtime_execution | VIA activation | 7 | wake boundary; session binding; Voice ID evidence-only; access scope; authority packet; PH1.X access validation; audit posture | unknown/confirmed/protected matrices | no unless wording | yes for identity flows | Voice ID cannot grant authority |
-| 8 | Memory Scope + Preference Boundary | G, Persona/Preference, Celine Persona | PH1.M, access/session, persona/learn/emo/write | Memory activation + Celine Persona + Emotional Presentation activation | 6 | private memory scope; current/recent; preference recall; memory write/update/forget; learning signal boundary; Celine durable tone preference boundary | PH1.M evidence and denial refs plus persona preference refs | yes/yes if provider salience or persona wording | yes for memory/persona UX | Adapter memory shortcuts retained |
+| 8 | PH1.M Human Memory Core Lifecycle + Preference Boundary | G, Persona/Preference, Celine Persona | PH1.M, PH1.X, PH1.L, PH1.E, PH1.WRITE, access/session, persona/learn/emo/write, Desktop/Adapter compatibility surfaces | PH1.M Human Memory Core activation + Celine Persona + Emotional Presentation activation | 11 | repo-truth gap audit; memory core contracts; recall orchestrator; encoding/salience/consolidation; fresh memory continuation; topic memory/graph; natural memory language via PH1.WRITE; deep recall; trust/privacy/conflict/staleness; natural memory UI; human memory eval matrix | PH1.M evidence, recall style, age labels, trust/privacy/conflict/staleness refs, provenance/audit refs, persona preference refs | yes/yes if provider salience/consolidation/persona wording is used | yes for memory/persona UX | Adapter/Desktop/PH1.X/PH1.E/PH1.WRITE memory shortcuts retained until proof |
 | 9 | Tool/File/Connector Scope | H, I | PH1.E, selene_tools, PH1.DOC, providerctl | Tool/file activation | 6 | file admission; injection defense; tool proposal; read-only execution; connector scope; write fail-closed | tool/file/source evidence | yes/yes | visible where tool/file used | provider tool execution forbidden |
 | 10 | Voice/Wake/Session/Realtime Route Proof | L, Quick Assist, Celine Persona | PH1.W/C/L/TTS, Voice ID, PH1.WRITE, PH1.EMO/PERSONA, Adapter http/bin, Desktop/iPhone | Voice route activation + Quick Assist activation + Celine Persona + Emotional Presentation activation | 7 | transcript admission; realtime/off proof; TTS approved text; wake acknowledgement via Quick Assist; Celine wake/persona wording under PH1.WRITE/TTS; barge-in; real app route proof | transcript/session/tts/write/persona/Desktop provenance | yes/yes | yes | local STT/TTS fallback claims retained fail-closed |
 | 11 | Visual Recognition + OCR + Media Evidence | Visual Recognition, H | PH1.VISION, PH1.DOC, PH1.OS OCR | Visual/media activation | 5 | media admission; OCR evidence; object/evidence extraction; injection defense; privacy/data-egress | visual evidence refs | yes/yes | yes where visible | OCR text not instruction |
@@ -540,6 +541,31 @@ First PH1.E slices:
 
 ## 14. PH1.M / Memory / Preference / Learning Activation
 
+Dedicated master design:
+
+- `docs/SELENE_PH1M_HUMAN_MEMORY_CORE_MASTER_DESIGN.md`
+
+Status:
+
+- MASTER_DESIGN_ADDED
+- PARTIAL current repo support
+- ACTIVATION_PACK_REQUIRED
+- NO_RUNTIME_IMPLEMENTATION_YET
+
+Rule:
+
+PH1.M must not be implemented as session search. PH1.M must be Selene's governed human memory brain.
+
+PH1.M is the single memory authority. Other engines may request or consume memory evidence, but must not own memory:
+
+- PH1.X owns live context.
+- PH1.L owns sleep/wake boundaries.
+- PH1.E owns tools/search/files.
+- PH1.WRITE owns memory wording.
+- Desktop renders only.
+- Adapter transports only.
+- Storage files/audits.
+
 Mapped files:
 
 - `crates/selene_kernel_contracts/src/ph1m.rs`
@@ -557,6 +583,29 @@ Mapped symbols:
 - `MemoryTurnInput`
 - `MemoryTurnOutput`
 
+Required PH1.M lifecycle modules from the master design:
+
+- Recall Orchestrator
+- Encoding Engine
+- Salience Engine
+- Consolidation Engine
+- Fresh Memory
+- Day Memory
+- Topic Memory
+- Topic Graph
+- Deep Recall
+- Permanent Governed Memory
+- Continuation Gate
+- Memory Posture Engine
+- Freshness Gradient
+- Conflict + Staleness Checker
+- Memory Trust Engine
+- Memory Privacy Gate
+- No-Record Handler
+- Memory Evidence Packet
+- Memory Use Policy
+- Human Memory Eval Matrix
+
 Activation gaps:
 
 - Access-scoped memory recall must consume identity/access posture.
@@ -564,16 +613,42 @@ Activation gaps:
 - Preference/persona/emotion/learning must not create private personalization without identity/access scope.
 - Celine persona must use PH1.M only for lawful durable tone preferences and must not infer private emotional state as memory without permission.
 - Memory write/update/forget must obey memory law and audit.
+- Current memory support is PARTIAL and must be expanded into the full governed human memory lifecycle: notice, encode, consolidate, connect, recall, continue, update, forget/decay.
+- Fresh memory, day memory, topic memory, topic graph, deep recall, permanent governed memory, conflict/staleness, trust, privacy, no-record honesty, natural memory UI, and human memory evals require activation.
 - Adapter `ph1m_actor_recent_recall_assertion` is a compatibility risk.
+- Any memory logic in Desktop, Adapter, PH1.X, PH1.E, or PH1.WRITE must be classified as wrong-owner or compatibility until proven otherwise.
 
-First PH1.M slices:
+Future activation pack:
 
-1. Unknown-speaker private memory denial.
-2. Confirmed-access scoped memory recall.
-3. Current/recent/durable boundary proof.
-4. Preference application with memory law.
-5. Learning/feedback signal boundary.
-6. Celine durable persona preference permission boundary.
+PH1.M Human Memory Core Activation Pack
+
+Specific repo-truth questions for that activation pack:
+
+- what current PH1.M contracts exist?
+- what current recent recall exists?
+- what memory evidence packets exist?
+- what storage digest rows exist?
+- what adapter recall routes exist?
+- what duplicate recall paths exist?
+- what stale memory paths exist?
+- what current tests exist?
+- what current provenance/audit records exist?
+
+PH1.M Build 0-10 sequence:
+
+1. Build 0 - PH1.M Repo Truth And Gap Audit
+2. Build 1 - PH1.M Memory Core Contracts
+3. Build 2 - PH1.M Recall Orchestrator
+4. Build 3 - Encoding + Salience + Consolidation
+5. Build 4 - Fresh Memory Continuation
+6. Build 5 - Topic Memory + Topic Graph
+7. Build 6 - Natural Memory Language via PH1.WRITE
+8. Build 7 - Deep Recall
+9. Build 8 - Trust, Privacy, Conflict, And Staleness
+10. Build 9 - Natural Memory UI
+11. Build 10 - Human Memory Eval Matrix
+
+First PH1.M activation slices must start with repo-truth inventory and central contracts, not a new disconnected fresh-memory subsystem.
 
 ## 15. Visual / Media / Artifact Activation
 
@@ -788,6 +863,7 @@ Deletion is not authorized by this ledger.
 - Quick Assist / Conversational Experience is now official in the Expansion Register as stack #15; runtime implementation remains blocked until a Quick Assist Activation Pack defines exact owners, tests, provider-off/fake-provider proof, backend evidence, and JD live scenarios.
 - Celine Persona + Emotional Presentation is now official in the Expansion Register as stack #16; runtime implementation remains blocked until a Celine Persona + Emotional Presentation Activation Pack defines PH1.WRITE, PH1.PERSONA, PH1.EMO/CORE/GUIDE, PH1.FEEDBACK, PH1.LEARN, PH1.M, PH1.TTS, Provider Governance, Desktop/iPhone render-only proof, Adapter transport-only proof, provider-off/fake-provider proof, backend evidence, and JD live scenarios.
 - Existing deterministic phrase/follow-up/weather/time paths are active compatibility surfaces; do not extend.
+- Any memory logic in Desktop, Adapter, PH1.X, PH1.E, or PH1.WRITE must be classified as wrong-owner or compatibility until PH1.M proves the governed memory packet path.
 - Desktop/iPhone route parsing must be proven render-only before client route expansion.
 - Adapter `lib.rs` is a large compatibility surface; no cleanup is lawful until active-caller and replacement proof.
 - Provider-off and fake-provider proof must be stack-level, not only global.
@@ -805,18 +881,19 @@ Future implementation must stop with `DETERMINISTIC_IMPLEMENTATION_APPROVAL_REQU
 6. Build Celine Persona + Emotional Presentation Through PH1.WRITE
 7. Build PH1.WRITE Display / TTS / Source Presentation Baseline
 8. Build Live One-Line Follow-Up Routing To PH1.X / PH1.WRITE
-9. Build PH1.M Access-Scoped Memory Boundary
-10. Build PH1.E Source Acceptance / Source Chips / Provider-Off Search Proof
+9. Build PH1.M Human Memory Core Activation Pack
+10. Build PH1.M Access-Scoped Fresh Memory Continuation Boundary
 
 ## 23. Final Activation Pack Status
 
 - This is an activation document: yes
 - Runtime code changed: no
-- All eight architecture docs linked/read: yes
+- All required architecture docs linked/read, including PH1.M Human Memory Core Master Design: yes
 - Every Function Stack Map stack mapped: yes
 - Every Expansion Register stack mapped: yes
 - Conversational Experience + Quick Assist Stack official in Expansion Register and included: yes
 - Celine Persona + Emotional Presentation Stack official in Expansion Register and included: yes
+- PH1.M Human Memory Core Master Design added and activation-pack-gated: yes
 - Global semantic proposal wiring gate included: yes
 - Probabilistic human interaction doctrine matrix included: yes
 - Deterministic implementation approval gate included: yes
