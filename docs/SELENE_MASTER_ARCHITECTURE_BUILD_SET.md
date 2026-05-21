@@ -20,6 +20,8 @@ The Expansion Register captures active or likely Selene function stacks discover
 
 The Expansion Register also includes the Conversational Experience + Quick Assist Stack, which makes GPT-5.5-assisted user guidance, clarification, reassurance, wake acknowledgements, and natural presentation an official cross-cutting architecture stack.
 
+The Expansion Register also includes the Celine Persona + Emotional Presentation Stack, which defines Selene’s official probabilistic-first personality layer using GPT-5.5/OpenAI for rich wording while PH1.WRITE, PH1.EMO, PH1.PERSONA, PH1.M, PH1.TTS, and Provider Governance keep the personality safe, scoped, and auditable.
+
 The Final Overall Architecture Build Plan converts the seven-document architecture set and repo-truth stack audit into the ordered implementation roadmap.
 
 The Overall Repo-Truth Activation Pack maps the eight-document architecture set to exact current repo owners, symbols, packet equivalents, tests, old paths, implementation slices, and activation dependencies.
