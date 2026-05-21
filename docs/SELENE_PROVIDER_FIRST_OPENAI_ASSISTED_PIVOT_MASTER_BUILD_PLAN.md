@@ -11,6 +11,10 @@ Move Selene toward OpenAI-assisted probabilistic intelligence behind Selene-owne
 
 ---
 
+# Master Architecture Build Set
+
+This document is part of the Selene Master Architecture Build Set. Read it together with the [full architecture index](SELENE_MASTER_ARCHITECTURE_BUILD_SET.md). AGENTS.md remains controlling execution law.
+
 # Related Provider-First Reference Documents
 
 These documents must be read together as one provider-first reference set:
