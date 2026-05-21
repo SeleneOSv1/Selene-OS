@@ -12,6 +12,9 @@ These documents are one architecture set. They must be read together. None overr
 4. [Selene Global Human Conversation Spine Master Architecture](SELENE_GLOBAL_HUMAN_CONVERSATION_SPINE_MASTER_ARCHITECTURE.md)
 5. [Selene Identity + Access + Authority Spine Master Architecture](SELENE_IDENTITY_ACCESS_AUTHORITY_SPINE_MASTER_ARCHITECTURE.md)
 6. [Selene Function Stack Architecture — Intent and Enterprise Stack Map](SELENE_FUNCTION_STACK_ARCHITECTURE_INTENT_AND_STACK_MAP.md)
+7. [Selene Master Architecture Expansion Register](SELENE_MASTER_ARCHITECTURE_EXPANSION_REGISTER.md)
+
+The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
 ## Hierarchy
 
@@ -21,6 +24,7 @@ These documents are one architecture set. They must be read together. None overr
 - Selene Global Human Conversation Spine Master Architecture = global runtime semantic spine.
 - Selene Identity + Access + Authority Spine Master Architecture = wake/session/identity/access/authority/simulation permission spine.
 - Selene Function Stack Architecture — Intent and Enterprise Stack Map = enterprise function-stack map connecting OpenAI capabilities to Selene-owned stacks.
+- Selene Master Architecture Expansion Register = repo-truth gap register for missing, underdefined, or not-yet-connected Selene function stacks.
 
 ## Future Expansion
 
