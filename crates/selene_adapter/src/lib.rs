@@ -79,8 +79,7 @@ use selene_kernel_contracts::ph1d::{
     Ph1dProviderErrorEvidence, Ph1dProviderInputPayloadKind, Ph1dProviderRouteClass,
     Ph1dProviderStatus, Ph1dProviderTask, Ph1dProviderTransportEvidence,
     Ph1dProviderValidationStatus, Ph1dRequest, Ph1dResponse, PolicyContextRef, RequestId,
-    SafetyTier, SchemaHash,
-    PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
+    SafetyTier, SchemaHash, PH1D_PROVIDER_NORMALIZED_OUTPUT_SCHEMA_HASH_V1,
 };
 use selene_kernel_contracts::ph1e::{
     CacheStatus, SearchImagePacket, ToolCatalogRef, ToolName, ToolResponse, ToolResult, ToolStatus,
@@ -4828,10 +4827,13 @@ impl EnvPh1dLiveAdapter {
             })?;
         let output_language = output_language_from_content_type(req.input_content_type.as_deref());
         let payload = openai_llm_interpret_payload(&self.model_id, input, output_language.as_str());
-        let payload_text = serde_json::to_string(&payload).map_err(|_| Ph1dProviderExecuteFailure {
-            error: Ph1dProviderAdapterError::terminal("ph1d openai payload encode failed".to_string()),
-            evidence: None,
-        })?;
+        let payload_text =
+            serde_json::to_string(&payload).map_err(|_| Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::terminal(
+                    "ph1d openai payload encode failed".to_string(),
+                ),
+                evidence: None,
+            })?;
         let start = Instant::now();
         let timeout_seconds = ((self.timeout_ms / 1000).max(1)).to_string();
         let mut child = Command::new("sh")
@@ -4863,13 +4865,15 @@ impl EnvPh1dLiveAdapter {
                     evidence: None,
                 })?;
         }
-        let output = child.wait_with_output().map_err(|err| Ph1dProviderExecuteFailure {
-            error: Ph1dProviderAdapterError::retryable(format!(
-                "ph1d openai provider wait failed: {}",
-                err.kind()
-            )),
-            evidence: None,
-        })?;
+        let output = child
+            .wait_with_output()
+            .map_err(|err| Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::retryable(format!(
+                    "ph1d openai provider wait failed: {}",
+                    err.kind()
+                )),
+                evidence: None,
+            })?;
         let latency_ms = start.elapsed().as_millis().min(120_000) as u32;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -4901,30 +4905,34 @@ impl EnvPh1dLiveAdapter {
             });
         }
         let root: serde_json::Value =
-            serde_json::from_str(response_body.as_str()).map_err(|_| Ph1dProviderExecuteFailure {
-                error: Ph1dProviderAdapterError::retryable(
-                    "ph1d openai response json_parse".to_string(),
-                ),
-                evidence: None,
+            serde_json::from_str(response_body.as_str()).map_err(|_| {
+                Ph1dProviderExecuteFailure {
+                    error: Ph1dProviderAdapterError::retryable(
+                        "ph1d openai response json_parse".to_string(),
+                    ),
+                    evidence: None,
+                }
             })?;
         let provider_call_id = root
             .get("id")
             .and_then(|value| value.as_str())
             .map(|value| truncate_ascii(value.trim(), 128))
             .filter(|value| !value.is_empty());
-        let answer_text = extract_openai_output_text(&root).ok_or_else(|| Ph1dProviderExecuteFailure {
-            error: Ph1dProviderAdapterError::retryable(
-                "ph1d openai response empty_output".to_string(),
-            ),
-            evidence: None,
-        })?;
-        let normalized_json =
-            ph1d_chat_json_from_provider_text(&answer_text).map_err(|err| Ph1dProviderExecuteFailure {
+        let answer_text =
+            extract_openai_output_text(&root).ok_or_else(|| Ph1dProviderExecuteFailure {
+                error: Ph1dProviderAdapterError::retryable(
+                    "ph1d openai response empty_output".to_string(),
+                ),
+                evidence: None,
+            })?;
+        let normalized_json = ph1d_chat_json_from_provider_text(&answer_text).map_err(|err| {
+            Ph1dProviderExecuteFailure {
                 error: Ph1dProviderAdapterError::terminal(format!(
                     "ph1d openai normalized output rejected: {err}"
                 )),
                 evidence: None,
-            })?;
+            }
+        })?;
         Ph1dProviderCallResponse::v1(
             req.correlation_id,
             req.turn_id,
@@ -5079,7 +5087,8 @@ fn sanitize_openai_error_message(value: &str, prompt_to_redact: Option<&str>) ->
 
 fn safe_provider_endpoint(value: &str) -> String {
     let without_query = value.split_once('?').map(|(left, _)| left).unwrap_or(value);
-    sanitize_provider_error_token(without_query, 256).unwrap_or_else(|| "openai_responses".to_string())
+    sanitize_provider_error_token(without_query, 256)
+        .unwrap_or_else(|| "openai_responses".to_string())
 }
 
 fn sanitize_output_language_tag(value: &str) -> String {
@@ -5098,6 +5107,24 @@ fn output_language_from_content_type(value: Option<&str>) -> String {
         .unwrap_or_else(|| "en".to_string())
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct OpenAiResponsesParameterCompatibility {
+    temperature: Option<f64>,
+}
+
+fn openai_responses_parameter_compatibility(
+    model_id: &str,
+) -> OpenAiResponsesParameterCompatibility {
+    let normalized_model = model_id.trim();
+    if normalized_model == SLICE3C_APPROVED_PH1D_MODEL_ID {
+        OpenAiResponsesParameterCompatibility { temperature: None }
+    } else {
+        OpenAiResponsesParameterCompatibility {
+            temperature: Some(0.2),
+        }
+    }
+}
+
 fn openai_llm_interpret_payload(
     model_id: &str,
     user_input: &str,
@@ -5108,7 +5135,7 @@ fn openai_llm_interpret_payload(
     } else {
         "Answer in English unless the user explicitly requested another language. Preserve Chinese, quoted, or technical terms exactly when the user used them."
     };
-    serde_json::json!({
+    let mut payload = serde_json::json!({
         "model": model_id,
         "input": [
             {
@@ -5120,9 +5147,14 @@ fn openai_llm_interpret_payload(
                 "content": user_input
             }
         ],
-        "temperature": 0.2,
         "max_output_tokens": 700
-    })
+    });
+    if let Some(temperature) = openai_responses_parameter_compatibility(model_id).temperature {
+        if let Some(payload_object) = payload.as_object_mut() {
+            payload_object.insert("temperature".to_string(), serde_json::json!(temperature));
+        }
+    }
+    payload
 }
 
 fn extract_openai_output_text(root: &serde_json::Value) -> Option<String> {
@@ -8465,18 +8497,17 @@ impl AdapterRuntime {
             user_text,
             ph1d_language_tag_for_build1c(language_packet).as_str(),
         )?;
-        let provider_response =
-            adapter
-                .execute_with_error_evidence(&provider_request)
-                .map_err(|failure| {
-                    if let Some(evidence) = failure.evidence {
-                        let _ = self.record_ph1d_provider_error_evidence(evidence);
-                    }
-                    format!(
-                        "provider_call_failed retryable={} {}",
-                        failure.error.retryable, failure.error.message
-                    )
-                })?;
+        let provider_response = adapter
+            .execute_with_error_evidence(&provider_request)
+            .map_err(|failure| {
+                if let Some(evidence) = failure.evidence {
+                    let _ = self.record_ph1d_provider_error_evidence(evidence);
+                }
+                format!(
+                    "provider_call_failed retryable={} {}",
+                    failure.error.retryable, failure.error.message
+                )
+            })?;
         if provider_response.provider_status != Ph1dProviderStatus::Ok
             || provider_response.validation_status != Ph1dProviderValidationStatus::SchemaOk
         {
@@ -42102,6 +42133,34 @@ mod tests {
         spawn_openai_responses_endpoint_for_public_answer_sequence(vec![output_text])
     }
 
+    fn spawn_openai_responses_endpoint_capturing_request(
+        output_text: &'static str,
+    ) -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("mock OpenAI capture listener bind");
+        let address = listener.local_addr().expect("mock OpenAI capture address");
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request_buffer = [0_u8; 8192];
+            let bytes_read = stream.read(&mut request_buffer).unwrap_or(0);
+            let request_text = String::from_utf8_lossy(&request_buffer[..bytes_read]).to_string();
+            let _ = tx.send(request_text);
+            let body = serde_json::json!({ "output_text": output_text }).to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        (format!("http://{address}/v1/responses"), rx)
+    }
+
     fn spawn_openai_error_endpoint_for_public_answer_test(status: u16, body: String) -> String {
         use std::io::{Read, Write};
 
@@ -42171,6 +42230,133 @@ mod tests {
     }
 
     #[test]
+    fn slice3g_gpt55_responses_request_omits_temperature() {
+        let (endpoint, request_rx) = spawn_openai_responses_endpoint_capturing_request(
+            "Good safeguards keep outside help logged, bounded, and separate from business actions.",
+        );
+        with_isolated_device_vault(
+            "slice3g-gpt55-omits-temperature",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_MODEL", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 305_001;
+                req.turn_id = 305_101;
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some(
+                    "Explain why provider governance matters in one short paragraph.".to_string(),
+                );
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("mocked PH1.D route should complete");
+                assert_eq!(out.status, "ok");
+                assert_eq!(
+                    out.response_text,
+                    "Good safeguards keep outside help logged, bounded, and separate from business actions."
+                );
+
+                let request_text = request_rx
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .expect("mock OpenAI server should capture request");
+                let body = request_text
+                    .split_once("\r\n\r\n")
+                    .map(|(_, body)| body.trim())
+                    .expect("captured HTTP request should include JSON body");
+                let payload: serde_json::Value =
+                    serde_json::from_str(body).expect("captured payload should parse");
+                assert_eq!(
+                    payload.get("model").and_then(|value| value.as_str()),
+                    Some(SLICE3C_APPROVED_PH1D_MODEL_ID)
+                );
+                assert!(payload.get("temperature").is_none());
+                assert_eq!(
+                    payload
+                        .get("max_output_tokens")
+                        .and_then(|value| value.as_u64()),
+                    Some(700)
+                );
+                let input = payload
+                    .get("input")
+                    .and_then(|value| value.as_array())
+                    .expect("Responses payload should include input messages");
+                assert_eq!(input.len(), 2);
+                assert_eq!(
+                    input[1].get("content").and_then(|value| value.as_str()),
+                    Some("Explain why provider governance matters in one short paragraph.")
+                );
+            },
+        );
+    }
+
+    #[test]
+    fn slice3g_gpt55_model_pin_preserved_without_fallback() {
+        let payload = openai_llm_interpret_payload(
+            SLICE3C_APPROVED_PH1D_MODEL_ID,
+            "Can you give me one line?",
+            "en",
+        );
+        assert_eq!(
+            payload.get("model").and_then(|value| value.as_str()),
+            Some(SLICE3C_APPROVED_PH1D_MODEL_ID)
+        );
+        assert!(payload.get("temperature").is_none());
+        let payload_text = payload.to_string();
+        assert!(!payload_text.contains("gpt-4o-mini"));
+        assert!(!payload_text.contains("nano"));
+    }
+
+    #[test]
+    fn slice3g_unsupported_parameter_error_evidence_still_sanitized() {
+        let body = serde_json::json!({
+            "error": {
+                "message": "Unsupported parameter: 'top_p' is not supported with this model.",
+                "type": "invalid_request_error",
+                "code": null
+            },
+            "request_id": "req_slice3g_unsupported_parameter"
+        })
+        .to_string();
+        let (out, evidence_rows) = run_public_prompt_with_mock_error(
+            400,
+            body,
+            "Explain why provider governance matters in one short paragraph.",
+        );
+
+        assert_eq!(out.status, "ok");
+        assert_eq!(evidence_rows.len(), 1);
+        let evidence = &evidence_rows[0];
+        assert_eq!(evidence.model_sent, SLICE3C_APPROVED_PH1D_MODEL_ID);
+        assert_eq!(evidence.http_status, 400);
+        assert_eq!(
+            evidence.error_type.as_deref(),
+            Some("invalid_request_error")
+        );
+        assert_eq!(
+            evidence.provider_request_id.as_deref(),
+            Some("req_slice3g_unsupported_parameter")
+        );
+        let message = evidence.sanitized_message.as_deref().unwrap_or_default();
+        assert!(message.contains("Unsupported parameter"));
+        assert!(message.contains("top_p"));
+        assert!(!evidence.raw_body_retained);
+        assert!(!evidence.secret_exposed);
+        assert!(!evidence.prompt_exposed);
+        assert!(!evidence.protected_execution_authorized);
+        assert!(out.response_text.find("Unsupported parameter").is_none());
+    }
+
+    #[test]
     fn slice3c_error_http_400_json_is_captured_safely() {
         let body = serde_json::json!({
             "error": {
@@ -42195,9 +42381,15 @@ mod tests {
         assert_eq!(evidence.endpoint.rsplit('/').next(), Some("responses"));
         assert_eq!(evidence.model_sent, SLICE3C_APPROVED_PH1D_MODEL_ID);
         assert_eq!(evidence.http_status, 400);
-        assert_eq!(evidence.error_type.as_deref(), Some("invalid_request_error"));
+        assert_eq!(
+            evidence.error_type.as_deref(),
+            Some("invalid_request_error")
+        );
         assert_eq!(evidence.error_code.as_deref(), Some("model_not_found"));
-        assert_eq!(evidence.provider_request_id.as_deref(), Some("req_slice3c_400"));
+        assert_eq!(
+            evidence.provider_request_id.as_deref(),
+            Some("req_slice3c_400")
+        );
         assert_eq!(evidence.provider_attempt_count, 1);
         assert_eq!(evidence.provider_network_dispatch_count, 1);
         assert!(!evidence.raw_body_retained);
@@ -42217,10 +42409,7 @@ mod tests {
     #[test]
     fn slice3c_error_http_400_malformed_body_is_captured_without_raw_body() {
         let prompt = "Provider governance matters because it keeps provider output bounded.";
-        let body = format!(
-            "not json sk-test-secret {} repeated diagnostics",
-            prompt
-        );
+        let body = format!("not json sk-test-secret {} repeated diagnostics", prompt);
         let (out, evidence_rows) = run_public_prompt_with_mock_error(400, body, prompt);
 
         assert_eq!(out.status, "ok");
