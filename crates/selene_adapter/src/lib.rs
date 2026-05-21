@@ -4918,13 +4918,29 @@ impl EnvPh1dLiveAdapter {
             .and_then(|value| value.as_str())
             .map(|value| truncate_ascii(value.trim(), 128))
             .filter(|value| !value.is_empty());
-        let answer_text =
-            extract_openai_output_text(&root).ok_or_else(|| Ph1dProviderExecuteFailure {
-                error: Ph1dProviderAdapterError::retryable(
-                    "ph1d openai response empty_output".to_string(),
-                ),
-                evidence: None,
-            })?;
+        let answer_text = match extract_openai_output_text(&root) {
+            Some(answer_text) => answer_text,
+            None => {
+                let details = openai_empty_output_details_from_body_shape(&root);
+                let evidence = self
+                    .build_error_evidence_for_openai_response(
+                        req,
+                        http_status.unwrap_or(200),
+                        details.clone(),
+                    )
+                    .ok();
+                return Err(Ph1dProviderExecuteFailure {
+                    error: Ph1dProviderAdapterError::retryable(format!(
+                        "ph1d openai response empty_output shape={}",
+                        details
+                            .sanitized_message
+                            .as_deref()
+                            .unwrap_or("shape_unavailable")
+                    )),
+                    evidence,
+                });
+            }
+        };
         let normalized_json = ph1d_chat_json_from_provider_text(&answer_text).map_err(|err| {
             Ph1dProviderExecuteFailure {
                 error: Ph1dProviderAdapterError::terminal(format!(
@@ -5166,17 +5182,230 @@ fn extract_openai_output_text(root: &serde_json::Value) -> Option<String> {
         .or_else(|| {
             let mut parts = Vec::new();
             for item in root.get("output")?.as_array()? {
-                for content in item.get("content")?.as_array()? {
-                    if let Some(text) = content.get("text").and_then(|value| value.as_str()) {
-                        let trimmed = text.trim();
-                        if !trimmed.is_empty() {
-                            parts.push(trimmed.to_string());
-                        }
-                    }
-                }
+                collect_openai_output_item_text(item, &mut parts);
             }
             (!parts.is_empty()).then(|| parts.join("\n"))
         })
+}
+
+fn collect_openai_output_item_text(item: &serde_json::Value, parts: &mut Vec<String>) {
+    if is_openai_non_text_output_item(item) {
+        return;
+    }
+    if let Some(text) = item.get("output_text").and_then(openai_text_candidate) {
+        parts.push(text);
+    }
+    if let Some(text) = item.get("text").and_then(openai_text_candidate) {
+        parts.push(text);
+    }
+    match item.get("content") {
+        Some(serde_json::Value::Array(content_items)) => {
+            for content in content_items {
+                collect_openai_content_text(content, parts);
+            }
+        }
+        Some(content) => {
+            if let Some(text) = openai_text_candidate(content) {
+                parts.push(text);
+            }
+        }
+        None => {}
+    }
+}
+
+fn collect_openai_content_text(content: &serde_json::Value, parts: &mut Vec<String>) {
+    if is_openai_non_text_content_item(content) {
+        return;
+    }
+    if let Some(text) = openai_text_candidate(content) {
+        parts.push(text);
+        return;
+    }
+    if let Some(text) = content.get("output_text").and_then(openai_text_candidate) {
+        parts.push(text);
+    }
+    if let Some(text) = content.get("text").and_then(openai_text_candidate) {
+        parts.push(text);
+    }
+    if let Some(text) = content.get("content").and_then(openai_text_candidate) {
+        parts.push(text);
+    }
+}
+
+fn openai_text_candidate(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => normalized_openai_text(text),
+        serde_json::Value::Object(obj) => obj
+            .get("value")
+            .and_then(|value| value.as_str())
+            .and_then(normalized_openai_text)
+            .or_else(|| {
+                obj.get("text")
+                    .and_then(|value| value.as_str())
+                    .and_then(normalized_openai_text)
+            }),
+        _ => None,
+    }
+}
+
+fn normalized_openai_text(text: &str) -> Option<String> {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn is_openai_non_text_output_item(item: &serde_json::Value) -> bool {
+    matches!(
+        item.get("type").and_then(|value| value.as_str()),
+        Some("reasoning")
+            | Some("function_call")
+            | Some("tool_call")
+            | Some("web_search_call")
+            | Some("file_search_call")
+            | Some("computer_call")
+            | Some("code_interpreter_call")
+            | Some("image_generation_call")
+    )
+}
+
+fn is_openai_non_text_content_item(content: &serde_json::Value) -> bool {
+    matches!(
+        content.get("type").and_then(|value| value.as_str()),
+        Some("reasoning")
+            | Some("summary_text")
+            | Some("function_call")
+            | Some("tool_call")
+            | Some("input_text")
+            | Some("input_image")
+            | Some("refusal")
+            | Some("annotation")
+    )
+}
+
+fn openai_empty_output_details_from_body_shape(
+    root: &serde_json::Value,
+) -> Ph1dProviderOpenAiErrorDetails {
+    Ph1dProviderOpenAiErrorDetails {
+        error_type: Some("accepted_response_empty_output".to_string()),
+        error_code: Some("empty_output".to_string()),
+        sanitized_message: Some(openai_response_body_shape_summary(root)),
+        provider_request_id: root
+            .get("id")
+            .and_then(|value| value.as_str())
+            .and_then(|value| sanitize_provider_error_token(value, 128)),
+    }
+}
+
+fn openai_response_body_shape_summary(root: &serde_json::Value) -> String {
+    let mut fields = Vec::new();
+    match root {
+        serde_json::Value::Object(obj) => {
+            fields.push(format!("root_keys={}", json_key_shape_summary(obj, 12)));
+            if let Some(status) = root
+                .get("status")
+                .and_then(|value| value.as_str())
+                .and_then(|value| sanitize_provider_error_token(value, 48))
+            {
+                fields.push(format!("status={status}"));
+            }
+            if let Some(output) = root.get("output").and_then(|value| value.as_array()) {
+                fields.push(format!("output_len={}", output.len().min(99)));
+                let mut output_types = Vec::new();
+                let mut content_shapes = Vec::new();
+                let mut summary_shapes = Vec::new();
+                for item in output.iter().take(8) {
+                    output_types.push(openai_json_type_token(item));
+                    match item.get("content") {
+                        Some(serde_json::Value::Array(content_items)) => {
+                            content_shapes.push(format!(
+                                "array:{}:{}",
+                                content_items.len().min(99),
+                                content_items
+                                    .iter()
+                                    .take(8)
+                                    .map(openai_json_type_token)
+                                    .collect::<Vec<_>>()
+                                    .join("|")
+                            ));
+                        }
+                        Some(value) => {
+                            content_shapes.push(openai_json_value_kind(value).to_string())
+                        }
+                        None => content_shapes.push("missing".to_string()),
+                    }
+                    if let Some(summary_items) =
+                        item.get("summary").and_then(|value| value.as_array())
+                    {
+                        summary_shapes.push(format!(
+                            "array:{}:{}",
+                            summary_items.len().min(99),
+                            summary_items
+                                .iter()
+                                .take(8)
+                                .map(openai_json_type_token)
+                                .collect::<Vec<_>>()
+                                .join("|")
+                        ));
+                    }
+                }
+                if !output_types.is_empty() {
+                    fields.push(format!("output_types={}", output_types.join("|")));
+                }
+                if !content_shapes.is_empty() {
+                    fields.push(format!("content_shapes={}", content_shapes.join("|")));
+                }
+                if !summary_shapes.is_empty() {
+                    fields.push(format!("summary_shapes={}", summary_shapes.join("|")));
+                }
+            } else {
+                fields.push(format!(
+                    "output_kind={}",
+                    root.get("output")
+                        .map(openai_json_value_kind)
+                        .unwrap_or("missing")
+                ));
+            }
+        }
+        other => fields.push(format!("root_kind={}", openai_json_value_kind(other))),
+    }
+    truncate_ascii(&fields.join(";"), PH1D_PROVIDER_ERROR_MESSAGE_MAX_CHARS)
+}
+
+fn json_key_shape_summary(
+    obj: &serde_json::Map<String, serde_json::Value>,
+    max_keys: usize,
+) -> String {
+    let mut keys = obj
+        .keys()
+        .take(max_keys)
+        .filter_map(|key| sanitize_provider_error_token(key, 32))
+        .collect::<Vec<_>>();
+    if obj.len() > max_keys {
+        keys.push("more".to_string());
+    }
+    keys.join("|")
+}
+
+fn openai_json_type_token(value: &serde_json::Value) -> String {
+    value
+        .get("type")
+        .and_then(|value| value.as_str())
+        .and_then(|value| sanitize_provider_error_token(value, 48))
+        .unwrap_or_else(|| openai_json_value_kind(value).to_string())
+}
+
+fn openai_json_value_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }
 
 fn ph1d_chat_json_from_provider_text(text: &str) -> Result<String, String> {
@@ -42161,6 +42390,28 @@ mod tests {
         (format!("http://{address}/v1/responses"), rx)
     }
 
+    fn spawn_openai_responses_endpoint_with_body(body: String) -> String {
+        use std::io::{Read, Write};
+
+        let listener =
+            std::net::TcpListener::bind("127.0.0.1:0").expect("mock OpenAI body listener bind");
+        let address = listener.local_addr().expect("mock OpenAI body address");
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request_buffer = [0_u8; 4096];
+            let _ = stream.read(&mut request_buffer);
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(response.as_bytes());
+        });
+        format!("http://{address}/v1/responses")
+    }
+
     fn spawn_openai_error_endpoint_for_public_answer_test(status: u16, body: String) -> String {
         use std::io::{Read, Write};
 
@@ -42227,6 +42478,284 @@ mod tests {
                 (out, evidence_rows)
             },
         )
+    }
+
+    #[test]
+    fn slice3h_extracts_top_level_output_text() {
+        let root = serde_json::json!({
+            "id": "resp_slice3h_top",
+            "output_text": "Top-level text survives."
+        });
+
+        assert_eq!(
+            extract_openai_output_text(&root).as_deref(),
+            Some("Top-level text survives.")
+        );
+    }
+
+    #[test]
+    fn slice3h_extracts_output_content_text_shapes() {
+        let root = serde_json::json!({
+            "id": "resp_slice3h_nested",
+            "output": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": {
+                                "value": "Nested value text survives."
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        assert_eq!(
+            extract_openai_output_text(&root).as_deref(),
+            Some("Nested value text survives.")
+        );
+    }
+
+    #[test]
+    fn slice3h_joins_multiple_output_text_chunks_in_order() {
+        let root = serde_json::json!({
+            "output": [
+                {
+                    "type": "message",
+                    "content": [
+                        { "type": "output_text", "text": "First sentence." },
+                        { "type": "output_text", "content": "Second sentence." }
+                    ]
+                }
+            ]
+        });
+
+        assert_eq!(
+            extract_openai_output_text(&root).as_deref(),
+            Some("First sentence.\nSecond sentence.")
+        );
+    }
+
+    #[test]
+    fn slice3h_ignores_non_text_items_and_extracts_assistant_text() {
+        let root = serde_json::json!({
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        { "type": "summary_text", "text": "Internal reasoning must not leak." }
+                    ]
+                },
+                {
+                    "type": "function_call",
+                    "name": "unsafe_tool",
+                    "arguments": "{}"
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        { "type": "output_text", "text": "Only assistant text survives." }
+                    ]
+                }
+            ]
+        });
+
+        let extracted = extract_openai_output_text(&root).unwrap_or_default();
+        assert_eq!(extracted, "Only assistant text survives.");
+        assert!(extracted.find("Internal reasoning").is_none());
+        assert!(extracted.find("unsafe_tool").is_none());
+    }
+
+    #[test]
+    fn slice3h_empty_output_shape_summary_is_bounded_and_sanitized() {
+        let root = serde_json::json!({
+            "id": "resp_slice3h_empty",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        {
+                            "type": "summary_text",
+                            "text": "sk-test-secret and private prompt text must not appear"
+                        }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "content": [
+                        { "type": "input_text", "text": "private prompt text" }
+                    ]
+                }
+            ]
+        });
+
+        assert!(extract_openai_output_text(&root).is_none());
+        let details = openai_empty_output_details_from_body_shape(&root);
+        let message = details.sanitized_message.as_deref().unwrap_or_default();
+        assert_eq!(
+            details.error_type.as_deref(),
+            Some("accepted_response_empty_output")
+        );
+        assert_eq!(details.error_code.as_deref(), Some("empty_output"));
+        assert!(message.len() <= PH1D_PROVIDER_ERROR_MESSAGE_MAX_CHARS);
+        assert!(message.find("sk-test-secret").is_none());
+        assert!(message.find("private prompt text").is_none());
+        assert!(message.find("output_len").is_some());
+        assert!(message.find("summary_text").is_some());
+    }
+
+    #[test]
+    fn slice3h_live_route_extracts_nested_responses_text_and_preserves_evidence() {
+        let body = serde_json::json!({
+            "id": "resp_slice3h_live_nested",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        { "type": "summary_text", "text": "Internal reasoning must stay private." }
+                    ]
+                },
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": {
+                                "value": "Good safeguards keep outside help logged, bounded, and separate from business actions."
+                            }
+                        }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+        let endpoint = spawn_openai_responses_endpoint_with_body(body);
+        with_isolated_device_vault(
+            "slice3h-live-route-nested-extraction",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_MODEL", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 306_001;
+                req.turn_id = 306_101;
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some(
+                    "Explain why provider governance matters in one short paragraph.".to_string(),
+                );
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("mocked nested Responses body should complete");
+                assert_eq!(out.status, "ok");
+                assert_eq!(
+                    out.response_text,
+                    "Good safeguards keep outside help logged, bounded, and separate from business actions."
+                );
+                assert!(out.response_text.find("Internal reasoning").is_none());
+
+                let evidence_rows = runtime.ph1d_provider_transport_evidence_snapshot();
+                assert_eq!(evidence_rows.len(), 1);
+                let evidence = &evidence_rows[0];
+                assert_eq!(evidence.provider_id, "openai");
+                assert_eq!(evidence.expected_model_id, SLICE3C_APPROVED_PH1D_MODEL_ID);
+                assert_eq!(evidence.actual_model_id, SLICE3C_APPROVED_PH1D_MODEL_ID);
+                assert_eq!(evidence.transport_owner, "Adapter");
+                assert_eq!(evidence.semantic_owner, "PH1.X");
+                assert_eq!(evidence.output_owner, "PH1.WRITE");
+                assert!(!evidence.raw_provider_output_exposed);
+                assert!(!evidence.protected_execution_authorized);
+            },
+        );
+    }
+
+    #[test]
+    fn slice3h_empty_accepted_response_safe_degrades_with_shape_evidence() {
+        let prompt = "Explain provider governance without exposing private body text.";
+        let body = serde_json::json!({
+            "id": "resp_slice3h_empty_live",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "summary": [
+                        { "type": "summary_text", "text": "sk-test-secret private body text" }
+                    ]
+                }
+            ]
+        })
+        .to_string();
+        let endpoint = spawn_openai_responses_endpoint_with_body(body);
+        with_isolated_device_vault(
+            "slice3h-empty-accepted-shape-evidence",
+            &[("openai_api_key", "test_openai_key")],
+            &[
+                ("SELENE_PH1D_LIVE_ADAPTER_ENABLED", "true"),
+                ("SELENE_PH1D_LIVE_PROVIDER_ID", "openai"),
+                ("SELENE_PH1D_LIVE_MODEL_ID", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_MODEL", SLICE3C_APPROVED_PH1D_MODEL_ID),
+                ("OPENAI_RESPONSES_URL", endpoint.as_str()),
+                ("SELENE_CURL_CONNECT_TIMEOUT", "1"),
+                ("SELENE_CURL_MAX_TIME", "5"),
+            ],
+            || {
+                let runtime = AdapterRuntime::default();
+                let mut req = base_request();
+                req.correlation_id = 306_002;
+                req.turn_id = 306_102;
+                req.app_platform = "DESKTOP".to_string();
+                req.audio_capture_ref = None;
+                req.user_text_final = Some(prompt.to_string());
+
+                let out = runtime
+                    .run_voice_turn(req)
+                    .expect("empty accepted response should safe-degrade");
+                assert_eq!(out.status, "ok");
+                assert!(out.response_text.find("sk-test-secret").is_none());
+                assert!(out.response_text.find("private body text").is_none());
+                assert!(out.response_text.find(prompt).is_none());
+
+                let evidence_rows = runtime.ph1d_provider_error_evidence_snapshot();
+                assert_eq!(evidence_rows.len(), 1);
+                let evidence = &evidence_rows[0];
+                assert_eq!(evidence.provider_id, "openai");
+                assert_eq!(evidence.http_status, 200);
+                assert_eq!(evidence.model_sent, SLICE3C_APPROVED_PH1D_MODEL_ID);
+                assert_eq!(
+                    evidence.error_type.as_deref(),
+                    Some("accepted_response_empty_output")
+                );
+                assert_eq!(evidence.error_code.as_deref(), Some("empty_output"));
+                assert_eq!(
+                    evidence.provider_request_id.as_deref(),
+                    Some("resp_slice3h_empty_live")
+                );
+                let message = evidence.sanitized_message.as_deref().unwrap_or_default();
+                assert!(message.find("output_len").is_some());
+                assert!(message.find("sk-test-secret").is_none());
+                assert!(message.find("private body text").is_none());
+                assert!(message.find(prompt).is_none());
+                assert!(!evidence.raw_body_retained);
+                assert!(!evidence.secret_exposed);
+                assert!(!evidence.prompt_exposed);
+                assert!(!evidence.protected_execution_authorized);
+            },
+        );
     }
 
     #[test]
