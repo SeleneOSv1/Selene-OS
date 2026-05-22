@@ -24,6 +24,7 @@ These documents are one architecture set. They must be read together. None overr
 16. [Selene Full Duplex and Barge-In Enterprise Voice Architecture](SELENE_FULL_DUPLEX_AND_BARGE_IN_ENTERPRISE_VOICE_ARCHITECTURE.md)
 17. [Selene Voice Identity + Human Presence Master Design](SELENE_VOICE_IDENTITY_HUMAN_PRESENCE_MASTER_DESIGN.md)
 18. [Selene PH1.N — Universal NLP Intelligence + Meaning Unravelling Master Design](SELENE_PH1N_UNIVERSAL_NLP_INTELLIGENCE_MEANING_UNRAVELLING_MASTER_DESIGN.md)
+19. [Selene PH1.D — Provider-Governed LLM Proposal Gateway Master Design](SELENE_PH1D_PROVIDER_GOVERNED_LLM_PROPOSAL_GATEWAY_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -65,6 +66,10 @@ This design connects especially to the Universal Language Intelligence + Voice C
 
 This document is a deep NLP/meaning-unravelling stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
+This design connects especially to the Global Human Conversation Spine, Global Request Decision Lattice, PH1.N Meaning Unravelling, PH1.WRITE Human Presentation, Search Intelligence Lane, PH1.M Human Memory Core, Universal Language Intelligence, Voice Identity + Human Presence, Full Duplex/Barge-In, Celine Persona, Quick Assist, Identity + Access + Authority Spine, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
+
+This document is a deep PH1.D / LLM Provider Gateway stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -85,6 +90,7 @@ This document is a deep NLP/meaning-unravelling stack upgrade and is pending the
 - Selene Full Duplex and Barge-In Enterprise Voice Architecture = dedicated PH1.K / PH1.C / PH1.L / PH1.X / PH1.LANG / Voice ID / PH1.TTS / Desktop / Adapter master design for full-duplex voice, barge-in, interruption control, TTS cancellation, topic merge/recovery, stale provider rejection, cross-device interruption, multi-speaker/language-aware voice, and protected fail-closed governance.
 - Selene Voice Identity + Human Presence Master Design = dedicated PH1.VOICE.ID / speaker evidence / human presence master design for known, unknown, probable, changed, background, provisional, local/cloud, speaker-language, onboarding, and protected-fail-closed voice identity posture.
 - Selene PH1.N — Universal NLP Intelligence + Meaning Unravelling Master Design = dedicated PH1.N master design for OpenAI-assisted NLP candidate generation, broken-language normalization, slang understanding, spelling/phonetic repair, entity and slot candidates, ambiguity detection, protected-risk hints, and clarification proposals before PH1.X Request Decision Lattice validation.
+- Selene PH1.D — Provider-Governed LLM Proposal Gateway Master Design = dedicated PH1.D / Provider Governance / OpenAI structured proposal gateway master design for schema-bound, evidence-wrapped, model-policy-governed, cost-governed, owner-targeted LLM proposals across semantic meaning, NLP, writing, search, tools, memory, language, voice/realtime, persona, visual/media, and Codex instruction support.
 
 ## Future Expansion
 
