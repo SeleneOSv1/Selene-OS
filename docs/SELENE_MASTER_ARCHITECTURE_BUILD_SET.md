@@ -22,6 +22,7 @@ These documents are one architecture set. They must be read together. None overr
 14. [Selene Global Request Decision Lattice + 5-Lane Business Risk View Master Design](SELENE_GLOBAL_REQUEST_DECISION_LATTICE_MASTER_DESIGN.md)
 15. [Selene Universal Language Intelligence + Voice Capture Master Design](SELENE_UNIVERSAL_LANGUAGE_INTELLIGENCE_VOICE_CAPTURE_MASTER_DESIGN.md)
 16. [Selene Full Duplex and Barge-In Enterprise Voice Architecture](SELENE_FULL_DUPLEX_AND_BARGE_IN_ENTERPRISE_VOICE_ARCHITECTURE.md)
+17. [Selene Voice Identity + Human Presence Master Design](SELENE_VOICE_IDENTITY_HUMAN_PRESENCE_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -55,6 +56,10 @@ This design connects especially to the Universal Language Intelligence + Voice C
 
 This document is a deep voice-interaction stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
+This design connects especially to the Identity + Access + Authority Spine, Universal Language Intelligence + Voice Capture Master Design, Full Duplex and Barge-In Enterprise Voice Architecture, Global Request Decision Lattice, Celine Persona, Quick Assist, PH1.M Human Memory Core, PH1.WRITE Human Presentation, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
+
+This document is a deep Voice Identity and Human Presence stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -73,6 +78,7 @@ This document is a deep voice-interaction stack upgrade and is pending the next 
 - Selene Global Request Decision Lattice + 5-Lane Business Risk View Master Design = dedicated PH1.X/global request routing master design for classifying every user request by intent, data scope, freshness, action effect, risk, required gates, stack owner, split/clarification need, audit requirement, and PH1.WRITE presentation mode.
 - Selene Universal Language Intelligence + Voice Capture Master Design = dedicated PH1.C / PH1.LANG / PH1.N / STT / TTS / transcript-understanding master design for OpenAI-assisted multilingual, broken-language, phonetic, entity, accent, meeting, live voice, speaker-language, and TTS-safe human understanding.
 - Selene Full Duplex and Barge-In Enterprise Voice Architecture = dedicated PH1.K / PH1.C / PH1.L / PH1.X / PH1.LANG / Voice ID / PH1.TTS / Desktop / Adapter master design for full-duplex voice, barge-in, interruption control, TTS cancellation, topic merge/recovery, stale provider rejection, cross-device interruption, multi-speaker/language-aware voice, and protected fail-closed governance.
+- Selene Voice Identity + Human Presence Master Design = dedicated PH1.VOICE.ID / speaker evidence / human presence master design for known, unknown, probable, changed, background, provisional, local/cloud, speaker-language, onboarding, and protected-fail-closed voice identity posture.
 
 ## Future Expansion
 
