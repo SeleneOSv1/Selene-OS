@@ -20,6 +20,7 @@ These documents are one architecture set. They must be read together. None overr
 12. [Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design](SELENE_SEARCH_INTELLIGENCE_LANE_REVISED_ENTERPRISE_WEBSEARCH_MASTER_DESIGN.md)
 13. [Selene PH1.WRITE — Structured Writing + Human Presentation Master Design](SELENE_PH1WRITE_STRUCTURED_WRITING_HUMAN_PRESENTATION_MASTER_DESIGN.md)
 14. [Selene Global Request Decision Lattice + 5-Lane Business Risk View Master Design](SELENE_GLOBAL_REQUEST_DECISION_LATTICE_MASTER_DESIGN.md)
+15. [Selene Universal Language Intelligence + Voice Capture Master Design](SELENE_UNIVERSAL_LANGUAGE_INTELLIGENCE_VOICE_CAPTURE_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -45,6 +46,10 @@ This design connects especially to the Global Human Conversation Spine, Identity
 
 The Selene Global Request Decision Lattice + 5-Lane Business Risk View Master Design is a deep routing-system upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
+This design connects especially to the Global Human Conversation Spine, Global Request Decision Lattice, PH1.WRITE Human Presentation Master Design, Celine Persona, Quick Assist, Identity + Access + Authority Spine, PH1.M Human Memory Core, Search Intelligence Lane, Provider Governance, and Desktop/Adapter boundary architecture.
+
+The Selene Universal Language Intelligence + Voice Capture Master Design is a deep language/voice stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -61,6 +66,7 @@ The Selene Global Request Decision Lattice + 5-Lane Business Risk View Master De
 - Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design = dedicated PH1.E/Search Intelligence master design for OpenAI-assisted, best-available, source-backed, visual, human-quality public websearch and search presentation.
 - Selene PH1.WRITE — Structured Writing + Human Presentation Master Design = dedicated PH1.WRITE master design for OpenAI-assisted human writing, structured presentation, Celine/Quick Assist tone, rich rendering contracts, TTS-safe output, Adapter preservation, and Desktop/iPhone render-ready answers.
 - Selene Global Request Decision Lattice + 5-Lane Business Risk View Master Design = dedicated PH1.X/global request routing master design for classifying every user request by intent, data scope, freshness, action effect, risk, required gates, stack owner, split/clarification need, audit requirement, and PH1.WRITE presentation mode.
+- Selene Universal Language Intelligence + Voice Capture Master Design = dedicated PH1.C / PH1.LANG / PH1.N / STT / TTS / transcript-understanding master design for OpenAI-assisted multilingual, broken-language, phonetic, entity, accent, meeting, live voice, speaker-language, and TTS-safe human understanding.
 
 ## Future Expansion
 
