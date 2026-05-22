@@ -17,6 +17,7 @@ These documents are one architecture set. They must be read together. None overr
 9. [Selene Overall Repo-Truth Activation Pack](SELENE_OVERALL_REPO_TRUTH_ACTIVATION_PACK.md)
 10. [Selene PH1.M Human Memory Core Master Design](SELENE_PH1M_HUMAN_MEMORY_CORE_MASTER_DESIGN.md)
 11. [Selene OS Architecture Alignment and Obsolete Surface Retirement Plan](SELENE_OS_ARCHITECTURE_ALIGNMENT_AND_OBSOLETE_SURFACE_RETIREMENT_PLAN.md)
+12. [Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design](SELENE_SEARCH_INTELLIGENCE_LANE_REVISED_ENTERPRISE_WEBSEARCH_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -32,6 +33,8 @@ The PH1.M Human Memory Core Master Design upgrades memory from simple recall/ses
 
 The Selene OS Architecture Alignment and Obsolete Surface Retirement Plan maps the current Selene OS runtime layer to the new provider-first, probabilistic-first, stack-based architecture and identifies stale or conflicting OS surfaces for later proof-based retirement.
 
+The Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design is a deep stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -45,6 +48,7 @@ The Selene OS Architecture Alignment and Obsolete Surface Retirement Plan maps t
 - Selene Overall Repo-Truth Activation Pack = exact current-repo owner, symbol, packet-equivalent, test, old-path, slice-count, and activation-dependency map for the master architecture source set.
 - Selene PH1.M Human Memory Core Master Design = dedicated governed human-like memory lifecycle master design for PH1.M.
 - Selene OS Architecture Alignment and Obsolete Surface Retirement Plan = OS runtime alignment and proof-based obsolete-surface retirement roadmap.
+- Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design = dedicated PH1.E/Search Intelligence master design for OpenAI-assisted, best-available, source-backed, visual, human-quality public websearch and search presentation.
 
 ## Future Expansion
 
