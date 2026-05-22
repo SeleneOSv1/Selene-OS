@@ -161,7 +161,7 @@ Repo areas inspected:
 | Client Route Presentation / App Open / Invite Rendering Stack | 22 | Desktop/iPhone session shells and runtime bridge | PARTIAL | Client route activation | 4 | Client render-only route proof | Client route parsing authority drift. |
 | Old Compatibility Path Retirement Register | 24 | Adapter, PH1.X, clients, PH1.D public answer route | PARTIAL | Old path retirement activation | 6 | Active-caller ledger | Destructive cleanup before proof. |
 | Conversational Experience + Quick Assist Stack | 3/5/10 | PH1.WRITE, PH1.X, PH1.W/C/L/TTS, PH1.E, PH1.M, clients, Adapter | OFFICIAL_ARCHITECTURE / ACTIVATION_PACK_REQUIRED | Quick Assist activation | 5 | Provider-assisted wording under PH1.WRITE approval | Official Expansion Register stack #15; Quick Assist Activation Pack required; deterministic user-help wording drift. |
-| Celine Persona + Emotional Presentation Stack | 3/5/10/18 | PH1.WRITE, PH1.PERSONA, PH1.EMO, PH1.EMO.CORE, PH1.EMO.GUIDE, PH1.FEEDBACK, PH1.LEARN, PH1.M, PH1.TTS, Provider Governance, clients, Adapter | OFFICIAL_ARCHITECTURE_STACK / ACTIVATION_PACK_REQUIRED / NO_RUNTIME_IMPLEMENTATION_YET | Celine Persona + Emotional Presentation activation | 5 | Persona wording under PH1.WRITE and PH1.TTS approval | Persona safety bypass; private personalization without memory/access scope; Desktop/Adapter persona brain. |
+| Selene Emotional Intelligence + Relationship Presence Stack | 3/5/10/18 | PH1.WRITE, PH1.PERSONA, PH1.EMO, PH1.EMO.CORE, PH1.EMO.GUIDE, PH1.FEEDBACK, PH1.LEARN, PH1.M, PH1.TTS, Provider Governance, clients, Adapter | OFFICIAL_ARCHITECTURE_STACK / ACTIVATION_PACK_REQUIRED / NO_RUNTIME_IMPLEMENTATION_YET | Selene Emotional Intelligence + Relationship Presence activation | 5 | Persona wording under PH1.WRITE and PH1.TTS approval | Persona safety bypass; private personalization without memory/access scope; Desktop/Adapter persona brain. |
 
 ### Global Semantic Proposal Wiring Gate
 
@@ -206,7 +206,7 @@ Default wiring for user-facing stacks:
 | Deterministic Compute | yes for task meaning; deterministic for calculation | calculate, compare, consensus | compute/evidence refs | PH1.COMP | Provider calculation cannot be official. |
 | Client Route Presentation | no for rendering; yes for help wording | app_open_help, invite_help | client provenance, route refs | Client render-only + PH1.WRITE | Client route parsing cannot grant authority. |
 | Conversational Experience + Quick Assist | yes | quick_clarify, reassure, next_step_help, failed_step_recovery | state refs, owner facts, write/tts policy | PH1.WRITE after relevant owner facts | Hardcoded wake/help/weather wording is drift risk. |
-| Celine Persona + Emotional Presentation | yes | persona_tone, emotional_presentation, wake_greeting_personality, serious_mode | state/risk refs, persona policy, memory/access refs where personalized, write/tts policy | PH1.WRITE with PH1.EMO/PH1.PERSONA/PH1.M assist surfaces | Persona wording cannot grant authority, approve access, mutate state, or bypass PH1.WRITE/PH1.X/memory law. |
+| Selene Emotional Intelligence + Relationship Presence | yes | persona_tone, emotional_presentation, wake_greeting_personality, serious_mode | state/risk refs, persona policy, memory/access refs where personalized, write/tts policy | PH1.WRITE with PH1.EMO/PH1.PERSONA/PH1.M assist surfaces | Persona wording cannot grant authority, approve access, mutate state, or bypass PH1.WRITE/PH1.X/memory law. |
 | Old Compatibility Retirement | no | cleanup planning only | active caller/proof refs | Correct canonical owners | Deletion only after proof. |
 
 Any stack receiving raw user language directly without PH1.X validation must be marked `GLOBAL_SEMANTIC_SPINE_BYPASS_RISK`.
@@ -250,7 +250,7 @@ Any stack receiving raw user language directly without PH1.X validation must be 
 | Deterministic Compute | DETERMINISTIC_PROTECTED_EXECUTION | Explain/propose formula | PH1.COMP replayable compute | Provider final math | Calculation authority. |
 | Client Route Presentation | MIXED_PROBABILISTIC_WITH_DETERMINISTIC_GATES | Upstream wording only | Cloud-authored route state | Client semantic routing | Client is render-only. |
 | Conversational Experience + Quick Assist | PROBABILISTIC_FIRST | Comfort, guide, clarify, explain, format | State/risk/scope validation + PH1.WRITE approval | Hardcoded wake/weather/help wording | Official Expansion Register stack #15; Quick Assist Activation Pack required before runtime implementation. |
-| Celine Persona + Emotional Presentation | PROBABILISTIC_FIRST | Persona wording, humor, warmth, emotional phrasing, tone continuity | Persona policy, PH1.WRITE/PH1.TTS approval, PH1.M memory law, access/protected-risk gates | Hardcoded personality phrase lists or Desktop/Adapter persona brain | Official Expansion Register stack #16; Celine Persona + Emotional Presentation Activation Pack required before runtime implementation. |
+| Selene Emotional Intelligence + Relationship Presence | PROBABILISTIC_FIRST | Persona wording, humor, warmth, emotional phrasing, tone continuity | Persona policy, PH1.WRITE/PH1.TTS approval, PH1.M memory law, access/protected-risk gates | Hardcoded personality phrase lists or Desktop/Adapter persona brain | Official Expansion Register stack #16; Selene Emotional Intelligence + Relationship Presence Activation Pack required before runtime implementation. |
 | Old Compatibility Retirement | REQUIRED_DETERMINISTIC_GATE | None | Active-caller/proof ledger | Delete because it looks old | No deletion now. |
 
 Detected drift risks from repo truth:
@@ -279,14 +279,14 @@ This activation pack plans no runtime deterministic logic. Future deterministic 
 | 0 | Architecture Docs and Index Complete | Docs/index only | `docs/*ARCHITECTURE*`, index docs | none | 1 | Docs publication proof | clean tree, docs-only diff | no | no | no old paths deleted |
 | 1 | Repo-Truth Activation Pack | All stacks | all owner files in this pack | this pack | 1 | Overall repo-truth activation | all stacks mapped, no-skip proof | no | no | unknowns marked |
 | 2 | Provider Governance Baseline | T, Provider Assist | `ph1providerctl.rs`, `ph1d.rs`, model policy, Adapter provider route | Provider governance activation | 5 | provider-off counters; fake provider; model policy evidence; malformed rejection; data-egress shell | zero attempts/dispatches when off, model evidence, fake provider non-billable | yes/yes | no | fallback and live provider routes retained |
-| 3 | Semantic Meaning Proposal Baseline | A, Quick Assist, Celine Persona | PH1.X, PH1.D, providerctl, Adapter, PH1.WRITE/PERSONA/EMO references | GHCS activation + Celine Persona + Emotional Presentation activation | 4 | semantic packet skeleton; fake semantic provider; malformed proposal rejection; Quick Assist and Celine wording proposal shells | schema rejection, owner candidate not authority, persona proposal cannot grant access/authority | yes/yes | no | PH1.X/Adapter deterministic helpers retained |
+| 3 | Semantic Meaning Proposal Baseline | A, Quick Assist, Selene Emotional Intelligence | PH1.X, PH1.D, providerctl, Adapter, PH1.WRITE/PERSONA/EMO references | GHCS activation + Selene Emotional Intelligence + Relationship Presence activation | 4 | semantic packet skeleton; fake semantic provider; malformed proposal rejection; Quick Assist and Selene wording proposal shells | schema rejection, owner candidate not authority, persona proposal cannot grant access/authority | yes/yes | no | PH1.X/Adapter deterministic helpers retained |
 | 4 | PH1.X Deterministic Validation Baseline | A, J, K | PH1.X contracts/engines/OS, runtime_session_foundation | GHCS + VIA activation | 5 | proposal-to-directive; target ledger; protected risk; wrong-owner reject; active/recent boundary | HumanConversationDirective evidence | yes/yes | targeted when visible | phrase patches retained but blocked from expansion |
-| 5 | PH1.WRITE Presentation Baseline | E, F, M, N, Quick Assist, Celine Persona | PH1.WRITE, PH1.TTS, PH1.E presentation packet, PH1.PERSONA, PH1.EMO, PH1.M, clients | PH1.WRITE activation + Celine Persona + Emotional Presentation activation | 6 | display/tts split; one-line rewrite; style/format; Quick Assist final wording; Celine persona final wording; raw provider output guard | formatted/display/tts/persona evidence | yes/yes if provider wording | yes for visible text/TTS | deterministic formatting/persona helpers retained |
+| 5 | PH1.WRITE Presentation Baseline | E, F, M, N, Quick Assist, Selene Emotional Intelligence | PH1.WRITE, PH1.TTS, PH1.E presentation packet, PH1.PERSONA, PH1.EMO, PH1.M, clients | PH1.WRITE activation + Selene Emotional Intelligence + Relationship Presence activation | 6 | display/tts split; one-line rewrite; style/format; Quick Assist final wording; Selene emotional presentation final wording; raw provider output guard | formatted/display/tts/persona evidence | yes/yes if provider wording | yes for visible text/TTS | deterministic formatting/persona helpers retained |
 | 6 | Web Search + Source Evidence + Source Chips | B, D | PH1.E, PH1.SEARCH, web_search_plan, providerctl | PH1.E search activation | 6 | search need directive; provider-off; fake search; source acceptance; claim verification; source chips | accepted-source and claim ledger | yes/yes | yes for user-visible search | no live search by default |
 | 7 | Identity + Access + Authority Baseline | K, J | PH1.W/L/C, Voice ID, access/policy/gov, runtime_execution | VIA activation | 7 | wake boundary; session binding; Voice ID evidence-only; access scope; authority packet; PH1.X access validation; audit posture | unknown/confirmed/protected matrices | no unless wording | yes for identity flows | Voice ID cannot grant authority |
-| 8 | PH1.M Human Memory Core Lifecycle + Preference Boundary | G, Persona/Preference, Celine Persona | PH1.M, PH1.X, PH1.L, PH1.E, PH1.WRITE, access/session, persona/learn/emo/write, Desktop/Adapter compatibility surfaces | PH1.M Human Memory Core activation + Celine Persona + Emotional Presentation activation | 11 | repo-truth gap audit; memory core contracts; recall orchestrator; encoding/salience/consolidation; fresh memory continuation; topic memory/graph; natural memory language via PH1.WRITE; deep recall; trust/privacy/conflict/staleness; natural memory UI; human memory eval matrix | PH1.M evidence, recall style, age labels, trust/privacy/conflict/staleness refs, provenance/audit refs, persona preference refs | yes/yes if provider salience/consolidation/persona wording is used | yes for memory/persona UX | Adapter/Desktop/PH1.X/PH1.E/PH1.WRITE memory shortcuts retained until proof |
+| 8 | PH1.M Human Memory Core Lifecycle + Preference Boundary | G, Persona/Preference, Selene Emotional Intelligence | PH1.M, PH1.X, PH1.L, PH1.E, PH1.WRITE, access/session, persona/learn/emo/write, Desktop/Adapter compatibility surfaces | PH1.M Human Memory Core activation + Selene Emotional Intelligence + Relationship Presence activation | 11 | repo-truth gap audit; memory core contracts; recall orchestrator; encoding/salience/consolidation; fresh memory continuation; topic memory/graph; natural memory language via PH1.WRITE; deep recall; trust/privacy/conflict/staleness; natural memory UI; human memory eval matrix | PH1.M evidence, recall style, age labels, trust/privacy/conflict/staleness refs, provenance/audit refs, persona preference refs | yes/yes if provider salience/consolidation/persona wording is used | yes for memory/persona UX | Adapter/Desktop/PH1.X/PH1.E/PH1.WRITE memory shortcuts retained until proof |
 | 9 | Tool/File/Connector Scope | H, I | PH1.E, selene_tools, PH1.DOC, providerctl | Tool/file activation | 6 | file admission; injection defense; tool proposal; read-only execution; connector scope; write fail-closed | tool/file/source evidence | yes/yes | visible where tool/file used | provider tool execution forbidden |
-| 10 | Voice/Wake/Session/Realtime Route Proof | L, Quick Assist, Celine Persona | PH1.W/C/L/TTS, Voice ID, PH1.WRITE, PH1.EMO/PERSONA, Adapter http/bin, Desktop/iPhone | Voice route activation + Quick Assist activation + Celine Persona + Emotional Presentation activation | 7 | transcript admission; realtime/off proof; TTS approved text; wake acknowledgement via Quick Assist; Celine wake/persona wording under PH1.WRITE/TTS; barge-in; real app route proof | transcript/session/tts/write/persona/Desktop provenance | yes/yes | yes | local STT/TTS fallback claims retained fail-closed |
+| 10 | Voice/Wake/Session/Realtime Route Proof | L, Quick Assist, Selene Emotional Intelligence | PH1.W/C/L/TTS, Voice ID, PH1.WRITE, PH1.EMO/PERSONA, Adapter http/bin, Desktop/iPhone | Voice route activation + Quick Assist activation + Selene Emotional Intelligence + Relationship Presence activation | 7 | transcript admission; realtime/off proof; TTS approved text; wake acknowledgement via Quick Assist; Selene wake/emotional presentation wording under PH1.WRITE/TTS; barge-in; real app route proof | transcript/session/tts/write/persona/Desktop provenance | yes/yes | yes | local STT/TTS fallback claims retained fail-closed |
 | 11 | Visual Recognition + OCR + Media Evidence | Visual Recognition, H | PH1.VISION, PH1.DOC, PH1.OS OCR | Visual/media activation | 5 | media admission; OCR evidence; object/evidence extraction; injection defense; privacy/data-egress | visual evidence refs | yes/yes | yes where visible | OCR text not instruction |
 | 12 | Visual Rendering + Image Cards + Media Presentation | C, Visual Rendering | PH1.E, PH1.WRITE, Desktop/iPhone | Media presentation activation | 4 | image source-page proof; display eligibility; client render-only; TTS visual summary | image-card evidence | yes/yes | yes | clients cannot choose images |
 | 13 | Broadcast/Delivery/Reminder/Messaging | Broadcast/Delivery | PH1.BCAST, DELIVERY, REM, Access, Simulation | Broadcast activation | 4 | draft; schedule; send side-effect gate; delivery audit | delivery/reminder evidence | maybe/yes for wording | yes | no side effects without authority |
@@ -294,7 +294,7 @@ This activation pack plans no runtime deterministic logic. Future deterministic 
 | 15 | Master Access Template/Admin/Tenant/Governance | Access Template, Tenant/Gov/Quota | PH1.ACCESS, POLICY, GOV, TENANT, QUOTA | Access/admin activation | 6 | role/template schema; overlay; tenant binding; quota; admin presentation; authority fail-closed | access lineage/evidence | yes for explanation | yes | no admin shortcuts |
 | 16 | Platform Ops | Work/Lease/Sched/Health/KMS/Export | PH1.WORK, LEASE, SCHED, HEALTH, KMS, EXPORT | Platform ops activation | 6 | work ledger; lease; scheduler; health; KMS handle; export proof | ops audit refs | maybe/yes for explanation | visible where app uses | no secrets in output |
 | 17 | Artifact Trust/Document/Export/Provenance | O, Artifact Trust | PH1.ART, DOC, EXPORT, WRITE | Artifact activation | 5 | provenance; draft/official split; export scope; artifact cards; trust-root gap | artifact provenance refs | yes/yes | yes | no official claim without proof |
-| 18 | Persona/Preference/Emotion/Feedback/Learning | Persona stack, G, Celine Persona | PH1.PERSONA, EMO, FEEDBACK, LEARN, M, WRITE, TTS | Persona activation + Celine Persona + Emotional Presentation activation | 6 | persona hints; emotion guide; feedback capture; learning signal; preference permission; Celine persona policy and serious-mode proof | identity-scoped evidence plus persona/write/tts refs | yes/yes | yes | no private personalization for unknown speaker; no persona safety bypass |
+| 18 | Persona/Preference/Emotion/Feedback/Learning | Persona stack, G, Selene Emotional Intelligence | PH1.PERSONA, EMO, FEEDBACK, LEARN, M, WRITE, TTS | Persona activation + Selene Emotional Intelligence + Relationship Presence activation | 6 | persona hints; emotion guide; feedback capture; learning signal; preference permission; Selene emotional presentation policy and serious-mode proof | identity-scoped evidence plus persona/write/tts refs | yes/yes | yes | no private personalization for unknown speaker; no persona safety bypass |
 | 19 | Provider Assist/Cost/Prefetch/Arbitration | Provider Assist, T | PH1.COST, PREFETCH, CACHE, PAE, providerctl | Provider assist activation | 5 | cost policy; prefetch no-network proof; cache evidence; arbitration; circuit breaker | provider counters/budget refs | yes/yes | no | hidden prefetch forbidden |
 | 20 | Deterministic Compute/Consensus/Calculation Authority | R, Deterministic Compute, J | PH1.COMP, PH1.E, SimulationExecutor | Compute activation | 4 | computation packet; consensus; advisory/official split; protected calculation fail-closed | replayable compute evidence | no unless explanation | maybe | provider math not official |
 | 21 | Video Recognition/Rendering/Generation | Q, video expansion | PH1.VISION media, model policy, clients | Video activation | 5 | video owner map; provider-off/fake; safety; provenance; render card | media/provenance/cost refs | yes/yes | yes | model approval unclear |
@@ -346,7 +346,7 @@ What is missing:
 - Exact `SessionIdentityBindingPacket`, `AccessScopePacket`, `SpeakerIdentityEvidencePacket`, `AuthorityDecisionPacket`, and `SimulationGateDecisionPacket` architecture names are not fully present as exact symbols.
 - Voice ID evidence-only behavior needs canonical proof against access/authority grants.
 - Wake/session acknowledgement wording is not yet probabilistic-first Quick Assist under PH1.WRITE validation.
-- Celine wake/persona wording is not yet official runtime behavior and must be routed through PH1.WRITE/PH1.TTS after wake/session state validation.
+- Selene wake/emotional presentation wording is not yet official runtime behavior and must be routed through PH1.WRITE/PH1.TTS after wake/session state validation.
 
 Earliest safe implementation slices:
 
@@ -356,7 +356,7 @@ Earliest safe implementation slices:
 4. `Build PH1.X Identity/Access Validation Integration`
 5. `Build Authority + Simulation Fail-Closed Proof`
 6. `Build Quick Assist Wake/Session Reassurance Wording Through PH1.WRITE`
-7. `Build Celine Wake Greeting And Serious-Mode Persona Through PH1.WRITE`
+7. `Build Selene Wake Greeting And Serious-Mode Persona Through PH1.WRITE`
 
 Connections:
 
@@ -485,7 +485,7 @@ Activation needs:
 - Artifact cards accepted only from artifact/export/provenance owners.
 - Language/tone/format routing from PH1.X directive.
 - Quick Assist stack for comfort, guidance, wake acknowledgements, failed-step recovery, and process explanations.
-- Celine persona and emotional presentation through PH1.WRITE, PH1.EMO, PH1.PERSONA, PH1.M where memory law allows, PH1.TTS, and Provider Governance.
+- Selene emotional presentation and emotional presentation through PH1.WRITE, PH1.EMO, PH1.PERSONA, PH1.M where memory law allows, PH1.TTS, and Provider Governance.
 
 Missing presentation packet contracts:
 
@@ -493,7 +493,7 @@ Missing presentation packet contracts:
 - Video card packet not mapped.
 - Artifact card packet needs artifact/export activation.
 - Conversational Experience + Quick Assist is now official in the Expansion Register as stack #15, but still requires a Quick Assist Activation Pack before runtime implementation.
-- Celine Persona + Emotional Presentation is now official in the Expansion Register as stack #16, but still requires a Celine Persona + Emotional Presentation Activation Pack before runtime implementation.
+- Selene Emotional Intelligence + Relationship Presence is now official in the Expansion Register as stack #16, but still requires a Selene Emotional Intelligence + Relationship Presence Activation Pack before runtime implementation.
 
 First presentation slices:
 
@@ -502,7 +502,7 @@ First presentation slices:
 3. One-line rewrite via validated target.
 4. Source/image/artifact presentation packet acceptance.
 5. Quick Assist natural wording under PH1.WRITE.
-6. Celine persona/emotional wording under PH1.WRITE and PH1.TTS.
+6. Selene emotional presentation/emotional wording under PH1.WRITE and PH1.TTS.
 
 ## 13. PH1.E / Search / Tool / File / Evidence Activation
 
@@ -611,7 +611,7 @@ Activation gaps:
 - Access-scoped memory recall must consume identity/access posture.
 - Current vs recent vs durable memory boundary must be enforced by PH1.X/PH1.M.
 - Preference/persona/emotion/learning must not create private personalization without identity/access scope.
-- Celine persona must use PH1.M only for lawful durable tone preferences and must not infer private emotional state as memory without permission.
+- Selene emotional presentation must use PH1.M only for lawful durable tone preferences and must not infer private emotional state as memory without permission.
 - Memory write/update/forget must obey memory law and audit.
 - Current memory support is PARTIAL and must be expanded into the full governed human memory lifecycle: notice, encode, consolidate, connect, recall, continue, update, forget/decay.
 - Fresh memory, day memory, topic memory, topic graph, deep recall, permanent governed memory, conflict/staleness, trust, privacy, no-record honesty, natural memory UI, and human memory evals require activation.
@@ -832,7 +832,7 @@ Deletion is not authorized by this ledger.
 | Phase 2 Provider Governance | providerctl, PH1.D tests | Adapter/provider route | yes | yes | provider counters/model evidence | no | provider-off/fake |
 | Phase 3 Semantic Proposal | semantic schema tests | PH1.X fake proposal route | yes | yes | proposal + rejection ledger | no | fake provider |
 | Phase 4 PH1.X Validation | PH1.X directive tests | runtime turn fixture | yes if provider involved | yes | HumanConversationDirective refs | yes for visible follow-up | two-turn fixture |
-| Phase 5 PH1.WRITE/Quick Assist/Celine | PH1.WRITE/persona output tests | PH1.X -> PH1.WRITE -> PH1.TTS with PH1.EMO/PERSONA refs where used | yes if provider wording | yes | WriteOutput/formatted_text/persona/TTS refs | yes | visible text/TTS |
+| Phase 5 PH1.WRITE/Quick Assist/Selene | PH1.WRITE/persona output tests | PH1.X -> PH1.WRITE -> PH1.TTS with PH1.EMO/PERSONA refs where used | yes if provider wording | yes | WriteOutput/formatted_text/persona/TTS refs | yes | visible text/TTS |
 | Phase 6 Search | PH1.E/source tests | provider-off/fake search | yes | yes | SourceChip/ClaimVerification refs | yes | source-backed answer |
 | Phase 7 Identity/Access | wake/session/Voice ID/access tests | runtime protected/public matrix | no | no | identity/access/authority refs | yes | public/private/protected voice/text |
 | Phase 8 Memory | PH1.M tests | PH1.X -> PH1.M with access | yes if salience provider | yes | MemoryEvidence refs | yes | recall/deny |
@@ -845,7 +845,7 @@ Deletion is not authorized by this ledger.
 | Phase 15 Access/Admin/Tenant | access/policy/gov/tenant/quota tests | admin/tenant route | no | no | access lineage/quota refs | yes | admin read-only/fail-closed |
 | Phase 16 Platform Ops | work/lease/sched/health/kms/export tests | ops route | no except explanations | maybe | ops/KMS/export refs | yes where visible | health/export denial |
 | Phase 17 Artifact Trust | art/doc/export tests | artifact route | yes if drafting | yes | provenance/export refs | yes | artifact card/export denial |
-| Phase 18 Persona/Learning/Celine | persona/emo/feedback/learn/memory/write/tts tests | preference and persona route | yes | yes | memory/preference/persona/write/tts refs | yes | personalization allow/deny and serious-mode proof |
+| Phase 18 Persona/Learning/Selene | persona/emo/feedback/learn/memory/write/tts tests | preference and persona route | yes | yes | memory/preference/persona/write/tts refs | yes | personalization allow/deny and serious-mode proof |
 | Phase 19 Provider Assist | cost/prefetch/cache/PAE/provider tests | arbitration route | yes | yes | budget/cost/cache refs | no unless visible | provider-off/preload no-network |
 | Phase 20 Compute | PH1.COMP tests | compute/report route | no | no | computation/consensus refs | maybe | advisory vs official |
 | Phase 21 Video | media/video tests | video route | yes | yes | media/provenance/cost refs | yes | fake video card |
@@ -861,7 +861,7 @@ Deletion is not authorized by this ledger.
 - Exact approved model for video generation requires JD approval and current official provider/model confirmation.
 - File search and eval/grader exact model/function mapping is unclear: mark `MODEL_POLICY_MISSING` for exact activation until policy is explicit.
 - Quick Assist / Conversational Experience is now official in the Expansion Register as stack #15; runtime implementation remains blocked until a Quick Assist Activation Pack defines exact owners, tests, provider-off/fake-provider proof, backend evidence, and JD live scenarios.
-- Celine Persona + Emotional Presentation is now official in the Expansion Register as stack #16; runtime implementation remains blocked until a Celine Persona + Emotional Presentation Activation Pack defines PH1.WRITE, PH1.PERSONA, PH1.EMO/CORE/GUIDE, PH1.FEEDBACK, PH1.LEARN, PH1.M, PH1.TTS, Provider Governance, Desktop/iPhone render-only proof, Adapter transport-only proof, provider-off/fake-provider proof, backend evidence, and JD live scenarios.
+- Selene Emotional Intelligence + Relationship Presence is now official in the Expansion Register as stack #16; runtime implementation remains blocked until a Selene Emotional Intelligence + Relationship Presence Activation Pack defines PH1.WRITE, PH1.PERSONA, PH1.EMO/CORE/GUIDE, PH1.FEEDBACK, PH1.LEARN, PH1.M, PH1.TTS, Provider Governance, Desktop/iPhone render-only proof, Adapter transport-only proof, provider-off/fake-provider proof, backend evidence, and JD live scenarios.
 - Existing deterministic phrase/follow-up/weather/time paths are active compatibility surfaces; do not extend.
 - Any memory logic in Desktop, Adapter, PH1.X, PH1.E, or PH1.WRITE must be classified as wrong-owner or compatibility until PH1.M proves the governed memory packet path.
 - Desktop/iPhone route parsing must be proven render-only before client route expansion.
@@ -878,7 +878,7 @@ Future implementation must stop with `DETERMINISTIC_IMPLEMENTATION_APPROVAL_REQU
 3. Build Wake / Session / Voice ID / Access Posture Baseline
 4. Build PH1.X Semantic Proposal Validation Into HumanConversationDirective
 5. Build Conversational Experience + Quick Assist Wording Through PH1.WRITE
-6. Build Celine Persona + Emotional Presentation Through PH1.WRITE
+6. Build Selene Emotional Intelligence + Relationship Presence Through PH1.WRITE
 7. Build PH1.WRITE Display / TTS / Source Presentation Baseline
 8. Build Live One-Line Follow-Up Routing To PH1.X / PH1.WRITE
 9. Build PH1.M Human Memory Core Activation Pack
@@ -892,7 +892,7 @@ Future implementation must stop with `DETERMINISTIC_IMPLEMENTATION_APPROVAL_REQU
 - Every Function Stack Map stack mapped: yes
 - Every Expansion Register stack mapped: yes
 - Conversational Experience + Quick Assist Stack official in Expansion Register and included: yes
-- Celine Persona + Emotional Presentation Stack official in Expansion Register and included: yes
+- Selene Emotional Intelligence + Relationship Presence Stack official in Expansion Register and included: yes
 - PH1.M Human Memory Core Master Design added and activation-pack-gated: yes
 - Global semantic proposal wiring gate included: yes
 - Probabilistic human interaction doctrine matrix included: yes

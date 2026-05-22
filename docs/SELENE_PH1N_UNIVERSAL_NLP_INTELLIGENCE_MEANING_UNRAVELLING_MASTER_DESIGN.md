@@ -26,7 +26,7 @@ CONTROLLING DOCUMENTS:
 11. Selene Identity + Access + Authority Spine Master Architecture
 12. Selene Voice Identity + Human Presence Master Design
 13. Selene Full Duplex and Barge-In Enterprise Voice Architecture
-14. Celine Persona + Emotional Presentation Stack
+14. Selene Emotional Intelligence + Relationship Presence Stack
 15. Conversational Experience + Quick Assist Stack
 
 PURPOSE:
@@ -360,8 +360,8 @@ technical systems
 It must distinguish:
 
 Selene assistant
-Celine persona
-real person named Celine
+Selene emotional presentation
+real person with a similar name
 Tamburlaine company
 Tumbling as ordinary word
 PH1.X engine
@@ -389,7 +389,7 @@ Examples:
 Tumbling organic wine → Tamburlaine Organic Wines candidate
 net sweet → NetSuite candidate
 p h one ex → PH1.X candidate
-Celine → Selene only in assistant-address context
+Seline → Selene only in assistant-address context
 
 7.8 PH1.N.DOMAIN_LEXICON_ENGINE
 
@@ -844,9 +844,9 @@ PH1.E owns actual search planning, provider calls, source acceptance, and claim 
 
 PH1.N must not accept sources.
 
-16. Relation To Celine + Quick Assist
+16. Relation To Selene + Quick Assist
 
-Celine and Quick Assist may use PH1.N outputs to sound human.
+Selene and Quick Assist may use PH1.N outputs to sound human.
 
 Examples:
 
@@ -854,12 +854,12 @@ PH1.N detects user is confused.
 Quick Assist explains next step.
 
 PH1.N detects harsh/rushed wording but harmless intent.
-Celine responds calmly and directly.
+Selene responds calmly and directly.
 
 PH1.N detects profanity inside control command.
 Barge-in/PH1.K handles control; PH1.WRITE avoids moralizing.
 
-Celine must not turn personality into authority.
+Selene must not turn personality into authority.
 
 17. Evaluation Matrix
 
@@ -883,7 +883,7 @@ sort Tim out
 Tumbling organic wine
 net sweet
 p h one ex
-Celine vs Selene
+Seline vs Selene
 
 17.4 Ambiguous business requests
 

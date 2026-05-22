@@ -20,13 +20,13 @@ CONTROLLING DOCUMENTS:
 8. Selene PH1.M Human Memory Core Master Design
 9. Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design
 10. Selene PH1.WRITE — Structured Writing + Human Presentation Master Design
-11. Celine Persona + Emotional Presentation Stack
+11. Selene Emotional Intelligence + Relationship Presence Stack
 12. Conversational Experience + Quick Assist Stack
 
 PURPOSE:
 Define Selene’s global request decision system so every user request is classified by meaning, data scope, freshness, action effect, risk, required gates, and presentation mode before routing to the correct Selene stack.
 
-This system upgrades the simple 5-lane business split into a world-class multidimensional decision lattice that supports normal chat, public business knowledge, websearch, private company reads, memory, files, tools, protected execution, mixed requests, Celine persona, Quick Assist, and PH1.WRITE final presentation.
+This system upgrades the simple 5-lane business split into a world-class multidimensional decision lattice that supports normal chat, public business knowledge, websearch, private company reads, memory, files, tools, protected execution, mixed requests, Selene emotional presentation, Quick Assist, and PH1.WRITE final presentation.
 
 0. Master Standard
 
@@ -349,7 +349,7 @@ file analysis → PH1.E / PH1.DOC + PH1.WRITE
 tool read → PH1.E
 protected execution → Authority + SimulationExecutor + PH1.WRITE
 quick clarification → Quick Assist + PH1.WRITE
-persona/tone → Celine Persona + PH1.WRITE
+persona/tone → Selene Emotional Intelligence + PH1.WRITE
 
 Desktop and Adapter are never owners of meaning, access, search, memory, protected execution, or final writing policy.
 
@@ -379,7 +379,7 @@ TTS_SAFE_SUMMARY
 
 PH1.WRITE owns final presentation.
 
-Celine Persona and Quick Assist may shape tone where lawful.
+Selene Emotional Intelligence and Quick Assist may shape tone where lawful.
 
 12. Lattice Dimension I — Split / Clarification Requirement
 
@@ -719,9 +719,9 @@ Fits PH1.WRITE
 
 The lattice tells PH1.WRITE which presentation mode is needed.
 
-Fits Quick Assist + Celine
+Fits Quick Assist + Selene
 
-The lattice routes confusion, ambiguity, reassurance, and guided help into Quick Assist / Celine tone where lawful.
+The lattice routes confusion, ambiguity, reassurance, and guided help into Quick Assist / Selene tone where lawful.
 
 Fits Protected Execution
 

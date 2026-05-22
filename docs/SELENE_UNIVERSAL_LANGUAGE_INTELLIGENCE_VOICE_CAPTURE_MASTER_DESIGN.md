@@ -20,7 +20,7 @@ CONTROLLING DOCUMENTS:
 8. Selene PH1.WRITE — Structured Writing + Human Presentation Master Design
 9. Selene PH1.M Human Memory Core Master Design
 10. Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design
-11. Celine Persona + Emotional Presentation Stack
+11. Selene Emotional Intelligence + Relationship Presence Stack
 12. Conversational Experience + Quick Assist Stack
 
 PURPOSE:
@@ -306,7 +306,7 @@ private scoped entities where access allows
 
 It must distinguish:
 
-Celine = possible person/entity or Selene persona context
+Selene = possible person/entity or Selene emotional presentation context
 Selene = assistant identity
 Tamburlaine = company/entity
 Tumbling = ordinary word or bad transcript candidate
@@ -334,7 +334,7 @@ PH1.WRITE owns:
 final answer shape
 headers / paragraphs / bullets / tables
 language-consistent presentation
-Celine tone
+Selene tone
 Quick Assist wording
 human clarity
 TTS-safe final text
@@ -518,20 +518,20 @@ Selene’s assistant identity must be canonical.
 
 Required behavior:
 
-If user addresses the assistant and STT captures Celine, Seline, Selina, Celene, or similar assistant-name homophones, normalize it to Selene in assistant-address contexts.
+If user addresses the assistant and STT captures Seline, Selina, Celene, or similar assistant-name homophones, normalize it to Selene in assistant-address contexts.
 
-Do not globally rewrite unrelated real people named Celine.
+Do not globally rewrite unrelated real people with similar names.
 
 Examples:
 
-Are you working yet, Celine?
+Are you working yet, Selene?
 → assistant-addressed Selene intent
 
 What is your name?
 → I’m Selene.
 
-Celine is my colleague.
-→ keep Celine
+Marina is my colleague.
+→ keep Marina
 
 This is narrow assistant identity canonicalization.
 
@@ -711,7 +711,7 @@ clarification when confidence is low
 Examples:
 
 Tamburlaine → not Tumbling
-Selene → not Celine when assistant-addressed
+Seline → Selene when assistant-addressed
 PH1.X → not “p h one ex”
 NetSuite → not “net sweet”
 
@@ -1014,7 +1014,7 @@ Build 4 — Selene Name Canonicalization
 Purpose:
 
 assistant-addressed Selene homophones normalize to Selene
-unrelated people/entities named Celine remain untouched
+unrelated people/entities with similar names remain untouched
 
 Build 5 — Broken English / Slang / Bad Grammar Normalization
 

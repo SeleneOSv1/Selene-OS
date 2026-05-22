@@ -19,7 +19,7 @@ CONTROLLING DOCUMENTS:
 7. Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design
 8. Selene PH1.M Human Memory Core Master Design
 9. Selene Identity + Access + Authority Spine Master Architecture
-10. Celine Persona + Emotional Presentation Stack
+10. Selene Emotional Intelligence + Relationship Presence Stack
 11. Conversational Experience + Quick Assist Stack
 
 PURPOSE:
@@ -37,7 +37,7 @@ The target is:
 
 GPT-5.5-assisted writing intelligence
 + Selene-owned final validation
-+ Celine persona and Quick Assist tone control
++ Selene emotional presentation and Quick Assist tone control
 + evidence-aware answer generation
 + source chips and media-aware presentation
 + rich Desktop/iPhone rendering contracts
@@ -79,7 +79,7 @@ translation
 business writing
 research synthesis
 TTS-safe phrasing
-Celine persona wording
+Selene emotional presentation wording
 Quick Assist recovery wording
 
 But GPT-5.5 does not own final output authority.
@@ -174,7 +174,7 @@ The full system contains these layers:
 2. Evidence / Tool / Memory / Media Inputs
 3. Spelling + Grammar + Meaning Preservation
 4. Writing Mode Selection
-5. Celine Persona + Quick Assist Tone Control
+5. Selene Emotional Presentation + Quick Assist Tone Control
 6. PH1.WRITE Structured Drafting and Validation
 7. Presentation Contracts
 8. Adapter Transport Preservation
@@ -492,15 +492,15 @@ tables
 artifact cards
 safe markdown fallback
 
-7. Layer 5 — Celine Persona + Quick Assist Tone Control
+7. Layer 5 — Selene Emotional Presentation + Quick Assist Tone Control
 
 PH1.WRITE owns final persona application.
 
-Celine is not a separate authority.
+Selene emotional presentation is not a separate authority.
 
-Celine is a persona and emotional presentation policy applied to final output.
+Selene emotional presentation is a persona and emotional presentation policy applied to final output.
 
-Celine may shape
+Selene may shape
 
 warmth
 humor
@@ -513,7 +513,7 @@ comfort
 reassurance
 technical sharpness
 
-Celine must not shape
+Selene must not shape
 
 access decisions
 authority
@@ -580,7 +580,7 @@ summary
 business writing
 comparison structure
 clarification wording
-Celine tone
+Selene tone
 TTS-safe text
 
 PH1.WRITE must validate
@@ -991,7 +991,7 @@ Build 0 — PH1.WRITE Repo-Truth Activation Pack
 
 Purpose:
 
-Map current writing, formatting, presentation contracts, source chips, Adapter response fields, Desktop/iPhone rendering, TTS text, Celine/Quick Assist, and old formatting paths.
+Map current writing, formatting, presentation contracts, source chips, Adapter response fields, Desktop/iPhone rendering, TTS text, Selene/Quick Assist, and old formatting paths.
 
 No implementation.
 
@@ -1074,11 +1074,11 @@ language
 entity uncertainty
 protected required fields
 
-Build 6 — Celine Persona + Quick Assist Integration
+Build 6 — Selene Emotional Presentation + Quick Assist Integration
 
 Purpose:
 
-Apply Celine persona and Quick Assist through PH1.WRITE.
+Apply Selene emotional presentation and Quick Assist through PH1.WRITE.
 
 Must support:
 
@@ -1200,7 +1200,7 @@ business writing
 time/weather answers
 Quick Assist
 wake/session flows
-Celine persona interaction
+Selene emotional presentation interaction
 protected denials
 
 19. Final Design Summary
@@ -1209,7 +1209,7 @@ PH1.WRITE is the final human output boundary.
 
 OpenAI/GPT-5.5 helps produce excellent wording.
 
-Celine and Quick Assist make it feel human.
+Selene and Quick Assist make it feel human.
 
 PH1.WRITE validates everything before it reaches the user.
 

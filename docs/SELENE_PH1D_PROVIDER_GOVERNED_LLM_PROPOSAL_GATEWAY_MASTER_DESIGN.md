@@ -30,7 +30,7 @@ CONTROLLING DOCUMENTS:
 12. Selene Identity + Access + Authority Spine Master Architecture
 13. Selene Voice Identity + Human Presence Master Design
 14. Selene Full Duplex and Barge-In Enterprise Voice Architecture
-15. Celine Persona + Emotional Presentation Stack
+15. Selene Emotional Intelligence + Relationship Presence Stack
 16. Conversational Experience + Quick Assist Stack
 
 PURPOSE:
@@ -81,7 +81,7 @@ one LLM router output per turn
 four output types only
 old pipeline ordering
 LLM router as a major routing boundary
-limited awareness of PH1.N, PH1.X lattice, PH1.WRITE, Celine, Quick Assist, search, memory, voice, and protected lanes
+limited awareness of PH1.N, PH1.X lattice, PH1.WRITE, Selene, Quick Assist, search, memory, voice, and protected lanes
 
 Modern Selene needs PH1.D to be provider infrastructure, not the request brain.
 
@@ -106,7 +106,7 @@ query planning
 source reading assistance
 claim extraction
 writing drafts
-Celine persona wording
+Selene emotional presentation wording
 Quick Assist guidance
 translation and language adaptation
 summary and compression
@@ -306,7 +306,7 @@ Purpose:
 
 produce human-quality wording
 structure answer
-apply Celine/Quick Assist tone
+apply Selene/Quick Assist tone
 produce display_text and tts_text candidates
 
 PH1.WRITE validates final output.
@@ -385,7 +385,7 @@ PH1.K / PH1.C / PH1.X validate control and meaning.
 
 6.10 PersonaToneProposal
 
-Used by Celine Persona / PH1.WRITE.
+Used by Selene Emotional Intelligence / PH1.WRITE.
 
 Purpose:
 
@@ -397,7 +397,7 @@ clarification tone
 reassurance
 TTS-safe emotional phrasing
 
-Celine never grants authority.
+Selene never grants authority.
 
 PH1.WRITE validates final persona output.
 
@@ -750,7 +750,7 @@ style/tone validation
 source/memory/protected wording constraints
 raw provider output removal
 
-Celine and Quick Assist use provider wording through PH1.WRITE.
+Selene and Quick Assist use provider wording through PH1.WRITE.
 
 20. Interaction With PH1.E Search / Tools / Files
 

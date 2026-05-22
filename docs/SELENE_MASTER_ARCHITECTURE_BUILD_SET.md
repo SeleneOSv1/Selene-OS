@@ -25,12 +25,13 @@ These documents are one architecture set. They must be read together. None overr
 17. [Selene Voice Identity + Human Presence Master Design](SELENE_VOICE_IDENTITY_HUMAN_PRESENCE_MASTER_DESIGN.md)
 18. [Selene PH1.N — Universal NLP Intelligence + Meaning Unravelling Master Design](SELENE_PH1N_UNIVERSAL_NLP_INTELLIGENCE_MEANING_UNRAVELLING_MASTER_DESIGN.md)
 19. [Selene PH1.D — Provider-Governed LLM Proposal Gateway Master Design](SELENE_PH1D_PROVIDER_GOVERNED_LLM_PROPOSAL_GATEWAY_MASTER_DESIGN.md)
+20. [Selene Emotional Intelligence + Relationship Presence Master Design](SELENE_EMOTIONAL_INTELLIGENCE_RELATIONSHIP_PRESENCE_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
 The Expansion Register also includes the Conversational Experience + Quick Assist Stack, which makes GPT-5.5-assisted user guidance, clarification, reassurance, wake acknowledgements, and natural presentation an official cross-cutting architecture stack.
 
-The Expansion Register also includes the Celine Persona + Emotional Presentation Stack, which defines Selene’s official probabilistic-first personality layer using GPT-5.5/OpenAI for rich wording while PH1.WRITE, PH1.EMO, PH1.PERSONA, PH1.M, PH1.TTS, and Provider Governance keep the personality safe, scoped, and auditable.
+The Expansion Register also includes the Selene Emotional Intelligence + Relationship Presence Stack, which defines Selene’s official probabilistic-first personality layer using GPT-5.5/OpenAI for rich wording while PH1.WRITE, PH1.EMO, PH1.PERSONA, PH1.M, PH1.TTS, and Provider Governance keep the personality safe, scoped, and auditable.
 
 The Final Overall Architecture Build Plan converts the master architecture source set and repo-truth stack audit into the ordered implementation roadmap.
 
@@ -42,33 +43,37 @@ The Selene OS Architecture Alignment and Obsolete Surface Retirement Plan maps t
 
 The Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design is a deep stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
-This PH1.WRITE design connects especially to the Global Human Conversation Spine, Search Intelligence Lane, PH1.M Human Memory Core, Conversational Experience + Quick Assist Stack, Celine Persona + Emotional Presentation Stack, and Identity + Access + Authority Spine. It remains pending Grand Architecture Reconciliation before implementation slices are derived.
+This PH1.WRITE design connects especially to the Global Human Conversation Spine, Search Intelligence Lane, PH1.M Human Memory Core, Conversational Experience + Quick Assist Stack, Selene Emotional Intelligence + Relationship Presence Stack, and Identity + Access + Authority Spine. It remains pending Grand Architecture Reconciliation before implementation slices are derived.
 
 The Selene PH1.WRITE — Structured Writing + Human Presentation Master Design is a deep stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
-This design connects especially to the Global Human Conversation Spine, Identity + Access + Authority Spine, Function Stack Architecture, PH1.WRITE Human Presentation Master Design, Search Intelligence Lane, PH1.M Human Memory Core, Quick Assist, Celine Persona, and Protected Execution architecture.
+This design connects especially to the Global Human Conversation Spine, Identity + Access + Authority Spine, Function Stack Architecture, PH1.WRITE Human Presentation Master Design, Search Intelligence Lane, PH1.M Human Memory Core, Quick Assist, Selene Emotional Intelligence, and Protected Execution architecture.
 
 The Selene Global Request Decision Lattice + 5-Lane Business Risk View Master Design is a deep routing-system upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
-This design connects especially to the Global Human Conversation Spine, Global Request Decision Lattice, PH1.WRITE Human Presentation Master Design, Celine Persona, Quick Assist, Identity + Access + Authority Spine, PH1.M Human Memory Core, Search Intelligence Lane, Provider Governance, and Desktop/Adapter boundary architecture.
+This design connects especially to the Global Human Conversation Spine, Global Request Decision Lattice, PH1.WRITE Human Presentation Master Design, Selene Emotional Intelligence, Quick Assist, Identity + Access + Authority Spine, PH1.M Human Memory Core, Search Intelligence Lane, Provider Governance, and Desktop/Adapter boundary architecture.
 
 The Selene Universal Language Intelligence + Voice Capture Master Design is a deep language/voice stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
-This design connects especially to the Universal Language Intelligence + Voice Capture Master Design, Global Human Conversation Spine, Global Request Decision Lattice, PH1.WRITE Human Presentation Master Design, Celine Persona, Quick Assist, Identity + Access + Authority Spine, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
+This design connects especially to the Universal Language Intelligence + Voice Capture Master Design, Global Human Conversation Spine, Global Request Decision Lattice, PH1.WRITE Human Presentation Master Design, Selene Emotional Intelligence, Quick Assist, Identity + Access + Authority Spine, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
 
 This document is a deep voice-interaction stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
-This design connects especially to the Identity + Access + Authority Spine, Universal Language Intelligence + Voice Capture Master Design, Full Duplex and Barge-In Enterprise Voice Architecture, Global Request Decision Lattice, Celine Persona, Quick Assist, PH1.M Human Memory Core, PH1.WRITE Human Presentation, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
+This design connects especially to the Identity + Access + Authority Spine, Universal Language Intelligence + Voice Capture Master Design, Full Duplex and Barge-In Enterprise Voice Architecture, Global Request Decision Lattice, Selene Emotional Intelligence, Quick Assist, PH1.M Human Memory Core, PH1.WRITE Human Presentation, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
 
 This document is a deep Voice Identity and Human Presence stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
-This design connects especially to the Universal Language Intelligence + Voice Capture Master Design, Global Request Decision Lattice, Global Human Conversation Spine, PH1.WRITE Human Presentation Master Design, PH1.M Human Memory Core, Search Intelligence Lane, Celine Persona, Quick Assist, Identity + Access + Authority Spine, Voice Identity + Human Presence, and Full Duplex/Barge-In voice architecture.
+This design connects especially to the Universal Language Intelligence + Voice Capture Master Design, Global Request Decision Lattice, Global Human Conversation Spine, PH1.WRITE Human Presentation Master Design, PH1.M Human Memory Core, Search Intelligence Lane, Selene Emotional Intelligence, Quick Assist, Identity + Access + Authority Spine, Voice Identity + Human Presence, and Full Duplex/Barge-In voice architecture.
 
 This document is a deep NLP/meaning-unravelling stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
-This design connects especially to the Global Human Conversation Spine, Global Request Decision Lattice, PH1.N Meaning Unravelling, PH1.WRITE Human Presentation, Search Intelligence Lane, PH1.M Human Memory Core, Universal Language Intelligence, Voice Identity + Human Presence, Full Duplex/Barge-In, Celine Persona, Quick Assist, Identity + Access + Authority Spine, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
+This design connects especially to the Global Human Conversation Spine, Global Request Decision Lattice, PH1.N Meaning Unravelling, PH1.WRITE Human Presentation, Search Intelligence Lane, PH1.M Human Memory Core, Universal Language Intelligence, Voice Identity + Human Presence, Full Duplex/Barge-In, Selene Emotional Intelligence, Quick Assist, Identity + Access + Authority Spine, Provider Governance, Desktop/Adapter boundary architecture, and protected execution architecture.
 
 This document is a deep PH1.D / LLM Provider Gateway stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
+
+This design connects especially to PH1.D Provider Governance, PH1.WRITE Human Presentation, PH1.N Meaning Unravelling, PH1.M Human Memory Core, Universal Language Intelligence, Voice Identity + Human Presence, Full Duplex/Barge-In, Global Request Decision Lattice, Identity + Access + Authority Spine, Search Intelligence Lane, Quick Assist, Desktop/Adapter boundary architecture, and protected execution architecture.
+
+This document is a deep Selene Emotional Intelligence + Relationship Presence stack upgrade and is pending the next Grand Architecture Reconciliation and Build Plan Refresh before implementation slices are derived from it.
 
 ## Hierarchy
 
@@ -84,13 +89,14 @@ This document is a deep PH1.D / LLM Provider Gateway stack upgrade and is pendin
 - Selene PH1.M Human Memory Core Master Design = dedicated governed human-like memory lifecycle master design for PH1.M.
 - Selene OS Architecture Alignment and Obsolete Surface Retirement Plan = OS runtime alignment and proof-based obsolete-surface retirement roadmap.
 - Selene Search Intelligence Lane — Revised Enterprise Websearch Master Design = dedicated PH1.E/Search Intelligence master design for OpenAI-assisted, best-available, source-backed, visual, human-quality public websearch and search presentation.
-- Selene PH1.WRITE — Structured Writing + Human Presentation Master Design = dedicated PH1.WRITE master design for OpenAI-assisted human writing, structured presentation, Celine/Quick Assist tone, rich rendering contracts, TTS-safe output, Adapter preservation, and Desktop/iPhone render-ready answers.
+- Selene PH1.WRITE — Structured Writing + Human Presentation Master Design = dedicated PH1.WRITE master design for OpenAI-assisted human writing, structured presentation, Selene/Quick Assist tone, rich rendering contracts, TTS-safe output, Adapter preservation, and Desktop/iPhone render-ready answers.
 - Selene Global Request Decision Lattice + 5-Lane Business Risk View Master Design = dedicated PH1.X/global request routing master design for classifying every user request by intent, data scope, freshness, action effect, risk, required gates, stack owner, split/clarification need, audit requirement, and PH1.WRITE presentation mode.
 - Selene Universal Language Intelligence + Voice Capture Master Design = dedicated PH1.C / PH1.LANG / PH1.N / STT / TTS / transcript-understanding master design for OpenAI-assisted multilingual, broken-language, phonetic, entity, accent, meeting, live voice, speaker-language, and TTS-safe human understanding.
 - Selene Full Duplex and Barge-In Enterprise Voice Architecture = dedicated PH1.K / PH1.C / PH1.L / PH1.X / PH1.LANG / Voice ID / PH1.TTS / Desktop / Adapter master design for full-duplex voice, barge-in, interruption control, TTS cancellation, topic merge/recovery, stale provider rejection, cross-device interruption, multi-speaker/language-aware voice, and protected fail-closed governance.
 - Selene Voice Identity + Human Presence Master Design = dedicated PH1.VOICE.ID / speaker evidence / human presence master design for known, unknown, probable, changed, background, provisional, local/cloud, speaker-language, onboarding, and protected-fail-closed voice identity posture.
 - Selene PH1.N — Universal NLP Intelligence + Meaning Unravelling Master Design = dedicated PH1.N master design for OpenAI-assisted NLP candidate generation, broken-language normalization, slang understanding, spelling/phonetic repair, entity and slot candidates, ambiguity detection, protected-risk hints, and clarification proposals before PH1.X Request Decision Lattice validation.
 - Selene PH1.D — Provider-Governed LLM Proposal Gateway Master Design = dedicated PH1.D / Provider Governance / OpenAI structured proposal gateway master design for schema-bound, evidence-wrapped, model-policy-governed, cost-governed, owner-targeted LLM proposals across semantic meaning, NLP, writing, search, tools, memory, language, voice/realtime, persona, visual/media, and Codex instruction support.
+- Selene Emotional Intelligence + Relationship Presence Master Design = dedicated PH1.EMO / PH1.PERSONA / PH1.WRITE / PH1.M relationship-presence master design for Selene emotional intelligence, tone guidance, empathic interaction, reflection, calm/ritual modes, outreach drafts, emotional memory governance, and protected-safe emotional presentation.
 
 ## Future Expansion
 

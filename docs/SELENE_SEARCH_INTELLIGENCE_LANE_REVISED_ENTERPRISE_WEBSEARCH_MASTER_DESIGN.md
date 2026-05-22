@@ -933,7 +933,7 @@ What was the weather last week?
 
 Tool facts come from PH1.E/tool/provider.
 
-Human presentation comes through PH1.WRITE / Quick Assist / Celine style where allowed.
+Human presentation comes through PH1.WRITE / Quick Assist / Selene style where allowed.
 
 14. Provider Strategy: Best-Fit, Not Cheap-First
 
@@ -1251,7 +1251,7 @@ range-aware forecast presentation
 historical weather/time handling where provider supports it
 short/default answer style
 user-requested format adaptation
-PH1.WRITE/Celine/Quick Assist presentation
+PH1.WRITE/Selene/Quick Assist presentation
 
 Stage 9 — Premium Provider Controlled Re-Enable
 
@@ -1337,7 +1337,7 @@ best available answer synthesis
 Human UX comes from:
 
 PH1.WRITE presentation
-Celine / Quick Assist wording where appropriate
+Selene / Quick Assist wording where appropriate
 source chips
 image cards
 same-language response

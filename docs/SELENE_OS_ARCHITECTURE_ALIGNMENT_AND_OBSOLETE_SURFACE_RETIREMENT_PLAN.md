@@ -29,7 +29,7 @@ Selene OS must become the runtime orchestration layer for:
 - PH1.X deterministic validation
 - PH1.WRITE final presentation
 - Wake / Session / Voice ID / Access posture
-- Celine Persona + Quick Assist
+- Selene Emotional Presentation + Quick Assist
 - PH1.M scoped memory
 - PH1.E evidence/tools/search/files
 - Authority + Simulation protected execution
@@ -62,7 +62,7 @@ The new target is not a from-scratch rewrite. Current OS surfaces must be mapped
 | Transcript / PH1.C | `crates/selene_os/src/ph1c.rs`; `crates/selene_engines/src/ph1c.rs`; `crates/selene_kernel_contracts/src/ph1c.rs` | Canonical ingress/admission family | CURRENT_PARTIAL | Transcript/input admission | Must remain admission, not semantic authority. |
 | Voice ID | `crates/selene_os/src/ph1_voice_id.rs`; `crates/selene_engines/src/ph1_voice_id.rs`; `crates/selene_kernel_contracts/src/ph1_voice_id.rs` | Voice ID and enrollment evidence | CURRENT_PARTIAL | Speaker evidence only | Must never imply access or authority. |
 | PH1.TTS | `crates/selene_os/src/ph1tts.rs`; `crates/selene_engines/src/ph1tts.rs`; `crates/selene_kernel_contracts/src/ph1tts.rs` | Approved TTS text, clean TTS checks, `VoiceRenderPlan`, `StyleProfileRef` | CURRENT_PARTIAL | Approved speech output | Persona style must pass PH1.WRITE/PH1.TTS approval. |
-| PH1.PERSONA | `crates/selene_os/src/ph1persona.rs`; `crates/selene_engines/src/ph1persona.rs`; `crates/selene_kernel_contracts/src/ph1persona.rs` | Persona profile and tone-only guard surfaces | CURRENT_PARTIAL | Celine persona assist surface | Requires Celine activation before runtime personality implementation. |
+| PH1.PERSONA | `crates/selene_os/src/ph1persona.rs`; `crates/selene_engines/src/ph1persona.rs`; `crates/selene_kernel_contracts/src/ph1persona.rs` | Persona profile and tone-only guard surfaces | CURRENT_PARTIAL | Selene emotional presentation assist surface | Requires Selene activation before runtime personality implementation. |
 | PH1.EMO.CORE | `crates/selene_os/src/ph1emocore.rs`; `crates/selene_engines/src/ph1emocore.rs`; `crates/selene_kernel_contracts/src/ph1emocore.rs` | Emotion signal bundle and tone guidance | CURRENT_PARTIAL | Emotional-state assist surface | Current signals are partial/advisory and not final persona policy. |
 | PH1.EMO.GUIDE | `crates/selene_os/src/ph1emoguide.rs`; `crates/selene_engines/src/ph1emoguide.rs`; `crates/selene_kernel_contracts/src/ph1emoguide.rs` | Interaction guide with dominant/gentle/cooperative/assertive signals | CURRENT_PARTIAL | Tone guidance assist surface | Must not gain meaning, access, or execution authority. |
 | PH1.FEEDBACK / PH1.LEARN | `crates/selene_os/src/ph1feedback.rs`; `crates/selene_os/src/ph1learn.rs`; matching contracts/engines | Feedback and learning surfaces | CURRENT_PARTIAL | Adaptation inputs under memory/privacy law | Durable learning needs PH1.M/access scope. |
@@ -92,7 +92,7 @@ The new target is not a from-scratch rewrite. Current OS surfaces must be mapped
 | memory recall | PH1.M | `ph1m.rs` family plus Adapter memory-adjacent assertions | PARTIAL / WRONG_OWNER_RISK | PH1.M must consume access scope; retire Adapter memory assertions after proof. |
 | search/tools/files | PH1.E | `ph1e.rs`; `web_search_plan/*`; Adapter/PH1.D public answer routes | PARTIAL / WRONG_OWNER_RISK | Route through PH1.E with source acceptance and prompt-injection defense. |
 | provider routing | Provider Governance / PH1.D provider contracts | `ph1providerctl.rs`; `ph1d.rs`; Adapter tests/routes | PARTIAL | Provider-off/fake/model/cost/egress gates before semantic/writing providers. |
-| persona/emotional tone | PH1.WRITE final; PH1.EMO/PH1.PERSONA assist | `ph1persona.rs`; `ph1emocore.rs`; `ph1emoguide.rs`; `ph1write.rs`; `ph1tts.rs` | PARTIAL | Celine activation pack; persona proposal must stay advisory and PH1.WRITE-approved. |
+| persona/emotional tone | PH1.WRITE final; PH1.EMO/PH1.PERSONA assist | `ph1persona.rs`; `ph1emocore.rs`; `ph1emoguide.rs`; `ph1write.rs`; `ph1tts.rs` | PARTIAL | Selene activation pack; persona proposal must stay advisory and PH1.WRITE-approved. |
 | Quick Assist | PH1.WRITE final; PH1.X/state owners provide facts | Quick Assist architecture official; runtime support scattered across PH1.WRITE/PH1.X/wake/TTS/tool presentation | PARTIAL | Quick Assist activation pack; remove hardcoded user-help behavior only after replacement. |
 | TTS/STT | PH1.TTS / governed STT provider / voice admission owners | `ph1tts.rs`; Adapter HTTP voice paths; clients | PARTIAL | PH1.TTS speaks approved text only; STT transcript not identity. |
 | protected risk | PH1.X classifies; Authority + Simulation decide | PH1.X protected directives; runtime execution; Adapter protected helpers | PARTIAL / WRONG_OWNER_RISK | Protected helpers outside canonical owners remain compatibility-only. |
@@ -150,7 +150,7 @@ Deletion is not authorized for any row in this ledger.
 | Adapter PH1.D public answer wrappers | MIGRATE_TO_CANONICAL_OWNER | Provider public answers must be governed and routed through PH1.X/PH1.WRITE/PH1.E as applicable. |
 | Adapter fallback runtime envelopes | RETAIN_COMPATIBILITY_UNTIL_PROOF | Needed until canonical voice/session envelope path is proven. |
 | Desktop/iPhone invite/app-open parsing | RETAIN_COMPATIBILITY_UNTIL_PROOF | Client route display is useful, but authority must move to cloud-authored packets. |
-| Hardcoded wake/weather/help wording | REMOVE_AFTER_PROOF | Likely obsolete as primary UX once Quick Assist/Celine/PH1.WRITE provider-safe wording exists. |
+| Hardcoded wake/weather/help wording | REMOVE_AFTER_PROOF | Likely obsolete as primary UX once Quick Assist/Selene/PH1.WRITE provider-safe wording exists. |
 | Any provider route without governance evidence | STALE_DANGEROUS_REQUIRES_BLOCKER | Future provider builds must block if a direct provider call bypasses governance. |
 | Any protected action outside Authority + SimulationExecutor | STALE_DANGEROUS_REQUIRES_BLOCKER | Protected execution must fail closed unless canonical authority/simulation proof exists. |
 | Video recognition/rendering runtime owner | REPO_TRUTH_NEEDED | Architecture names the stack; exact runtime ownership remains partial/unclear. |
@@ -193,7 +193,7 @@ Allowed deterministic logic remains:
 - audit/idempotency
 - state mutation
 
-## 7. Celine Persona / Emotional Engine OS Alignment
+## 7. Selene Emotional Intelligence / Emotional Engine OS Alignment
 
 Current emotional/persona files inspected:
 
@@ -241,13 +241,13 @@ Yes, partially. The repo already supports some demeanor signal detection and adv
 - warm: PARTIAL/YES through `warmth_signal` and warm modifiers.
 - direct: PARTIAL/YES through direct style tokens and directness level.
 
-Can it choose complementary Celine tone modes?
+Can it choose complementary Selene tone modes?
 
-- Calmer response for dominant/assertive user: PARTIAL. Existing guidance can shift brief/formal/fast for assertive/dominant posture, but a complementary "calmer response" Celine policy is not fully wired through PH1.WRITE.
-- More guiding/assertive response for passive/uncertain user: PARTIAL. Passive/gentle signals exist, but the guiding/assertive complementary policy needs Celine activation.
-- Gentle response for stressed user: PARTIAL. Distress/empathy signals exist, but final PH1.WRITE/PH1.TTS Celine behavior is not fully activated.
-- Serious response for protected/high-risk context: PARTIAL/MISSING. Protected context exists in PH1.X/runtime execution, but Celine serious-mode policy needs explicit PH1.WRITE integration.
-- Playful response for normal safe chat: ARCHITECTURE_ONLY/PARTIAL. Persona style exists, but GPT-5.5-assisted playful wording through Provider Governance and PH1.WRITE is not implemented as final Celine runtime.
+- Calmer response for dominant/assertive user: PARTIAL. Existing guidance can shift brief/formal/fast for assertive/dominant posture, but a complementary "calmer response" Selene policy is not fully wired through PH1.WRITE.
+- More guiding/assertive response for passive/uncertain user: PARTIAL. Passive/gentle signals exist, but the guiding/assertive complementary policy needs Selene activation.
+- Gentle response for stressed user: PARTIAL. Distress/empathy signals exist, but final PH1.WRITE/PH1.TTS Selene behavior is not fully activated.
+- Serious response for protected/high-risk context: PARTIAL/MISSING. Protected context exists in PH1.X/runtime execution, but Selene serious-mode policy needs explicit PH1.WRITE integration.
+- Playful response for normal safe chat: ARCHITECTURE_ONLY/PARTIAL. Persona style exists, but GPT-5.5-assisted playful wording through Provider Governance and PH1.WRITE is not implemented as final Selene runtime.
 
 Current classification:
 
@@ -260,9 +260,9 @@ Advisory-only parts:
 - PH1.PERSONA style profile hints.
 - PH1.FEEDBACK / PH1.LEARN adaptation surfaces until memory/privacy law and PH1.WRITE approval are wired.
 
-Missing for full Celine runtime:
+Missing for full Selene runtime:
 
-- Celine Persona + Emotional Presentation Activation Pack.
+- Selene Emotional Intelligence + Relationship Presence Activation Pack.
 - Provider-governed GPT-5.5 persona/wording proposal path.
 - PH1.WRITE persona policy enforcement for final `display_text` and `tts_text`.
 - PH1.TTS approved personality speech path.
@@ -294,9 +294,9 @@ Surfaces that must not gain authority:
 - PH1.TTS style rendering.
 - Desktop/iPhone/Adapter.
 
-Likely Celine/persona implementation slices needed after activation pack:
+Likely Selene/persona implementation slices needed after activation pack:
 
-1. Celine persona activation and repo-symbol mapping.
+1. Selene emotional presentation activation and repo-symbol mapping.
 2. Provider-governed fake persona/wording proposal shell.
 3. PH1.EMO.CORE / PH1.EMO.GUIDE / PH1.PERSONA handoff into PH1.WRITE.
 4. PH1.WRITE / PH1.TTS final personality output with serious-mode and no-authority guards.
@@ -315,7 +315,7 @@ Proof required:
 - backend evidence shows emotional/persona refs and PH1.WRITE final approval.
 - JD live acceptance for demeanor/tone scenarios.
 
-## Celine Persona + Emotional Engine Deep Activation Review
+## Selene Emotional Intelligence + Emotional Engine Deep Activation Review
 
 1. Current emotional/persona capability exists as a partial advisory system. PH1.EMO.CORE tracks assertive/distress/anger/warmth signals and produces tone guidance; PH1.EMO.GUIDE tracks assertive/cooperative interaction signals and dominant/gentle guide outcomes; PH1.PERSONA maps style profile refs and enforces tone-only/no-authority guardrails; PH1.TTS has style profile rendering surfaces; PH1.WRITE owns the final wording equivalent.
 
@@ -334,13 +334,13 @@ Proof required:
 | warm | `warmth_signal` and warm modifiers | PH1.EMO.CORE / PH1.PERSONA | PARTIAL/YES |
 | direct | direct style token and directness level | PH1.PERSONA / PH1.EMO.CORE | PARTIAL/YES |
 
-3. Complementary Celine tone mode support:
+3. Complementary Selene tone mode support:
 
-| Desired Celine mode | Current support | Gap |
+| Desired Selene mode | Current support | Gap |
 |---|---|---|
-| calmer response for dominant/assertive user | PARTIAL | Needs Celine policy and PH1.WRITE enforcement. |
+| calmer response for dominant/assertive user | PARTIAL | Needs Selene policy and PH1.WRITE enforcement. |
 | more guiding/assertive response for passive/uncertain user | PARTIAL | Passive/uncertain mapping is not a full complementary-response policy. |
-| gentle response for stressed user | PARTIAL | Distress exists; final Celine wording/TTS integration is missing. |
+| gentle response for stressed user | PARTIAL | Distress exists; final Selene wording/TTS integration is missing. |
 | serious response for protected/high-risk context | PARTIAL/MISSING | Must connect PH1.X protected risk and Authority/Simulation posture to PH1.WRITE persona policy. |
 | playful response for normal safe chat | ARCHITECTURE_ONLY/PARTIAL | Requires governed GPT-5.5 wording and PH1.WRITE final approval. |
 
@@ -362,9 +362,9 @@ Proof required:
 - Feedback/learning adaptation hints.
 - Provider-generated personality wording until PH1.WRITE approves it.
 
-6. Missing for full Celine runtime:
+6. Missing for full Selene runtime:
 
-- Celine activation pack.
+- Selene activation pack.
 - Provider-governed persona proposal interface.
 - PH1.WRITE final persona policy.
 - PH1.TTS approved personality speech path.
@@ -383,18 +383,18 @@ Proof required:
 
 11. Desktop/iPhone/Adapter must never own persona choice, emotional inference, access, authority, memory permission, provider choice, protected execution, or final wording. Desktop/iPhone render/play; Adapter transports.
 
-12. Likely implementation count is 5 Celine/persona slices after a dedicated activation pack.
+12. Likely implementation count is 5 Selene/persona slices after a dedicated activation pack.
 
 Recommended next docs task:
 
-`CREATE_CELINE_PERSONA_AND_EMOTIONAL_ENGINE_ACTIVATION_PACK`
+`CREATE_SELENE_PERSONA_AND_EMOTIONAL_ENGINE_ACTIVATION_PACK`
 
 Proposed slices only:
 
-1. Celine Persona Repo-Truth Activation and Owner Map.
+1. Selene Emotional Intelligence Repo-Truth Activation and Owner Map.
 2. Provider-Governed Persona Proposal Shell with Fake/Off Proof.
 3. PH1.EMO.CORE / PH1.EMO.GUIDE / PH1.PERSONA to PH1.WRITE Handoff.
-4. PH1.WRITE / PH1.TTS Celine Final Output and Serious-Mode Guardrails.
+4. PH1.WRITE / PH1.TTS Selene Final Output and Serious-Mode Guardrails.
 5. PH1.M Preference, PH1.FEEDBACK/PH1.LEARN Adaptation, Eval, Backend Evidence, and JD Live Proof.
 
 ## 8. Quick Assist OS Alignment
@@ -462,7 +462,7 @@ Risks:
 
 - Adapter/PH1.D public-answer paths can become provider bypass surfaces.
 - Provider fallback tests must remain proof tools, not new live default behavior.
-- Quick Assist and Celine must not start live OpenAI use until Provider Governance permits it.
+- Quick Assist and Selene must not start live OpenAI use until Provider Governance permits it.
 
 ## 10. Wake / Session / Voice ID / Access OS Alignment
 
@@ -505,7 +505,7 @@ Obsolete or risky surfaces:
 - Current role: final formatting/writing equivalent.
 - Correct new role: final human output, source/image/artifact/persona/TTS-safe presentation validation.
 - Conflicts: deterministic one-line current-equivalent helper if treated as primary language architecture.
-- Missing activation: provider-governed writing/persona proposal path, display/tts/source/image/video/artifact card policy, Quick Assist, Celine policy.
+- Missing activation: provider-governed writing/persona proposal path, display/tts/source/image/video/artifact card policy, Quick Assist, Selene policy.
 - Retain temporarily: one-line current-equivalent proof path.
 - Retire later: deterministic language transformations that are replaced by governed provider proposals and PH1.WRITE validation.
 
@@ -562,7 +562,7 @@ Required proof before cleanup:
 | OS-2: Semantic proposal OS routing shell | Introduce governed semantic proposal shell | PH1.X, PH1.D, provider governance, Adapter follow-up callers | Semantic provider interface/skeleton and tests | schema validation, fake/off proof, no phrase patch expansion | PH1.X/Adapter deterministic follow-up helpers | no |
 | OS-3: Wake/Session/Voice ID/Access OS posture | Map wake/session/voice/access defaults | PH1.W/C/L, Voice ID, access/policy/gov, runtime session foundation | Posture packets/equivalents and tests | unknown speaker public-safe, private/protected fail closed | Adapter identity fallback envelopes | no |
 | OS-4: PH1.X directive OS wiring | Validate semantic proposals against session/access/risk | PH1.X, runtime execution, PH1.M/E/WRITE handoffs | PH1.X validation and evidence only by future scope | owner routing, ambiguity, protected fail-closed | deterministic context helpers | no |
-| OS-5: PH1.WRITE + Quick Assist + Celine output OS wiring | Route natural guidance/persona through PH1.WRITE/PH1.TTS | PH1.WRITE, PH1.TTS, PH1.EMO, PH1.PERSONA, PH1.M, provider governance | Writing/persona/Quick Assist shells | provider-off/fake wording, PH1.WRITE validation, TTS-safe, no authority | hardcoded greetings/weather/help/one-line helpers | no |
+| OS-5: PH1.WRITE + Quick Assist + Selene output OS wiring | Route natural guidance/persona through PH1.WRITE/PH1.TTS | PH1.WRITE, PH1.TTS, PH1.EMO, PH1.PERSONA, PH1.M, provider governance | Writing/persona/Quick Assist shells | provider-off/fake wording, PH1.WRITE validation, TTS-safe, no authority | hardcoded greetings/weather/help/one-line helpers | no |
 | OS-6: PH1.M/PH1.E scope and evidence OS wiring | Scope memory/files/tools/search/evidence | PH1.M, PH1.E, access, web_search_plan, tools/files/connectors | Memory/evidence gateway integration | source acceptance, memory scope, prompt-injection, file/tool scope | Adapter memory/search shortcuts | no |
 | OS-7: Desktop/iPhone/Adapter boundary proof | Prove client/adapter no-authority boundaries | Desktop/iPhone views/bridges, Adapter lib/bins | Proof/test edits by future scope | render-only, transport-only, backend evidence | route parsing/fallbacks retained | no |
 | OS-8: active-caller ledger for obsolete paths | Build caller map for retirement candidates | Adapter lib, PH1.X, PH1.WRITE, clients, provider routes | Docs/tests/ledger only | active-caller scan, dependency graph, old behavior regression | all candidates retained | no |
@@ -591,7 +591,7 @@ If Codex finds stale or conflicting OS code but cannot safely remove it, classif
 2. Build Semantic Proposal OS Routing Shell.
 3. Build Wake / Session / Voice ID / Access OS Posture Baseline.
 4. Build PH1.X Directive Validation OS Wiring.
-5. Build PH1.WRITE Quick Assist / Celine Output Shell.
+5. Build PH1.WRITE Quick Assist / Selene Output Shell.
 6. Build PH1.M Scoped Memory and Preference Boundary.
 7. Build PH1.E Source / Tool / File Evidence Boundary.
 8. Build Desktop / iPhone / Adapter No-Authority Boundary Proof.
@@ -600,14 +600,14 @@ If Codex finds stale or conflicting OS code but cannot safely remove it, classif
 
 Recommended next docs task for persona:
 
-`CREATE_CELINE_PERSONA_AND_EMOTIONAL_ENGINE_ACTIVATION_PACK`
+`CREATE_SELENE_PERSONA_AND_EMOTIONAL_ENGINE_ACTIVATION_PACK`
 
 ## 16. Final Status
 
 - Required docs read: yes.
 - OS surfaces inspected: yes, including `crates/selene_os/src`, `crates/selene_kernel_contracts/src`, `crates/selene_engines/src`, `crates/selene_adapter/src`, `crates/selene_tools/src`, storage migrations, Desktop, iPhone, reports, web search plan, and blueprints.
 - Obsolete surfaces identified: yes.
-- Celine/persona/emotional engine alignment reviewed: yes.
+- Selene/persona/emotional engine alignment reviewed: yes.
 - Adapter/Desktop/iPhone boundary risks reviewed: yes.
 - Runtime code changed: no.
 - Obsolete code deleted: no.

@@ -24,7 +24,7 @@ CONTROLLING DOCUMENTS:
 9. Selene Full Duplex and Barge-In Enterprise Voice Architecture
 10. Selene PH1.WRITE — Structured Writing + Human Presentation Master Design
 11. Selene PH1.M Human Memory Core Master Design
-12. Celine Persona + Emotional Presentation Stack
+12. Selene Emotional Intelligence + Relationship Presence Stack
 13. Conversational Experience + Quick Assist Stack
 
 PURPOSE:
@@ -131,7 +131,7 @@ PH1.E:
   tools, search, files, external evidence
 
 PH1.WRITE:
-  final wording, Celine tone, identity-safe response, protected denial explanation
+  final wording, Selene tone, identity-safe response, protected denial explanation
 
 PH1.TTS:
   approved spoken output
@@ -157,7 +157,7 @@ multilingual/accented speech handling
 broken speech interpretation
 soft re-auth wording
 voice enrollment phrase suggestions
-Celine-style human phrasing
+Selene-style human phrasing
 Quick Assist guidance
 speaker-language help where allowed
 
@@ -345,7 +345,7 @@ public weather/time
 non-mutating drafting
 name discovery where appropriate
 provisional non-authoritative speaker evidence
-Celine natural wording
+Selene natural wording
 
 Not allowed:
 
@@ -523,7 +523,7 @@ audit refs
 
 11.2 Natural Name Discovery
 
-For public-safe unknown speakers, Celine/PH1.WRITE may ask naturally:
+For public-safe unknown speakers, Selene/PH1.WRITE may ask naturally:
 
 I don’t think we’ve connected this voice yet. What should I call you?
 
@@ -651,9 +651,9 @@ Voice ID must not retrieve memory.
 
 Voice ID must not decide memory relevance.
 
-16. Relationship To Celine Persona + Quick Assist
+16. Relationship To Selene Emotional Presentation + Quick Assist
 
-Celine and Quick Assist make identity interaction feel natural.
+Selene and Quick Assist make identity interaction feel natural.
 
 They may help with:
 
@@ -936,7 +936,7 @@ speaker-language binding
 same speaker continuity
 background speaker rejection
 liveness/replay risk handling
-Celine natural unknown-speaker wording
+Selene natural unknown-speaker wording
 PH1.WRITE protected denial wording
 Desktop render-only
 Adapter transport-only
@@ -1025,7 +1025,7 @@ unknown speaker
 speaker change
 private denial
 protected fail-closed
-Celine natural wording
+Selene natural wording
 backend evidence agreement
 
 24. What Codex Must Not Do
