@@ -27,6 +27,7 @@ These documents are one architecture set. They must be read together. None overr
 19. [Selene PH1.D — Provider-Governed LLM Proposal Gateway Master Design](SELENE_PH1D_PROVIDER_GOVERNED_LLM_PROPOSAL_GATEWAY_MASTER_DESIGN.md)
 20. [Selene Emotional Intelligence + Relationship Presence Master Design](SELENE_EMOTIONAL_INTELLIGENCE_RELATIONSHIP_PRESENCE_MASTER_DESIGN.md)
 21. [Selene PH1.LINK Link Engine — Repo-Truth Functionality Extraction Master Design](SELENE_PH1LINK_LINK_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
+22. [Selene PH1.LINK Link Journey Intelligence + Simulation Discovery Master Design](SELENE_PH1LINK_LINK_JOURNEY_INTELLIGENCE_AND_SIMULATION_DISCOVERY_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -78,6 +79,8 @@ This document is a deep Selene Emotional Intelligence + Relationship Presence st
 
 This extraction document is pending Grand Architecture Reconciliation before future link-engine implementation or retirement slices are derived.
 
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -101,6 +104,7 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 - Selene PH1.D — Provider-Governed LLM Proposal Gateway Master Design = dedicated PH1.D / Provider Governance / OpenAI structured proposal gateway master design for schema-bound, evidence-wrapped, model-policy-governed, cost-governed, owner-targeted LLM proposals across semantic meaning, NLP, writing, search, tools, memory, language, voice/realtime, persona, visual/media, and Codex instruction support.
 - Selene Emotional Intelligence + Relationship Presence Master Design = dedicated PH1.EMO / PH1.PERSONA / PH1.WRITE / PH1.M relationship-presence master design for Selene emotional intelligence, tone guidance, empathic interaction, reflection, calm/ritual modes, outreach drafts, emotional memory governance, and protected-safe emotional presentation.
 - Selene PH1.LINK Link Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing PH1.LINK, invite, onboarding-link, app-open/deep-link, activation, tenant/workspace, client route, adapter route, security, audit, tests, and old-path behavior.
+- Selene PH1.LINK Link Journey Intelligence + Simulation Discovery Master Design = future master design for human link requests, OpenAI-assisted link intent understanding, permission/access resolution, simulation discovery, confirmation, SMS-first delivery handoff, activation tracking, troubleshooting, wrong-link correction, missing-simulation capability requests, and onboarding handoff.
 
 ## Future Expansion
 
