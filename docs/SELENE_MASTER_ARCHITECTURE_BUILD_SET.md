@@ -35,6 +35,7 @@ These documents are one architecture set. They must be read together. None overr
 27. [Selene PH1.ONB — Onboarding Journey Intelligence + Guided Enrollment Master Design](SELENE_PH1ONB_ONBOARDING_JOURNEY_INTELLIGENCE_GUIDED_ENROLLMENT_MASTER_DESIGN.md)
 28. [Selene PH1.REM Reminder Engine — Repo-Truth Functionality Extraction Master Design](SELENE_PH1REM_REMINDER_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
 29. [Selene PH1.REM — Reminder Journey Intelligence + Human Follow-Up Master Design](SELENE_PH1REM_REMINDER_JOURNEY_INTELLIGENCE_HUMAN_FOLLOWUP_MASTER_DESIGN.md)
+30. [Selene Master Access Engine — Repo-Truth Functionality Extraction Master Design](SELENE_MASTER_ACCESS_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -102,6 +103,8 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
+This extraction document is pending Grand Architecture Reconciliation before future Master Access implementation or retirement slices are derived.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -133,6 +136,7 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene PH1.ONB — Onboarding Journey Intelligence + Guided Enrollment Master Design = future master design for human-guided onboarding journeys, universal onboarding targets, role/position requirement schemas, dynamic field extension governance, sender prefill, receiver field collection, OpenAI-assisted onboarding guidance, PH1.WRITE onboarding wording, Access/Governance handoff, voice/device/document/consent setup, reminders, re-onboarding continuity, troubleshooting, completion readiness, and JD live onboarding proof.
 - Selene PH1.REM Reminder Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing reminder scheduling, update, cancel, snooze, recurrence, due/pre-due delivery attempts, retry, follow-up, escalation, completion/failure, BCAST handoff, onboarding reminder, delivery interaction, client, adapter, storage, audit, tests, and old-path behavior.
 - Selene PH1.REM — Reminder Journey Intelligence + Human Follow-Up Master Design = future master design for human reminder requests, GPT-5.5/PH1.D reminder understanding, PH1.N time/action/recipient extraction, PH1.X reminder validation, PH1.WRITE reminder wording, rich time clarification, birthdays/anniversaries/special days/regional holidays, other-person reminders, follow-up policies, onboarding/link reminders, delivery handoff, status/troubleshooting, quiet hours, recurrence, audit, persistence, and JD live reminder proof.
+- Selene Master Access Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing access, role, permission, template, tenant/workspace scope, per-user access instance, onboarding access handoff, link access context, private data read gate, protected execution gate, authority boundary, client, adapter, storage, audit, tests, and old-path behavior.
 
 ## Future Expansion
 
