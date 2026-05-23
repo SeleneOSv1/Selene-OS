@@ -32,6 +32,7 @@ These documents are one architecture set. They must be read together. None overr
 24. [Selene PH1.BCAST / PH1.DELIVERY / PH1.REM — Broadcast Journey Intelligence + Delivery Orchestration Master Design](SELENE_PH1BCAST_DELIVERY_REMINDER_JOURNEY_INTELLIGENCE_MASTER_DESIGN.md)
 25. [Selene PH1.BCAST / PH1.DELIVERY / PH1.REM — Advanced Delivery Modes + Secure Thread Intelligence Expansion Master Design](SELENE_PH1BCAST_ADVANCED_DELIVERY_MODES_SECURE_THREAD_INTELLIGENCE_EXPANSION_MASTER_DESIGN.md)
 26. [Selene PH1.ONB Onboarding + Enrollment — Repo-Truth Functionality Extraction Master Design](SELENE_PH1ONB_ONBOARDING_ENROLLMENT_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
+27. [Selene PH1.ONB — Onboarding Journey Intelligence + Guided Enrollment Master Design](SELENE_PH1ONB_ONBOARDING_JOURNEY_INTELLIGENCE_GUIDED_ENROLLMENT_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -93,6 +94,8 @@ This document is pending Grand Architecture Reconciliation before implementation
 
 This extraction document is pending Grand Architecture Reconciliation before future onboarding/enrollment implementation or retirement slices are derived.
 
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -121,6 +124,7 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 - Selene PH1.BCAST / PH1.DELIVERY / PH1.REM — Broadcast Journey Intelligence + Delivery Orchestration Master Design = future master design for OpenAI-assisted communication intent understanding, recipient/audience resolution, PH1.WRITE-approved message content, permission/consent/channel checks, simulation discovery, confirmation, SMS-first delivery, reminder natural-language scheduling, status assistant, troubleshooting, provider governance, and JD live communication proof.
 - Selene PH1.BCAST / PH1.DELIVERY / PH1.REM — Advanced Delivery Modes + Secure Thread Intelligence Expansion Master Design = future expansion master design for privacy negotiation, delivery mode matrix, sender review, audience preview, anti-spam/rate limits, emergency delivery, threaded operational conversations, searchable communication memory, secure document/media delivery, view confirmation, external connector send/intake, forward/reply/redelivery, AI report/meeting/marketing assistance, and task/scheduler/roster handoff boundaries.
 - Selene PH1.ONB Onboarding + Enrollment — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing onboarding, invited onboarding, enrollment, link activation handoff, missing fields, onboarding state, access/role handoff, voice/device enrollment, client, adapter, storage, audit, tests, and old-path behavior.
+- Selene PH1.ONB — Onboarding Journey Intelligence + Guided Enrollment Master Design = future master design for human-guided onboarding journeys, universal onboarding targets, role/position requirement schemas, dynamic field extension governance, sender prefill, receiver field collection, OpenAI-assisted onboarding guidance, PH1.WRITE onboarding wording, Access/Governance handoff, voice/device/document/consent setup, reminders, re-onboarding continuity, troubleshooting, completion readiness, and JD live onboarding proof.
 
 ## Future Expansion
 
