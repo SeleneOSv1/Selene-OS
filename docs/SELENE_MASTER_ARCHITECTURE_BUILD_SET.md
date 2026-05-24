@@ -38,6 +38,7 @@ These documents are one architecture set. They must be read together. None overr
 30. [Selene Master Access Engine — Repo-Truth Functionality Extraction Master Design](SELENE_MASTER_ACCESS_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
 31. [Selene Master Access Governance + Per-User Access Journey Master Design](SELENE_MASTER_ACCESS_GOVERNANCE_PER_USER_ACCESS_JOURNEY_MASTER_DESIGN.md)
 32. [Selene PH1.POSITION Position Engine — Repo-Truth Functionality Extraction Master Design](SELENE_PH1POSITION_POSITION_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
+33. [Selene PH1.POSITION — Position Journey Intelligence + Access & Compensation Handoff Master Design](SELENE_PH1POSITION_POSITION_JOURNEY_INTELLIGENCE_ACCESS_COMPENSATION_HANDOFF_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -111,6 +112,8 @@ This document is pending Grand Architecture Reconciliation before implementation
 
 This extraction document is pending Grand Architecture Reconciliation before future PH1.POSITION implementation or retirement slices are derived.
 
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -145,6 +148,7 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 - Selene Master Access Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing access, role, permission, template, tenant/workspace scope, per-user access instance, onboarding access handoff, link access context, private data read gate, protected execution gate, authority boundary, client, adapter, storage, audit, tests, and old-path behavior.
 - Selene Master Access Governance + Per-User Access Journey Master Design = future master design for Master Access templates, role hierarchy, permission matrix, per-user access instances, temporary/permanent/one-shot/revoke access, suspension/retirement/personal fallback, leave/off-work access posture, promotion/demotion/termination access flows, Position-to-Access co-authoring, onboarding access generation, private data read gates, protected execution access gates, PH1.D/PH1.N access proposal support, PH1.WRITE access explanations, audit, and JD live access proof.
 - Selene PH1.POSITION Position Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing position, job role, job family, department, hierarchy, reporting line, position requirement schema, dynamic fields, country/industry/company overlays, onboarding requirement handoff, access-template mapping, payroll/HR boundary, scheduler/roster boundary, client, adapter, storage, audit, tests, and old-path behavior.
+- Selene PH1.POSITION — Position Journey Intelligence + Access & Compensation Handoff Master Design = future master design for standard position library, industry packs, guided position creation, contractor/employee distinction, position hierarchy, dynamic requirement fields, country/industry overlays, position-to-onboarding handoff, position-to-access template co-authoring, job description drafting, salary benchmark/cost-to-company handoff, compensation override escalation, contractor billing handoff, batch openings, conditional offers, payroll/HR/finance/scheduler boundaries, PH1.D/PH1.N/PH1.X/PH1.WRITE-assisted position journeys, audit, and JD live proof.
 
 ## Future Expansion
 
