@@ -40,6 +40,10 @@ These documents are one architecture set. They must be read together. None overr
 32. [Selene PH1.POSITION Position Engine — Repo-Truth Functionality Extraction Master Design](SELENE_PH1POSITION_POSITION_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
 33. [Selene PH1.POSITION — Position Journey Intelligence + Access & Compensation Handoff Master Design](SELENE_PH1POSITION_POSITION_JOURNEY_INTELLIGENCE_ACCESS_COMPENSATION_HANDOFF_MASTER_DESIGN.md)
 34. [Selene Scheduler / Roster / Workload Engine — Repo-Truth Functionality Extraction Master Design](SELENE_SCHEDULER_ROSTER_WORKLOAD_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
+35. [Selene PH1.HWM — Human Work Management Umbrella Master Design](SELENE_PH1HWM_HUMAN_WORK_MANAGEMENT_UMBRELLA_MASTER_DESIGN.md)
+36. [Selene PH1.TASK + PH1.HWM.SCHEDULE — Task & Commitment Coordination Master Design](SELENE_PH1TASK_HWM_SCHEDULE_TASK_COMMITMENT_COORDINATION_MASTER_DESIGN.md)
+37. [Selene PH1.ROSTER + PH1.ATTENDANCE + PH1.HWM.STAFFING — Workforce Time Operations Master Design](SELENE_PH1ROSTER_ATTENDANCE_STAFFING_WORKTIME_OPERATIONS_MASTER_DESIGN.md)
+38. [Selene PH1.WORKLOAD + HWM Awareness / Negotiation / Performance Master Design](SELENE_PH1WORKLOAD_AWARENESS_NEGOTIATION_PERFORMANCE_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -117,6 +121,14 @@ This document is pending Grand Architecture Reconciliation before implementation
 
 This extraction document is pending Grand Architecture Reconciliation before future Scheduler/Roster/Workload implementation or retirement slices are derived.
 
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -153,6 +165,10 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 - Selene PH1.POSITION Position Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing position, job role, job family, department, hierarchy, reporting line, position requirement schema, dynamic fields, country/industry/company overlays, onboarding requirement handoff, access-template mapping, payroll/HR boundary, scheduler/roster boundary, client, adapter, storage, audit, tests, and old-path behavior.
 - Selene PH1.POSITION — Position Journey Intelligence + Access & Compensation Handoff Master Design = future master design for standard position library, industry packs, guided position creation, contractor/employee distinction, position hierarchy, dynamic requirement fields, country/industry overlays, position-to-onboarding handoff, position-to-access template co-authoring, job description drafting, salary benchmark/cost-to-company handoff, compensation override escalation, contractor billing handoff, batch openings, conditional offers, payroll/HR/finance/scheduler boundaries, PH1.D/PH1.N/PH1.X/PH1.WRITE-assisted position journeys, audit, and JD live proof.
 - Selene Scheduler / Roster / Workload Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing scheduler, roster, workload, calendar, shift, availability, leave, attendance, timesheet, contractor time, work pattern, public holiday, overtime, payroll handoff, position handoff, onboarding handoff, access off-work posture, reminder, notification, client, adapter, storage, audit, tests, and old-path behavior.
+- Selene PH1.HWM — Human Work Management Umbrella Master Design = umbrella design for Selene’s human work management stack, preserving and normalizing task, schedule, roster, attendance, workload, staffing, negotiation, performance, household, contractor, reminder, delivery, and protected execution concepts.
+- Selene PH1.TASK + PH1.HWM.SCHEDULE — Task & Commitment Coordination Master Design = future master design for task truth, assignment, acceptance, negotiation, task schedule coordination, due dates, workload-aware assignment, originator reporting, task rescue, household tasks, task packets, simulations, and JD live task proof.
+- Selene PH1.ROSTER + PH1.ATTENDANCE + PH1.HWM.STAFFING — Workforce Time Operations Master Design = future master design for workforce roster, shifts, attendance, leave, sick-day cover, clock-in/out, timesheets, overtime, location-verified attendance, staffing economics, labour demand, payroll evidence, workforce packets, simulations, and JD live roster proof.
+- Selene PH1.WORKLOAD + HWM Awareness / Negotiation / Performance Master Design = future master design for human capacity scoring, overload detection, assignment fit, operational awareness, structured negotiation, performance evidence, support-before-discipline, reward evidence, workload/performance packets, simulations, and JD live workload proof.
 
 ## Future Expansion
 
