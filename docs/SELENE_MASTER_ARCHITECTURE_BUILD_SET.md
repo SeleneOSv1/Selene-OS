@@ -44,6 +44,7 @@ These documents are one architecture set. They must be read together. None overr
 36. [Selene PH1.TASK + PH1.HWM.SCHEDULE — Task & Commitment Coordination Master Design](SELENE_PH1TASK_HWM_SCHEDULE_TASK_COMMITMENT_COORDINATION_MASTER_DESIGN.md)
 37. [Selene PH1.ROSTER + PH1.ATTENDANCE + PH1.HWM.STAFFING — Workforce Time Operations Master Design](SELENE_PH1ROSTER_ATTENDANCE_STAFFING_WORKTIME_OPERATIONS_MASTER_DESIGN.md)
 38. [Selene PH1.WORKLOAD + HWM Awareness / Negotiation / Performance Master Design](SELENE_PH1WORKLOAD_AWARENESS_NEGOTIATION_PERFORMANCE_MASTER_DESIGN.md)
+39. [Selene Payroll + HR Engine — Repo-Truth Functionality Extraction Master Design](SELENE_PAYROLL_HR_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -96,6 +97,8 @@ This document is a deep Selene Emotional Intelligence + Relationship Presence st
 This extraction document is pending Grand Architecture Reconciliation before future link-engine implementation or retirement slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This extraction document is pending Grand Architecture Reconciliation before future Payroll/HR implementation or retirement slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future broadcast/delivery/reminder implementation or retirement slices are derived.
 
@@ -169,6 +172,7 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene PH1.TASK + PH1.HWM.SCHEDULE — Task & Commitment Coordination Master Design = future master design for task truth, assignment, acceptance, negotiation, task schedule coordination, due dates, workload-aware assignment, originator reporting, task rescue, household tasks, task packets, simulations, and JD live task proof.
 - Selene PH1.ROSTER + PH1.ATTENDANCE + PH1.HWM.STAFFING — Workforce Time Operations Master Design = future master design for workforce roster, shifts, attendance, leave, sick-day cover, clock-in/out, timesheets, overtime, location-verified attendance, staffing economics, labour demand, payroll evidence, workforce packets, simulations, and JD live roster proof.
 - Selene PH1.WORKLOAD + HWM Awareness / Negotiation / Performance Master Design = future master design for human capacity scoring, overload detection, assignment fit, operational awareness, structured negotiation, performance evidence, support-before-discipline, reward evidence, workload/performance packets, simulations, and JD live workload proof.
+- Selene Payroll + HR Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing payroll, HR, employment lifecycle, salary/pay rate, compensation, benefits, deductions, tax/contributions, payrun, payslip, leave balance, final pay, contractor/AP boundary, attendance/timesheet handoff, position handoff, onboarding handoff, access/authority gates, client, adapter, storage, audit, tests, and old-path behavior.
 
 ## Future Expansion
 
