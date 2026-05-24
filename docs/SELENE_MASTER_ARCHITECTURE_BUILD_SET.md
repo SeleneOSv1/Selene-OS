@@ -45,6 +45,12 @@ These documents are one architecture set. They must be read together. None overr
 37. [Selene PH1.ROSTER + PH1.ATTENDANCE + PH1.HWM.STAFFING — Workforce Time Operations Master Design](SELENE_PH1ROSTER_ATTENDANCE_STAFFING_WORKTIME_OPERATIONS_MASTER_DESIGN.md)
 38. [Selene PH1.WORKLOAD + HWM Awareness / Negotiation / Performance Master Design](SELENE_PH1WORKLOAD_AWARENESS_NEGOTIATION_PERFORMANCE_MASTER_DESIGN.md)
 39. [Selene Payroll + HR Engine — Repo-Truth Functionality Extraction Master Design](SELENE_PAYROLL_HR_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
+40. [Selene Payroll + HR Automation Umbrella Master Design](SELENE_PAYROLL_HR_AUTOMATION_UMBRELLA_MASTER_DESIGN.md)
+41. [Selene HR, Recruitment, Probation, Resignation + Termination Automation Master Design](SELENE_HR_RECRUITMENT_PROBATION_OFFBOARDING_AUTOMATION_MASTER_DESIGN.md)
+42. [Selene Payroll Payrun, Payslip Review + Employee Dispute Resolution Master Design](SELENE_PAYROLL_PAYRUN_PAYSLIP_REVIEW_DISPUTE_RESOLUTION_MASTER_DESIGN.md)
+43. [Selene Compensation, Overtime, Commission, Holiday + Earnings Rules Master Design](SELENE_COMPENSATION_OVERTIME_COMMISSION_HOLIDAY_EARNINGS_RULES_MASTER_DESIGN.md)
+44. [Selene Leave, Benefits, Final Pay, Contractor/AP + Payment Automation Master Design](SELENE_LEAVE_BENEFITS_FINAL_PAY_CONTRACTOR_AP_PAYMENT_AUTOMATION_MASTER_DESIGN.md)
+45. [Selene Payroll/HR Evidence Fabric + Codex Readiness Conversion Layer](SELENE_PAYROLL_HR_EVIDENCE_FABRIC_CODEX_READINESS_CONVERSION_LAYER.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -99,6 +105,18 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future Payroll/HR implementation or retirement slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future broadcast/delivery/reminder implementation or retirement slices are derived.
 
@@ -173,6 +191,12 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene PH1.ROSTER + PH1.ATTENDANCE + PH1.HWM.STAFFING — Workforce Time Operations Master Design = future master design for workforce roster, shifts, attendance, leave, sick-day cover, clock-in/out, timesheets, overtime, location-verified attendance, staffing economics, labour demand, payroll evidence, workforce packets, simulations, and JD live roster proof.
 - Selene PH1.WORKLOAD + HWM Awareness / Negotiation / Performance Master Design = future master design for human capacity scoring, overload detection, assignment fit, operational awareness, structured negotiation, performance evidence, support-before-discipline, reward evidence, workload/performance packets, simulations, and JD live workload proof.
 - Selene Payroll + HR Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing payroll, HR, employment lifecycle, salary/pay rate, compensation, benefits, deductions, tax/contributions, payrun, payslip, leave balance, final pay, contractor/AP boundary, attendance/timesheet handoff, position handoff, onboarding handoff, access/authority gates, client, adapter, storage, audit, tests, and old-path behavior.
+- Selene Payroll + HR Automation Umbrella Master Design = future master design for Selene’s evidence-driven Payroll/HR automation umbrella, owner split, continuous payroll evidence collection, employee self-service, bank/payment setup, exception-first payrun preparation, payment handoff, and protected payroll execution.
+- Selene HR, Recruitment, Probation, Resignation + Termination Automation Master Design = future master design for HR lifecycle, recruitment, candidate outreach, probation evidence, resignation, termination, offboarding, rehire, handover, work reallocation, HR notices, and protected employment-state automation.
+- Selene Payroll Payrun, Payslip Review + Employee Dispute Resolution Master Design = future master design for payroll evidence gathering, payrun drafting, payslip preview, employee pay disputes, corrections, salary advances/deductions, secure payslip delivery, accounting/banking handoff, and payment confirmation.
+- Selene Compensation, Overtime, Commission, Holiday + Earnings Rules Master Design = future master design for salary/rate setup, market-informed compensation proposals, overtime rules, weekend/public holiday rates, commission boundaries, bonus/allowance/benefit rules, tax/super/retirement assumptions, management confirmation, and earnings-rule handoff to payroll.
+- Selene Leave, Benefits, Final Pay, Contractor/AP + Payment Automation Master Design = future master design for leave policy setup, leave evidence, public holiday handling, final pay, handover-before-final-pay guardrails, salary advances/deductions, contractor billing, contractor overrun, AP/payment boundaries, direct banking/accounting integration, tax/reporting handoff, and access expiry.
+- Selene Payroll/HR Evidence Fabric + Codex Readiness Conversion Layer = readiness bridge that converts Payroll/HR automation designs and the 43-point revision into canonical owner maps, evidence bundles, trust model, state machines, authority matrix, simulation inventory, failure modes, audit model, privacy classification, provider mocks, staged build order, acceptance tests, and preservation ledger.
 
 ## Future Expansion
 
