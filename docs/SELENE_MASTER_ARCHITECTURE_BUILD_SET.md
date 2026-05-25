@@ -51,6 +51,7 @@ These documents are one architecture set. They must be read together. None overr
 43. [Selene Compensation, Overtime, Commission, Holiday + Earnings Rules Master Design](SELENE_COMPENSATION_OVERTIME_COMMISSION_HOLIDAY_EARNINGS_RULES_MASTER_DESIGN.md)
 44. [Selene Leave, Benefits, Final Pay, Contractor/AP + Payment Automation Master Design](SELENE_LEAVE_BENEFITS_FINAL_PAY_CONTRACTOR_AP_PAYMENT_AUTOMATION_MASTER_DESIGN.md)
 45. [Selene Payroll/HR Evidence Fabric + Codex Readiness Conversion Layer](SELENE_PAYROLL_HR_EVIDENCE_FABRIC_CODEX_READINESS_CONVERSION_LAYER.md)
+46. [Selene Master Access — Authority Failure Escalation + Supervisor Approval Master Design](SELENE_MASTER_ACCESS_AUTHORITY_FAILURE_ESCALATION_SUPERVISOR_APPROVAL_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -105,6 +106,8 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future Payroll/HR implementation or retirement slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
@@ -197,6 +200,7 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Compensation, Overtime, Commission, Holiday + Earnings Rules Master Design = future master design for salary/rate setup, market-informed compensation proposals, overtime rules, weekend/public holiday rates, commission boundaries, bonus/allowance/benefit rules, tax/super/retirement assumptions, management confirmation, and earnings-rule handoff to payroll.
 - Selene Leave, Benefits, Final Pay, Contractor/AP + Payment Automation Master Design = future master design for leave policy setup, leave evidence, public holiday handling, final pay, handover-before-final-pay guardrails, salary advances/deductions, contractor billing, contractor overrun, AP/payment boundaries, direct banking/accounting integration, tax/reporting handoff, and access expiry.
 - Selene Payroll/HR Evidence Fabric + Codex Readiness Conversion Layer = readiness bridge that converts Payroll/HR automation designs and the 43-point revision into canonical owner maps, evidence bundles, trust model, state machines, authority matrix, simulation inventory, failure modes, audit model, privacy classification, provider mocks, staged build order, acceptance tests, and preservation ledger.
+- Selene Master Access — Authority Failure Escalation + Supervisor Approval Master Design = future master design for authority-failure escalation, supervisor/approver resolution, silent requester UX, one-time/temporary/permanent approval tokens, BCAST/DELIVERY approval request handoff, PH1.WRITE denial/approval wording, simulation compliance, audit, and protected fail-closed access recovery.
 
 ## Future Expansion
 
