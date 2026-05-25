@@ -54,6 +54,9 @@ These documents are one architecture set. They must be read together. None overr
 46. [Selene Master Access — Authority Failure Escalation + Supervisor Approval Master Design](SELENE_MASTER_ACCESS_AUTHORITY_FAILURE_ESCALATION_SUPERVISOR_APPROVAL_MASTER_DESIGN.md)
 47. [Selene Simulation 002 — Employee Bank Account Change + Step-Up Verification + Payroll Cutoff Handling](SELENE_SIMULATION_002_EMPLOYEE_BANK_ACCOUNT_CHANGE_STEPUP_PAYROLL_CUTOFF.md)
 48. [Selene Finance + Accounting Engine — Repo-Truth Functionality Extraction Master Design](SELENE_FINANCE_ACCOUNTING_ENGINE_REPO_TRUTH_FUNCTIONALITY_EXTRACTION_MASTER_DESIGN.md)
+49. [Selene Finance + Accounting Autonomous Umbrella Master Design](SELENE_FINANCE_ACCOUNTING_AUTONOMOUS_UMBRELLA_MASTER_DESIGN.md)
+50. [Selene General Ledger + Chart of Accounts + Journals + Period Close Master Design](SELENE_GENERAL_LEDGER_CHART_OF_ACCOUNTS_JOURNALS_PERIOD_CLOSE_MASTER_DESIGN.md)
+51. [Selene General Ledger Addendum — Chart Governance, Account Merge, Tax Optimization + Error-Prevention Law](SELENE_GENERAL_LEDGER_CHART_GOVERNANCE_ACCOUNT_MERGE_TAX_OPTIMIZATION_ADDENDUM.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -116,6 +119,12 @@ This document is pending Grand Architecture Reconciliation before implementation
 This simulation document is pending Grand Architecture Reconciliation and future repo-test mapping before implementation slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future Finance/Accounting implementation or retirement slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
@@ -209,6 +218,9 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Master Access — Authority Failure Escalation + Supervisor Approval Master Design = future master design for authority-failure escalation, supervisor/approver resolution, silent requester UX, one-time/temporary/permanent approval tokens, BCAST/DELIVERY approval request handoff, PH1.WRITE denial/approval wording, simulation compliance, audit, and protected fail-closed access recovery.
 - Selene Simulation 002 — Employee Bank Account Change + Step-Up Verification + Payroll Cutoff Handling = acceptance simulation for employee payroll self-service bank account change, step-up verification, country-specific bank fields, payroll cutoff behavior, old-data retention, Payroll owner update, PH1.WRITE wording, optional BCAST/DELIVERY notification, audit evidence, failure branches, and future test assertions.
 - Selene Finance + Accounting Engine — Repo-Truth Functionality Extraction Master Design = repo-truth recovered master-design-style extraction of existing finance, accounting, ledger, chart of accounts, journals, AP, AR, invoices, bills, receipts, payments, banking, reconciliation, budgets, profitability, cost centers, tax/GST/VAT, payroll accounting handoff, contractor/AP boundary, customer/supplier payment flows, access/authority gates, client, adapter, storage, audit, tests, and old-path behavior.
+- Selene Finance + Accounting Autonomous Umbrella Master Design = future master design for Selene's autonomous real-time international finance/accounting heart, connecting business events, accounting evidence, AP, AR, banking, payment rails, budgets, cashflow, POS, payroll, contractors, credit cards, assets, inventory, tax, access, PH1.D, PH1.WRITE, and audit into one governed financial operating system.
+- Selene General Ledger + Chart of Accounts + Journals + Period Close Master Design = future master design for Selene's accounting book engine: chart of accounts, general ledger, journal entries, ledger postings, trial balance, accounting periods, period close, corrections, reversals, suspense/clearing accounts, dimensions, multi-currency basics, access gates, audit, and period-close blockers.
+- Selene General Ledger Addendum — Chart Governance, Account Merge, Tax Optimization + Error-Prevention Law = addendum master design for account/category governance, adding/retiring/merging account codes and cost categories, spare-parts classification, effective-date merge handling, lawful tax-optimization study, shareholder-benefit analysis boundary, and prevention-first accounting correction law.
 
 ## Future Expansion
 
