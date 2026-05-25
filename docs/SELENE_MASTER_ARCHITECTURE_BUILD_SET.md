@@ -52,6 +52,7 @@ These documents are one architecture set. They must be read together. None overr
 44. [Selene Leave, Benefits, Final Pay, Contractor/AP + Payment Automation Master Design](SELENE_LEAVE_BENEFITS_FINAL_PAY_CONTRACTOR_AP_PAYMENT_AUTOMATION_MASTER_DESIGN.md)
 45. [Selene Payroll/HR Evidence Fabric + Codex Readiness Conversion Layer](SELENE_PAYROLL_HR_EVIDENCE_FABRIC_CODEX_READINESS_CONVERSION_LAYER.md)
 46. [Selene Master Access — Authority Failure Escalation + Supervisor Approval Master Design](SELENE_MASTER_ACCESS_AUTHORITY_FAILURE_ESCALATION_SUPERVISOR_APPROVAL_MASTER_DESIGN.md)
+47. [Selene Simulation 002 — Employee Bank Account Change + Step-Up Verification + Payroll Cutoff Handling](SELENE_SIMULATION_002_EMPLOYEE_BANK_ACCOUNT_CHANGE_STEPUP_PAYROLL_CUTOFF.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -110,6 +111,8 @@ This extraction document is pending Grand Architecture Reconciliation before fut
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This simulation document is pending Grand Architecture Reconciliation and future repo-test mapping before implementation slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
@@ -201,6 +204,7 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Leave, Benefits, Final Pay, Contractor/AP + Payment Automation Master Design = future master design for leave policy setup, leave evidence, public holiday handling, final pay, handover-before-final-pay guardrails, salary advances/deductions, contractor billing, contractor overrun, AP/payment boundaries, direct banking/accounting integration, tax/reporting handoff, and access expiry.
 - Selene Payroll/HR Evidence Fabric + Codex Readiness Conversion Layer = readiness bridge that converts Payroll/HR automation designs and the 43-point revision into canonical owner maps, evidence bundles, trust model, state machines, authority matrix, simulation inventory, failure modes, audit model, privacy classification, provider mocks, staged build order, acceptance tests, and preservation ledger.
 - Selene Master Access — Authority Failure Escalation + Supervisor Approval Master Design = future master design for authority-failure escalation, supervisor/approver resolution, silent requester UX, one-time/temporary/permanent approval tokens, BCAST/DELIVERY approval request handoff, PH1.WRITE denial/approval wording, simulation compliance, audit, and protected fail-closed access recovery.
+- Selene Simulation 002 — Employee Bank Account Change + Step-Up Verification + Payroll Cutoff Handling = acceptance simulation for employee payroll self-service bank account change, step-up verification, country-specific bank fields, payroll cutoff behavior, old-data retention, Payroll owner update, PH1.WRITE wording, optional BCAST/DELIVERY notification, audit evidence, failure branches, and future test assertions.
 
 ## Future Expansion
 
