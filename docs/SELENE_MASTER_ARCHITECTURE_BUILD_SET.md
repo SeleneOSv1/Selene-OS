@@ -61,6 +61,10 @@ These documents are one architecture set. They must be read together. None overr
 53. [Selene Accounts Payable Addendum — Critical Payment Timing + Goods Receiving + Supplier Resolution + 4-Way Match Law](SELENE_ACCOUNTS_PAYABLE_CRITICAL_PAYMENT_TIMING_GOODS_RECEIVING_SUPPLIER_RESOLUTION_ADDENDUM.md)
 54. [Selene Accounts Receivable + Invoices + Debtor Chasing + Collections Master Design](SELENE_ACCOUNTS_RECEIVABLE_INVOICES_DEBTOR_CHASING_COLLECTIONS_MASTER_DESIGN.md)
 55. [Selene Accounts Receivable Addendum — Customer Types + Credit Control + Payment Matching + Collections + Delivery/POS/Customer Relationship Boundary](SELENE_ACCOUNTS_RECEIVABLE_CUSTOMER_TYPES_CREDIT_CONTROL_PAYMENT_MATCHING_COLLECTIONS_ADDENDUM.md)
+56. [Selene Banking + Payment Rails + Reconciliation Master Design](SELENE_BANKING_PAYMENT_RAILS_RECONCILIATION_MASTER_DESIGN.md)
+57. [Selene Banking Addendum — Live Bank Truth + Account Changes + Transaction Categorization + Provider Authorization + Financial Wellbeing Boundary](SELENE_BANKING_LIVE_TRUTH_ACCOUNT_CHANGES_TRANSACTION_CATEGORIZATION_AUTHORIZATION_ADDENDUM.md)
+58. [Selene Credit Cards + Employee Spend + Reimbursements Master Design](SELENE_CREDIT_CARDS_EMPLOYEE_SPEND_REIMBURSEMENTS_MASTER_DESIGN.md)
+59. [Selene Credit Cards Addendum — Card Lifecycle + Instant Receipt Capture + Card Issuance + Spend Limit Intelligence](SELENE_CREDIT_CARDS_CARD_LIFECYCLE_INSTANT_RECEIPT_CAPTURE_LIMIT_INTELLIGENCE_ADDENDUM.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -180,6 +184,14 @@ This document is pending Grand Architecture Reconciliation before implementation
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -237,6 +249,10 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Accounts Payable Addendum — Critical Payment Timing + Goods Receiving + Supplier Resolution + 4-Way Match Law = addendum master design for critical no-late payment timing, loans/leases/tax/rent/payment clearing deadlines, 4-stage purchase-to-pay control, goods receipt, inspection/acceptance, supplier resolution, 4-way match, accepted-goods-only payment release, PH1.PROC.RECEIVE future boundary, responsible person assignment, critical payment escalation, and audit.
 - Selene Accounts Receivable + Invoices + Debtor Chasing + Collections Master Design = future master design for Selene's Accounts Receivable engine covering customer invoices, sales/service/subscription invoices, invoice delivery, Selene-to-Selene invoice exchange, payment terms, 30/60/90+ aging, debtor chasing, cashflow-triggered collections, payment links, receipts, payment allocation, partial/over/under payments, payment plans, disputes, credit notes, refunds, bad debt/write-off, customer statements, recurring invoices, rental income handoff, accounting handoff, tax treatment, access gates, PH1.D/PH1.WRITE support, and audit.
 - Selene Accounts Receivable Addendum — Customer Types + Credit Control + Payment Matching + Collections + Delivery/POS/Customer Relationship Boundary = addendum master design for Selene-connected and non-Selene customer flows, customer qualification, customer behavior tracking, good/disorganized/shaky/bad-actor customer types, credit limit handling, cash-only/suspended/restoration states, late interest and collection costs, customer-paid bank search, direct bank deposit matching, ambiguous receipt review, chargebacks, payment provider fee review, refund/credit note governance, instant invoice resend by SMS/email/WhatsApp, PH1.LOGISTICS delivery boundary, PH1.POS.COMMERCE boundary, PH1.CUSTOMER relationship boundary, PH1.CREDIT boundary, PH1.AR.COLLECT boundary, and customer-aware communication.
+- Selene Banking + Payment Rails + Reconciliation Master Design = future master design for Selene's banking and payment proof engine covering bank connections, bank accounts, balances, transaction feeds, payment instructions, payment rails, payment approval and step-up, bank API/provider execution, payment confirmation, failures, direct bank receipts, matching, reconciliation, chargebacks, fees, refunds, payroll/AP/statutory/debt payment execution, cash reserve gates, fraud risk, payment file export fallback, FX settlement, accounting handoff, PH1.D/PH1.WRITE support, audit, and future simulations.
+- Selene Banking Addendum — Live Bank Truth + Account Changes + Transaction Categorization + Provider Authorization + Financial Wellbeing Boundary = addendum master design for live/stale bank balance truth, full transaction feeds, automatic categorization with confidence gates, bank-native SCA/OTP/provider approval, universal bank-account change governance, supplier/customer/company/shareholder bank account flows, spelling/entity confirmation law, employee private financial wellbeing boundary, lifetime continuity, consent bridge, regulated financial advice boundary, and private-vs-company bank feed separation.
+- Selene Credit Cards + Employee Spend + Reimbursements Master Design = future master design for Selene's card and employee-spend control system covering company/executive/employee cards, card assignment, card limits, card feeds, transaction classification, receipts, business purpose, personal/mixed spend, reimbursements, expense claims, mileage/travel claims, employee advances, personal charge recovery, payroll deduction boundary, card budgets, merchant controls, missing receipt policy, reconciliation, fraud/lost/stolen cards, card offboarding, subscriptions, fleet/benefits/tax/accounting handoffs, access gates, PH1.D/PH1.WRITE support, audit, and future simulations.
+- Selene Credit Cards Addendum — Card Lifecycle + Instant Receipt Capture + Card Issuance + Spend Limit Intelligence = addendum master design for immediate card stop on resignation/termination/retirement/suspension/role downgrade, role-change card review, card limit increase/decrease governance, card issuance intelligence, named card/provider request flows, instant camera receipt capture, pending receipt-to-feed matching, daily/weekly/monthly review cadence, all-transaction evidence rule, fuel/vehicle odometer evidence, missing receipt escalation, role-based card templates, insurance/fleet boundaries, and future card simulations.
 
 ## Future Expansion
 
