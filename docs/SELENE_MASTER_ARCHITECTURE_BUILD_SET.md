@@ -57,6 +57,10 @@ These documents are one architecture set. They must be read together. None overr
 49. [Selene Finance + Accounting Autonomous Umbrella Master Design](SELENE_FINANCE_ACCOUNTING_AUTONOMOUS_UMBRELLA_MASTER_DESIGN.md)
 50. [Selene General Ledger + Chart of Accounts + Journals + Period Close Master Design](SELENE_GENERAL_LEDGER_CHART_OF_ACCOUNTS_JOURNALS_PERIOD_CLOSE_MASTER_DESIGN.md)
 51. [Selene General Ledger Addendum — Chart Governance, Account Merge, Tax Optimization + Error-Prevention Law](SELENE_GENERAL_LEDGER_CHART_GOVERNANCE_ACCOUNT_MERGE_TAX_OPTIMIZATION_ADDENDUM.md)
+52. [Selene Accounts Payable + Supplier Bills + Installments + Scheduled Payments Master Design](SELENE_ACCOUNTS_PAYABLE_SUPPLIER_BILLS_INSTALLMENTS_SCHEDULED_PAYMENTS_MASTER_DESIGN.md)
+53. [Selene Accounts Payable Addendum — Critical Payment Timing + Goods Receiving + Supplier Resolution + 4-Way Match Law](SELENE_ACCOUNTS_PAYABLE_CRITICAL_PAYMENT_TIMING_GOODS_RECEIVING_SUPPLIER_RESOLUTION_ADDENDUM.md)
+54. [Selene Accounts Receivable + Invoices + Debtor Chasing + Collections Master Design](SELENE_ACCOUNTS_RECEIVABLE_INVOICES_DEBTOR_CHASING_COLLECTIONS_MASTER_DESIGN.md)
+55. [Selene Accounts Receivable Addendum — Customer Types + Credit Control + Payment Matching + Collections + Delivery/POS/Customer Relationship Boundary](SELENE_ACCOUNTS_RECEIVABLE_CUSTOMER_TYPES_CREDIT_CONTROL_PAYMENT_MATCHING_COLLECTIONS_ADDENDUM.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -119,6 +123,14 @@ This document is pending Grand Architecture Reconciliation before implementation
 This simulation document is pending Grand Architecture Reconciliation and future repo-test mapping before implementation slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future Finance/Accounting implementation or retirement slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
@@ -221,6 +233,10 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Finance + Accounting Autonomous Umbrella Master Design = future master design for Selene's autonomous real-time international finance/accounting heart, connecting business events, accounting evidence, AP, AR, banking, payment rails, budgets, cashflow, POS, payroll, contractors, credit cards, assets, inventory, tax, access, PH1.D, PH1.WRITE, and audit into one governed financial operating system.
 - Selene General Ledger + Chart of Accounts + Journals + Period Close Master Design = future master design for Selene's accounting book engine: chart of accounts, general ledger, journal entries, ledger postings, trial balance, accounting periods, period close, corrections, reversals, suspense/clearing accounts, dimensions, multi-currency basics, access gates, audit, and period-close blockers.
 - Selene General Ledger Addendum — Chart Governance, Account Merge, Tax Optimization + Error-Prevention Law = addendum master design for account/category governance, adding/retiring/merging account codes and cost categories, spare-parts classification, effective-date merge handling, lawful tax-optimization study, shareholder-benefit analysis boundary, and prevention-first accounting correction law.
+- Selene Accounts Payable + Supplier Bills + Installments + Scheduled Payments Master Design = future master design for Selene's Accounts Payable engine covering supplier bills, contractor invoices, vendor bills, payment terms, installments, lease payments, recurring and scheduled payments, duplicate invoice detection, PO/contract matching, AP approvals, cashflow checks, payment instruction handoff, supplier disputes, credit notes, supplier statements, AP reminders, accounting handoff, tax treatment, access gates, PH1.D/PH1.WRITE support, and audit.
+- Selene Accounts Payable Addendum — Critical Payment Timing + Goods Receiving + Supplier Resolution + 4-Way Match Law = addendum master design for critical no-late payment timing, loans/leases/tax/rent/payment clearing deadlines, 4-stage purchase-to-pay control, goods receipt, inspection/acceptance, supplier resolution, 4-way match, accepted-goods-only payment release, PH1.PROC.RECEIVE future boundary, responsible person assignment, critical payment escalation, and audit.
+- Selene Accounts Receivable + Invoices + Debtor Chasing + Collections Master Design = future master design for Selene's Accounts Receivable engine covering customer invoices, sales/service/subscription invoices, invoice delivery, Selene-to-Selene invoice exchange, payment terms, 30/60/90+ aging, debtor chasing, cashflow-triggered collections, payment links, receipts, payment allocation, partial/over/under payments, payment plans, disputes, credit notes, refunds, bad debt/write-off, customer statements, recurring invoices, rental income handoff, accounting handoff, tax treatment, access gates, PH1.D/PH1.WRITE support, and audit.
+- Selene Accounts Receivable Addendum — Customer Types + Credit Control + Payment Matching + Collections + Delivery/POS/Customer Relationship Boundary = addendum master design for Selene-connected and non-Selene customer flows, customer qualification, customer behavior tracking, good/disorganized/shaky/bad-actor customer types, credit limit handling, cash-only/suspended/restoration states, late interest and collection costs, customer-paid bank search, direct bank deposit matching, ambiguous receipt review, chargebacks, payment provider fee review, refund/credit note governance, instant invoice resend by SMS/email/WhatsApp, PH1.LOGISTICS delivery boundary, PH1.POS.COMMERCE boundary, PH1.CUSTOMER relationship boundary, PH1.CREDIT boundary, PH1.AR.COLLECT boundary, and customer-aware communication.
 
 ## Future Expansion
 
