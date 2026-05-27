@@ -65,6 +65,9 @@ These documents are one architecture set. They must be read together. None overr
 57. [Selene Banking Addendum — Live Bank Truth + Account Changes + Transaction Categorization + Provider Authorization + Financial Wellbeing Boundary](SELENE_BANKING_LIVE_TRUTH_ACCOUNT_CHANGES_TRANSACTION_CATEGORIZATION_AUTHORIZATION_ADDENDUM.md)
 58. [Selene Credit Cards + Employee Spend + Reimbursements Master Design](SELENE_CREDIT_CARDS_EMPLOYEE_SPEND_REIMBURSEMENTS_MASTER_DESIGN.md)
 59. [Selene Credit Cards Addendum — Card Lifecycle + Instant Receipt Capture + Card Issuance + Spend Limit Intelligence](SELENE_CREDIT_CARDS_CARD_LIFECYCLE_INSTANT_RECEIPT_CAPTURE_LIMIT_INTELLIGENCE_ADDENDUM.md)
+60. [Selene Budgeting + Spend Control + Board Approval Master Design](SELENE_BUDGETING_SPEND_CONTROL_BOARD_APPROVAL_MASTER_DESIGN.md)
+61. [Selene Budgeting Addendum — Budget Resolution + Purchase Commitment Control + Profit Protection Intelligence](SELENE_BUDGETING_BUDGET_RESOLUTION_PURCHASE_COMMITMENT_PROFIT_PROTECTION_ADDENDUM.md)
+62. [Selene Cashflow Forecasting + Payment Priority Intelligence Master Design](SELENE_CASHFLOW_FORECASTING_PAYMENT_PRIORITY_INTELLIGENCE_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -127,6 +130,12 @@ This document is pending Grand Architecture Reconciliation before implementation
 This simulation document is pending Grand Architecture Reconciliation and future repo-test mapping before implementation slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future Finance/Accounting implementation or retirement slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
@@ -253,6 +262,9 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Banking Addendum — Live Bank Truth + Account Changes + Transaction Categorization + Provider Authorization + Financial Wellbeing Boundary = addendum master design for live/stale bank balance truth, full transaction feeds, automatic categorization with confidence gates, bank-native SCA/OTP/provider approval, universal bank-account change governance, supplier/customer/company/shareholder bank account flows, spelling/entity confirmation law, employee private financial wellbeing boundary, lifetime continuity, consent bridge, regulated financial advice boundary, and private-vs-company bank feed separation.
 - Selene Credit Cards + Employee Spend + Reimbursements Master Design = future master design for Selene's card and employee-spend control system covering company/executive/employee cards, card assignment, card limits, card feeds, transaction classification, receipts, business purpose, personal/mixed spend, reimbursements, expense claims, mileage/travel claims, employee advances, personal charge recovery, payroll deduction boundary, card budgets, merchant controls, missing receipt policy, reconciliation, fraud/lost/stolen cards, card offboarding, subscriptions, fleet/benefits/tax/accounting handoffs, access gates, PH1.D/PH1.WRITE support, audit, and future simulations.
 - Selene Credit Cards Addendum — Card Lifecycle + Instant Receipt Capture + Card Issuance + Spend Limit Intelligence = addendum master design for immediate card stop on resignation/termination/retirement/suspension/role downgrade, role-change card review, card limit increase/decrease governance, card issuance intelligence, named card/provider request flows, instant camera receipt capture, pending receipt-to-feed matching, daily/weekly/monthly review cadence, all-transaction evidence rule, fuel/vehicle odometer evidence, missing receipt escalation, role-based card templates, insurance/fleet boundaries, and future card simulations.
+- Selene Budgeting + Spend Control + Board Approval Master Design = future master design for Selene's budgeting and spend governance engine covering annual, department, cost-center, project, capex, payroll, credit-card, and other budgets; minimum cash reserve policy; net profit floor; spend request budget checks; committed vs actual spend; variance; budget increase requests; board approval; multi-authority approval; emergency overrides; spend freeze; forecasted spend; budget-aware procurement, AP, cards, payroll, and hiring; access gates; PH1.D/PH1.WRITE support; audit; and future simulations.
+- Selene Budgeting Addendum — Budget Resolution + Purchase Commitment Control + Profit Protection Intelligence = addendum master design for solution-first budget governance, purchase commitment control before PO creation, budget hierarchy, reallocation before budget increase, revenue and cost offset search, lease-vs-buy intelligence, net profit floor protection, over-budget root cause and prevention, approval-only-when-necessary law, PO hold/refusal authority, budget recovery plans, escalation discipline, future Board/Shareholder/Asset/Fleet/Insurance/Debt/Reporting dependencies, and future simulations.
+- Selene Cashflow Forecasting + Payment Priority Intelligence Master Design = future master design for Selene's cashflow intelligence engine covering bank-aware cash forecasting, cash horizons, incoming/outgoing/operational cash inputs, data freshness, trust status, cash risk modes, autonomous cashflow protocol, debtor collection priority, sales/revenue activation, payment prioritization, critical payment timing, reserve protection, net profit/cash interaction, scenario planning, cash recovery plans, supplier negotiation, working capital metrics, cashflow visibility for PO, inventory, payroll, debt/loans/leases, insurance, cards, dividends, reporting boundary, access gates, PH1.D/PH1.WRITE support, audit, failure branches, and future simulations.
 
 ## Future Expansion
 
