@@ -74,6 +74,10 @@ These documents are one architecture set. They must be read together. None overr
 66. [Selene Business Model Activation Router Master Design](SELENE_COMPANY_ONBOARDING_BUSINESS_MODEL_ACTIVATION_ROUTER_MASTER_DESIGN.md)
 67. [Selene Governance Source Pack Onboarding Master Design](SELENE_COMPANY_ONBOARDING_GOVERNANCE_SOURCE_PACK_MASTER_DESIGN.md)
 68. [Selene Company Onboarding Evidence Fabric + Codex Readiness Layer](SELENE_COMPANY_ONBOARDING_EVIDENCE_FABRIC_CODEX_READINESS_LAYER.md)
+69. [Selene Assets + Depreciation + Claimable Expense Rules Master Design](SELENE_ASSETS_DEPRECIATION_CLAIMABLE_EXPENSE_RULES_MASTER_DESIGN.md)
+70. [Selene Assets Addendum — Country Tax Packs + Stamp Duty + Asset Funding Decision Intelligence + Capability Guide Boundary](SELENE_ASSETS_COUNTRY_TAX_PACKS_STAMP_DUTY_FUNDING_GUIDE_ADDENDUM.md)
+71. [Selene Inventory + COGS + Stock Accounting Handoff Master Design](SELENE_INVENTORY_COGS_STOCK_ACCOUNTING_HANDOFF_MASTER_DESIGN.md)
+72. [Selene Inventory Addendum A — Autonomous JIT + Reorder Intelligence + Product Role Logic + Inventory Operating Autonomy Mode](SELENE_INVENTORY_AUTONOMOUS_JIT_REORDER_PRODUCT_ROLE_AUTONOMY_ADDENDUM.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -219,6 +223,14 @@ This document is pending Grand Architecture Reconciliation before implementation
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
 ## Hierarchy
 
 - Selene Provider-First OpenAI Assisted Pivot Master Build Plan = strategic provider-first pivot.
@@ -289,6 +301,10 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Business Model Activation Router Master Design = future master design for detecting business models such as B2C, B2B, POS, e-commerce, subscription, appointment-based, manufacturing, wholesale, service, multi-branch, supplier network, delivery/logistics, rental/property income, fleet, and contractor models, and mapping them to required, optional, deferred, or blocked Selene engines.
 - Selene Governance Source Pack Onboarding Master Design = future master design for onboarding company governance sources such as constitution/articles, shareholder agreements, directors, board structure, shareholders, share classes, voting rights, approval matrices, bank signing rules, payment/budget/dividend approval rules, delegated authority, ownership structures, and legal entity structures into Board, Shareholder, Access, Finance, Banking, Payroll, HR, Equity, Debt, and Audit owners.
 - Selene Company Onboarding Evidence Fabric + Codex Readiness Layer = future master design for company onboarding owner maps, evidence packets, state machines, module activation statuses, go-live readiness, missing information tracking, deferred setup, audit, simulation targets, acceptance tests, preservation ledger, and Codex readiness mapping.
+- Selene Assets + Depreciation + Claimable Expense Rules Master Design = future master design for Selene's asset accounting and tax handoff layer covering asset candidates, capitalization, asset register, placed-in-service timing, depreciation, book-vs-tax depreciation, business/private use, claimability, repairs vs improvements, insurance/fleet/property/debt boundaries, revaluation, impairment, disposal, transfers, leased/right-of-use assets, assets under construction, intangibles, low-value assets, funding source, lease-vs-buy handoff, collateral, verification, access gates, PH1.D/PH1.WRITE support, audit, and simulations.
+- Selene Assets Addendum — Country Tax Packs + Stamp Duty + Asset Funding Decision Intelligence + Capability Guide Boundary = addendum master design for country tax packs, official-source update protocol, claimability rule packs, versioned effective-date tax rules, stamp duty/transfer duty/government charge checks, intercompany asset transfer logic, cash-vs-loan-vs-lease deterministic decision intelligence, PH1.GUIDE capability explainer boundary, access gates, audit, and simulations.
+- Selene Inventory + COGS + Stock Accounting Handoff Master Design = future master design for Selene's inventory physical stock truth and accounting handoff layer covering product/inventory separation, stock locations, batches, serials, stock movements, goods receiving and accepted stock, reservations, backorders, inventory modes, reorder intelligence, cashflow-aware replenishment, product role intelligence, stock transfers, supplier/procurement/receiving/AP/accounting boundaries, COGS, valuation evidence, stocktake, shrinkage, expiry, returns, manufacturing/WIP, restaurant recipes, dead stock, inventory health, access gates, PH1.D/PH1.WRITE support, audit, and simulations.
+- Selene Inventory Addendum A — Autonomous JIT + Reorder Intelligence + Product Role Logic + Inventory Operating Autonomy Mode = addendum master design for autonomous JIT/lean replenishment, reorder intelligence, cashflow-optimized inventory, product movement/discontinuation logic, low-margin traffic-driver/habit-builder products, restocking cadence, perishable staged production, supplier/procurement/receiving boundaries, and company-selectable inventory autonomy modes including Autonomous Inventory Operator, Human Approval / Prepared Order, and Hybrid Mode.
 
 ## Future Expansion
 
