@@ -68,6 +68,12 @@ These documents are one architecture set. They must be read together. None overr
 60. [Selene Budgeting + Spend Control + Board Approval Master Design](SELENE_BUDGETING_SPEND_CONTROL_BOARD_APPROVAL_MASTER_DESIGN.md)
 61. [Selene Budgeting Addendum — Budget Resolution + Purchase Commitment Control + Profit Protection Intelligence](SELENE_BUDGETING_BUDGET_RESOLUTION_PURCHASE_COMMITMENT_PROFIT_PROTECTION_ADDENDUM.md)
 62. [Selene Cashflow Forecasting + Payment Priority Intelligence Master Design](SELENE_CASHFLOW_FORECASTING_PAYMENT_PRIORITY_INTELLIGENCE_MASTER_DESIGN.md)
+63. [Selene Universal Company Onboarding Spine Master Design](SELENE_COMPANY_ONBOARDING_UNIVERSAL_SPINE_MASTER_DESIGN.md)
+64. [Selene Company Size Classification + Size Packs Master Design](SELENE_COMPANY_ONBOARDING_SIZE_CLASSIFICATION_SIZE_PACKS_MASTER_DESIGN.md)
+65. [Selene Industry Detection + Industry Starter Packs Master Design](SELENE_COMPANY_ONBOARDING_INDUSTRY_DETECTION_STARTER_PACKS_MASTER_DESIGN.md)
+66. [Selene Business Model Activation Router Master Design](SELENE_COMPANY_ONBOARDING_BUSINESS_MODEL_ACTIVATION_ROUTER_MASTER_DESIGN.md)
+67. [Selene Governance Source Pack Onboarding Master Design](SELENE_COMPANY_ONBOARDING_GOVERNANCE_SOURCE_PACK_MASTER_DESIGN.md)
+68. [Selene Company Onboarding Evidence Fabric + Codex Readiness Layer](SELENE_COMPANY_ONBOARDING_EVIDENCE_FABRIC_CODEX_READINESS_LAYER.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -130,6 +136,18 @@ This document is pending Grand Architecture Reconciliation before implementation
 This simulation document is pending Grand Architecture Reconciliation and future repo-test mapping before implementation slices are derived.
 
 This extraction document is pending Grand Architecture Reconciliation before future Finance/Accounting implementation or retirement slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
+
+This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
 This document is pending Grand Architecture Reconciliation before implementation slices are derived.
 
@@ -265,6 +283,12 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Budgeting + Spend Control + Board Approval Master Design = future master design for Selene's budgeting and spend governance engine covering annual, department, cost-center, project, capex, payroll, credit-card, and other budgets; minimum cash reserve policy; net profit floor; spend request budget checks; committed vs actual spend; variance; budget increase requests; board approval; multi-authority approval; emergency overrides; spend freeze; forecasted spend; budget-aware procurement, AP, cards, payroll, and hiring; access gates; PH1.D/PH1.WRITE support; audit; and future simulations.
 - Selene Budgeting Addendum — Budget Resolution + Purchase Commitment Control + Profit Protection Intelligence = addendum master design for solution-first budget governance, purchase commitment control before PO creation, budget hierarchy, reallocation before budget increase, revenue and cost offset search, lease-vs-buy intelligence, net profit floor protection, over-budget root cause and prevention, approval-only-when-necessary law, PO hold/refusal authority, budget recovery plans, escalation discipline, future Board/Shareholder/Asset/Fleet/Insurance/Debt/Reporting dependencies, and future simulations.
 - Selene Cashflow Forecasting + Payment Priority Intelligence Master Design = future master design for Selene's cashflow intelligence engine covering bank-aware cash forecasting, cash horizons, incoming/outgoing/operational cash inputs, data freshness, trust status, cash risk modes, autonomous cashflow protocol, debtor collection priority, sales/revenue activation, payment prioritization, critical payment timing, reserve protection, net profit/cash interaction, scenario planning, cash recovery plans, supplier negotiation, working capital metrics, cashflow visibility for PO, inventory, payroll, debt/loans/leases, insurance, cards, dividends, reporting boundary, access gates, PH1.D/PH1.WRITE support, audit, failure branches, and future simulations.
+- Selene Universal Company Onboarding Spine Master Design = future master design for Selene's universal company onboarding journey, company identity setup, legal/trading name confirmation, jurisdiction setup, evidence intake, human-like guided onboarding, module proposal, deferred setup, go-live readiness, progress checkpointing, and cross-engine setup initiation.
+- Selene Company Size Classification + Size Packs Master Design = future master design for company size detection and size-based onboarding depth across solo/freelancer, small business, mid-size company, large enterprise, and multi-entity group while preserving full Selene capability for every company.
+- Selene Industry Detection + Industry Starter Packs Master Design = future master design for industry overlay detection and starter packs across retail, restaurant/food, manufacturing, salon/beauty, supplier/vendor, and professional/freelancer service businesses, connecting industry setup to product, inventory, POS, e-commerce, B2B, payroll, tax, accounting, customer, supplier, logistics, and operational engines.
+- Selene Business Model Activation Router Master Design = future master design for detecting business models such as B2C, B2B, POS, e-commerce, subscription, appointment-based, manufacturing, wholesale, service, multi-branch, supplier network, delivery/logistics, rental/property income, fleet, and contractor models, and mapping them to required, optional, deferred, or blocked Selene engines.
+- Selene Governance Source Pack Onboarding Master Design = future master design for onboarding company governance sources such as constitution/articles, shareholder agreements, directors, board structure, shareholders, share classes, voting rights, approval matrices, bank signing rules, payment/budget/dividend approval rules, delegated authority, ownership structures, and legal entity structures into Board, Shareholder, Access, Finance, Banking, Payroll, HR, Equity, Debt, and Audit owners.
+- Selene Company Onboarding Evidence Fabric + Codex Readiness Layer = future master design for company onboarding owner maps, evidence packets, state machines, module activation statuses, go-live readiness, missing information tracking, deferred setup, audit, simulation targets, acceptance tests, preservation ledger, and Codex readiness mapping.
 
 ## Future Expansion
 
