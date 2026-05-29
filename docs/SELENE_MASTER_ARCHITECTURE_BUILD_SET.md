@@ -288,6 +288,12 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Finance / Accounting Batch 8 — Documents 15–16 + Document 15 Addendum A = canonical batch file containing Finance / Accounting Document 15 Tax Compliance + Filing, Document 15 Addendum A Boundary Between Tax Compliance and Legal Tax Optimization, and Finance / Accounting Document 16 Legal Tax Optimization + Treaty + Jurisdiction Intelligence.
 - Finance / Accounting Batch 9 — Documents 17–18 = canonical batch file containing Finance / Accounting Document 17 Asset Accounting, Depreciation + Claimable Expense Rules and Finance / Accounting Document 18 Debt, Loans, Borrowing Costs, Covenants + Security Accounting.
 
+## Legacy / Review Candidates — Non-Canonical
+
+These files are tracked for future review only. They are not part of the numbered global master architecture document sequence, do not increase the highest global master document number, and are not canonical unless a later JD-approved index repair promotes or retires them.
+
+- [PH1.X Human Conversation Core Rewrite Candidate](PH1_X_REWRITE_HUMAN_CONVERSATION_CORE_MASTER_DESIGN.md) — Unindexed PH1.X rewrite candidate; not canonical; not assigned global document number; pending future merge/retire decision.
+
 ## Future Expansion
 
 Additional architecture documents may be added later by JD. Future documents must be connected through this index and any approved architecture-set link sections without rewriting verbatim source documents.
