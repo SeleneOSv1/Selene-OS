@@ -69,6 +69,10 @@ These documents are one architecture set. They must be read together. None overr
 61. [Finance / Accounting Batch 7 — Documents 13–14](SELENE_FINANCE_ACCOUNTING_BATCH_7_DOCUMENTS_13_14_BUDGET_PERIOD_CLOSE_REPORTING_MASTER_DESIGN.md)
 62. [Finance / Accounting Batch 8 — Documents 15–16 + Document 15 Addendum A](SELENE_FINANCE_ACCOUNTING_BATCH_8_DOCUMENTS_15_16_TAX_COMPLIANCE_OPTIMIZATION_MASTER_DESIGN.md)
 63. [Finance / Accounting Batch 9 — Documents 17–18](SELENE_FINANCE_ACCOUNTING_BATCH_9_DOCUMENTS_17_18_ASSET_DEBT_ACCOUNTING_MASTER_DESIGN.md)
+64. [Selene Product Intelligence Engine](SELENE_GLOBAL_DOCUMENT_64_PRODUCT_INTELLIGENCE_ENGINE_MASTER_DESIGN.md)
+65. [Selene Inventory Intelligence Engine](SELENE_GLOBAL_DOCUMENT_65_INVENTORY_INTELLIGENCE_ENGINE_MASTER_DESIGN.md)
+66. [Product ↔ Inventory Boundary + Handoff Contract](SELENE_GLOBAL_DOCUMENT_66_PRODUCT_INVENTORY_BOUNDARY_HANDOFF_CONTRACT_MASTER_DESIGN.md)
+67. [Product + Inventory Codex Readiness Overview](SELENE_GLOBAL_DOCUMENT_67_PRODUCT_INVENTORY_CODEX_READINESS_OVERVIEW.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -287,6 +291,10 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Finance / Accounting Batch 7 — Documents 13–14 = canonical batch file containing Finance / Accounting Document 13 Budget, Cost Center, Spend Governance + Profitability and Finance / Accounting Document 14 Period Close + Financial Reporting.
 - Finance / Accounting Batch 8 — Documents 15–16 + Document 15 Addendum A = canonical batch file containing Finance / Accounting Document 15 Tax Compliance + Filing, Document 15 Addendum A Boundary Between Tax Compliance and Legal Tax Optimization, and Finance / Accounting Document 16 Legal Tax Optimization + Treaty + Jurisdiction Intelligence.
 - Finance / Accounting Batch 9 — Documents 17–18 = canonical batch file containing Finance / Accounting Document 17 Asset Accounting, Depreciation + Claimable Expense Rules and Finance / Accounting Document 18 Debt, Loans, Borrowing Costs, Covenants + Security Accounting.
+- Selene Product Intelligence Engine = future master design for product identity, product experience, supplier data links, commerce presentation, product passport readiness, product media, market positioning, channel readiness, and product-to-inventory handoff boundaries.
+- Selene Inventory Intelligence Engine = future master design for stock truth, location, movement, traceability, shelf-life, replenishment, JIT, reorder intelligence, stock health, working-capital protection, and inventory-to-product/commerce handoff boundaries.
+- Product ↔ Inventory Boundary + Handoff Contract = future master design for source-of-truth separation, product-to-inventory templates, inventory-to-product availability updates, shared unit/traceability governance, change-control rules, and conflict prevention.
+- Product + Inventory Codex Readiness Overview = batch control document for adding Global Documents 64–67, preserving Finance / Accounting mappings, keeping PH1.X as non-canonical legacy/review, and preparing future repo-truth activation without runtime implementation.
 
 ## Legacy / Review Candidates — Non-Canonical
 
