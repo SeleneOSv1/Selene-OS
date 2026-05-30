@@ -73,6 +73,15 @@ These documents are one architecture set. They must be read together. None overr
 65. [Selene Inventory Intelligence Engine](SELENE_GLOBAL_DOCUMENT_65_INVENTORY_INTELLIGENCE_ENGINE_MASTER_DESIGN.md)
 66. [Product ↔ Inventory Boundary + Handoff Contract](SELENE_GLOBAL_DOCUMENT_66_PRODUCT_INVENTORY_BOUNDARY_HANDOFF_CONTRACT_MASTER_DESIGN.md)
 67. [Product + Inventory Codex Readiness Overview](SELENE_GLOBAL_DOCUMENT_67_PRODUCT_INVENTORY_CODEX_READINESS_OVERVIEW.md)
+68. [Selene Supplier Intelligence Engine](SELENE_GLOBAL_DOCUMENT_68_SUPPLIER_INTELLIGENCE_ENGINE_MASTER_DESIGN.md)
+69. [Supplier Bank Change + Selene-to-Selene Counterparty Trust Protocol Addendum](SELENE_GLOBAL_DOCUMENT_69_SUPPLIER_BANK_CHANGE_COUNTERPARTY_TRUST_PROTOCOL_ADDENDUM.md)
+70. [Selene Procurement + Purchase Order Engine](SELENE_GLOBAL_DOCUMENT_70_PROCUREMENT_PURCHASE_ORDER_ENGINE_MASTER_DESIGN.md)
+71. [Selene Goods Receiving + Inspection + Supplier Credit Automation Engine](SELENE_GLOBAL_DOCUMENT_71_GOODS_RECEIVING_INSPECTION_SUPPLIER_CREDIT_AUTOMATION_ENGINE_MASTER_DESIGN.md)
+72. [Receiving Daily Manifest + Credit Note Automation Addendum](SELENE_GLOBAL_DOCUMENT_72_RECEIVING_DAILY_MANIFEST_CREDIT_NOTE_AUTOMATION_ADDENDUM.md)
+73. [Selene AP / Creditors Engine](SELENE_GLOBAL_DOCUMENT_73_AP_CREDITORS_ENGINE_MASTER_DESIGN.md)
+74. [Selene Supplier Payment + Banking Execution Handoff Engine](SELENE_GLOBAL_DOCUMENT_74_SUPPLIER_PAYMENT_BANKING_EXECUTION_HANDOFF_ENGINE_MASTER_DESIGN.md)
+75. [Selene Supplier Statement Reconciliation + Creditor Reporting Engine](SELENE_GLOBAL_DOCUMENT_75_SUPPLIER_STATEMENT_RECONCILIATION_CREDITOR_REPORTING_ENGINE_MASTER_DESIGN.md)
+76. [Supplier / Procurement / Receiving / AP Mini-Batch Overview](SELENE_GLOBAL_DOCUMENT_76_SUPPLIER_PROCUREMENT_RECEIVING_AP_MINI_BATCH_OVERVIEW.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -295,6 +304,15 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Inventory Intelligence Engine = future master design for stock truth, location, movement, traceability, shelf-life, replenishment, JIT, reorder intelligence, stock health, working-capital protection, and inventory-to-product/commerce handoff boundaries.
 - Product ↔ Inventory Boundary + Handoff Contract = future master design for source-of-truth separation, product-to-inventory templates, inventory-to-product availability updates, shared unit/traceability governance, change-control rules, and conflict prevention.
 - Product + Inventory Codex Readiness Overview = batch control document for adding Global Documents 64–67, preserving Finance / Accounting mappings, keeping PH1.X as non-canonical legacy/review, and preparing future repo-truth activation without runtime implementation.
+- Selene Supplier Intelligence Engine = future master design for supplier identity, qualification, approval, performance, risk, obligations, compliance, scorecards, alternative supplier intelligence, and supplier relationship memory following the Product/Inventory foundation.
+- Supplier Bank Change + Selene-to-Selene Counterparty Trust Protocol Addendum = addendum parented to Document 68 for supplier-originated bank-detail changes, counterparty trust, Selene-to-Selene supplier messaging, payment safety, and fraud prevention.
+- Selene Procurement + Purchase Order Engine = future master design for controlled buying decisions, purchase requests, purchase orders, supplier selection, reorder automation, budget/cashflow checks, authority routing, and receiving preparation.
+- Selene Goods Receiving + Inspection + Supplier Credit Automation Engine = future master design for receiving proof, inspection, accepted/rejected quantities, supplier obligations, credit/replacement/refund triggers, AP holds, and Inventory handoff.
+- Receiving Daily Manifest + Credit Note Automation Addendum = addendum parented to Document 71 for daily receiving manifests, receiver notifications, proof capture, not-arrived tracking, supplier credit/replacement/refund chasing, and AP hold automation.
+- Selene AP / Creditors Engine = future master design for supplier invoice intake, PO/receiving/inspection matching, duplicate checks, credit notes, AP holds, payable amount calculation, supplier balance base, and payment readiness.
+- Selene Supplier Payment + Banking Execution Handoff Engine = future master design for supplier payment queues, payment scheduling, bank safety, cashflow timing, rail/provider selection, batching, remittance, settlement tracking, and payment proof handoff.
+- Selene Supplier Statement Reconciliation + Creditor Reporting Engine = future master design for supplier statement claims, creditor balance matching, missing credits/payments, aged creditors, AP close support, supplier balance confirmation, and reconciliation reporting.
+- Supplier / Procurement / Receiving / AP Mini-Batch Overview = batch control document for Global Documents 68–76, following Product/Inventory Documents 64–67 and preserving Finance / Accounting mappings and PH1.X legacy/review status while preparing supplier-side repo-truth activation.
 
 ## Legacy / Review Candidates — Non-Canonical
 
