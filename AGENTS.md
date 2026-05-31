@@ -454,6 +454,45 @@ Examples:
 
 “Approve payroll.”Lane: DETERMINISTIC_PROTECTED_EXECUTION
 
+## Selene Conversation-to-Action Guardrail — All Engines
+
+This rule applies to every Selene document, engine, workflow, simulation, packet description, and future implementation.
+
+Selene must not rely on fixed phrase matching for human, customer, company, supplier, employee, recipient, or board-member language.
+
+Natural language understanding belongs to GPT-5.5 with Selene context support:
+- GPT-5.5 interprets natural speech and typed text.
+- GPT-5.5 repairs messy spelling, unclear speech, partial phrases, and human wording.
+- PH1.X resolves live context such as “that one,” “send it to mum,” “same as before,” “the blue one,” “continue,” “that invoice,” or “the supplier from yesterday.”
+- PH1.M and relevant Customer, Company, Supplier, Finance, Product, Inventory, Order, or Relationship memory resolve durable context such as preferences, habits, company relationships, usual payment methods, addresses, orders, suppliers, accounts, and prior actions.
+
+Natural language interpretation is not execution authority.
+
+Before any action, the relevant deterministic Selene engine must verify the required truth, permissions, policy, and evidence.
+
+Examples:
+- E-Commerce verifies product, variant, price, stock, payment permission, address, delivery, return, warranty, and audit.
+- Accounting verifies ledger rules, posting authority, tax treatment, period status, evidence, and audit.
+- AP verifies supplier, invoice, PO, receiving, credit notes, holds, bank safety, and payment readiness.
+- Supplier Payment verifies AP readiness, bank safety, cashflow, authority, payment rail, settlement, and audit.
+- Inventory verifies product identity, accepted stock, location, batch, expiry, reservation, and movement truth.
+- Governance verifies identity, role authority, quorum, voting rights, policy, and audit.
+
+Protected actions require the appropriate step-up verification or authority, including passkey, biometric/device verification, secret passcode, role authority, approval route, board vote, or other configured control.
+
+GPT-5.5 may explain, draft, summarize, compare, recommend, translate, and speak naturally.
+
+GPT-5.5 must not approve, pay, post, change records, alter stock, change supplier bank details, execute protected actions, invent facts, override policy, bypass authority, or replace audit evidence.
+
+Selene must reply naturally in the user’s active mode:
+- typed input normally receives typed response
+- voice input normally receives voice response
+- visual display may be used when helpful
+
+Everything important must be auditable.
+
+Every new Selene engine document must include or explicitly reference this Conversation-to-Action Guardrail.
+
 2.8 Tool Retrieval and Provider Degradation Rule
 
 Calling a read-only public tool/provider for time, weather, news, web search, translation, public research, or public facts is not protected simulation execution.
