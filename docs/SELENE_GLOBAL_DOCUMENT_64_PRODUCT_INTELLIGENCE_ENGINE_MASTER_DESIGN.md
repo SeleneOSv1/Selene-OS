@@ -23,6 +23,11 @@ CODEX_READY_MASTER_DESIGN
 
 ---
 
+Document 64 Addendum A:
+See Global Document 64 Addendum A — Product-to-B2B Readiness + Offer Qualification for B2B opt-in, delivery, return, warranty, reserve, professional-compliance, and Original Provider readiness rules.
+
+---
+
 ## 1. Purpose
 
 Selene Product Intelligence Engine is the company’s central product brain.
