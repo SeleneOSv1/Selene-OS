@@ -1,6 +1,6 @@
-# Global Document 70 — Selene Procurement + Purchase Order Engine
+# Global Document 70 — Selene Procurement + Purchase Order Engine v2
 
-```text id="doc70_status"
+```text
 DOCUMENT TYPE:
 GLOBAL MASTER ARCHITECTURE DESIGN
 
@@ -8,10 +8,10 @@ GLOBAL DOCUMENT NUMBER:
 70
 
 ENGINE:
-PH1.PROCUREMENT / PH1.PROC.ORDER / PH1.PURCHASE_CONTROL
+PH1.PROCUREMENT / PH1.PURCHASE_ORDER / PH1.BUYING_INTELLIGENCE
 
 FULL NAME:
-Selene Procurement, Purchase Request, Purchase Order, Reorder Automation, Supplier Selection, Budget Check, Cashflow Check, Authority Routing, and Buying Control Engine
+Selene Procurement, Conversational Purchase Order Creation, Usual Supplier Memory, Quantity Optimization, Cashflow Protection, Approval Routing, Broadcast/Delivery Approval, Reorder Reminders, Central/Local Purchasing, Receiving Readiness, PO Lifecycle, and Supplier Buying Intelligence Engine
 
 STATUS:
 FUTURE_CANONICAL_ARCHITECTURE
@@ -25,1992 +25,1836 @@ CODEX_READY_MASTER_DESIGN
 
 ## 1. Purpose
 
-Selene Procurement + Purchase Order Engine owns the **decision to buy**.
+Selene Procurement + Purchase Order Engine owns the company-side process of buying goods and services from suppliers.
 
-It answers:
+This is different from customer orders.
 
-```text id="procurement_questions"
-Do we need to buy this?
-Why do we need it?
-Who requested it?
-Is it routine?
-Is it urgent?
-Is it inventory-driven?
-Is it customer-order-driven?
-Is it production-driven?
-Is it asset-related?
-Is it within budget?
-Can cashflow support it?
-Which supplier should be used?
-Is the supplier approved?
-Does the supplier owe credits or replacements?
-Should we buy, transfer, delay, split, cancel, or source alternatives?
-Should a purchase order be created?
-Who, if anyone, must approve it?
+```text
+Customer buys from company = Sales Order / Customer Order / Order Management.
+Company buys from supplier = Purchase Order / Procurement.
 ```
 
-Procurement is not merely “make a PO.”
+This engine must make company buying simple, safe, cashflow-aware, approval-aware, and receiving-ready.
 
-That is old software with a stamp.
+A user should be able to say:
 
-Selene Procurement is the autonomous buying brain that connects:
-
-```text id="procurement_chain"
-Inventory need
-Product identity
-Supplier intelligence
-Budget
-Cashflow
-Authority
-Purchase order creation
-Receiving expectations
-AP invoice matching
-Accounting evidence
+```text
+“Selene, order the usual toilet paper.”
+“Who do we normally buy this from?”
+“Order more packaging.”
+“Buy enough cleaning supplies for the next month.”
+“Find the best supplier for printer paper.”
+“Create the PO and send it for approval.”
 ```
 
-A weak system says:
+Selene must then do the hard work:
 
-> “Create PO.”
+```text
+understand what is being requested
+find usual supplier
+find usual quantity
+check current stock
+check expected usage
+recommend quantity
+check agreed supplier pricing
+check budget
+check cashflow
+check authority
+route approval quietly if needed
+draft PO
+issue PO after approval
+notify Receiving in advance
+track supplier confirmation
+track delivery
+escalate delays
+handoff to Receiving and AP
+```
 
-Selene says:
+Procurement must not be “buy shit.”
 
-> “This item will run out in six days. Supplier B is more reliable than Supplier A, cashflow supports a split order, and the purchase is inside warehouse budget. I’ll create the PO under policy.”
+It must be:
 
-That is procurement. The other thing is a printable shopping list wearing business shoes.
+```text
+buy the right amount
+from the right supplier
+at the right price
+with the right approval
+without damaging cashflow
+with Receiving ready
+and with AP able to match it later
+```
+
+That is Selene-level procurement. The toilet paper deserves governance. Apparently.
 
 ---
 
-## 2. Why Procurement Comes After Supplier
+## 2. Core Procurement Law
 
-The chain must remain clean:
+```text
+Selene must not create or issue a PO just because a user asked.
 
-```text id="supplier_before_procurement"
-Product says what the item is.
-Inventory says what is needed.
-Supplier says who can supply it and whether they are trustworthy.
-Procurement decides whether and how to buy.
-Receiving proves what arrived.
-AP validates invoice truth.
-Payment pays only proven amounts.
+Selene must check:
+- whether the purchase is needed
+- whether the quantity is sensible
+- whether the company can afford it
+- whether the supplier is correct
+- whether pricing is correct
+- whether approvals are required
+- whether access/authority must be routed
+- whether Receiving can accept the goods
+- whether storage/cold-chain/shelf space exists
+- whether AP can later match the invoice
 ```
 
-Procurement must not create supplier truth.
+Procurement must protect the company from:
 
-It must ask Supplier Engine:
-
-```text id="ask_supplier"
-Is this supplier approved?
-Are they reliable?
-Are they restricted?
-Are their documents current?
-Do they owe credit notes?
-Are bank details safe?
-Do they have open disputes?
-Are they allowed for this category?
+```text
+over-ordering
+cashflow damage
+wrong supplier
+wrong price
+unapproved spending
+duplicate orders
+ordering stock already in storage
+supplier delays
+goods arriving with no receiver ready
+goods arriving with no freezer/shelf/storage space
+POs becoming payable without receiving proof
 ```
 
-Only then does Procurement create a buying event.
-
-Buying from a bad supplier because the price is cheap is how companies discover that “cheap” can arrive late, broken, and invoiced twice.
+Tiny business wisdom: the cheapest disaster is the one Selene prevents before the truck arrives.
 
 ---
 
-## 3. Current Procurement Practice Selene Must Be Ready For
+## 3. Engine Ownership Boundary
 
-Procurement is now an end-to-end governance, risk, sustainability, automation, and supplier-performance discipline — not just a purchasing desk. ISO 20400 provides guidance for integrating sustainability within procurement across organizations of any size or sector, so Selene must be able to support procurement choices that consider supplier risk, sustainability, ethics, and responsible sourcing where the business requires it. ([ISO][1])
+### 3.1 Procurement owns
 
-Procure-to-pay is also a control chain. CIPS describes invoice verification against the purchase order and goods receipt as a critical control mechanism to prevent errors and reduce fraud risk, and APQC identifies create/distribute purchase orders as a defined procurement process activity involving vendor-specific orders and terms. ([CIPS Download][2])
-
-So Selene Procurement must support:
-
-```text id="modern_procurement_ready"
-requisition
-approved suppliers
-supplier risk
-budget control
-cashflow control
-purchase order creation
-PO transmission
-supplier acknowledgement
-delivery expectations
-receiving assignment
-invoice matching preparation
-sustainability/compliance checks
-spend governance
-automation
-audit
-```
-
-Procurement that starts with a supplier invoice is already late. Procurement should start when Selene detects the need, not when AP receives a PDF demanding tribute.
-
----
-
-## 4. Core Selene Law
-
-```text id="procurement_core_law"
-Every material business purchase must originate from a controlled buying path:
-need → supplier check → budget/cashflow check → authority check → purchase order → receiving proof → AP match → accounting evidence.
-```
-
-Selene must reduce human work by:
-
-```text id="procurement_reduce_work"
-detecting buying needs automatically
-learning routine ordering cycles
-creating draft purchase requests
-auto-generating routine purchase orders under policy
-checking approved suppliers
-checking supplier score and obligations
-checking budget
-checking cashflow
-checking authority
-routing only true exceptions
-sending POs to suppliers
-receiving supplier acknowledgements
-updating receiving manifests
-preparing AP matching evidence
-preventing invoice fraud
-```
-
-Humans should not manually ask:
-
-> “Do we usually order toilet paper around now?”
-
-Selene should say:
-
-> “You usually reorder around this week. Stock suggests six days remaining. I can create the usual PO under policy.”
-
-That is automation with a memory. A terrifying upgrade from humans and cupboards.
-
----
-
-## 5. Engine Boundary
-
-### 5.1 PH1.PROCUREMENT owns
-
-```text id="procurement_owns"
-purchase request
-purchase reason
-purchase category
-routine purchase rule
-reorder buying decision
-supplier selection recommendation
-purchase order creation
-purchase order issue
-purchase order amendment
-purchase order cancellation
-purchase authority routing
-budget check request
-cashflow check request
-supplier risk check request
-PO expected delivery data
-receiver assignment
-inspection requirement assignment
-supplier acknowledgement tracking
-purchase commitment handoff
+```text
+purchase request interpretation
+supplier buying recommendation
+usual supplier memory usage
+usual order memory usage
+quantity recommendation
+PO drafting
+PO approval need detection
+PO authority routing request
+supplier quote comparison
+price movement warning
+cashflow/budget procurement gate
+central vs local purchasing classification
+group ordering structure
+PO issuing after authority
+PO lifecycle tracking
+supplier confirmation tracking
+PO delay escalation
+PO amendment / cancellation / reorder logic
+Receiving handoff
+AP matching handoff
 procurement audit evidence
 ```
 
-### 5.2 PH1.PROCUREMENT does not own
+### 3.2 Procurement references but does not own
 
-```text id="procurement_not_own"
-product identity
-stock quantity
-supplier approval truth
-supplier bank safety
-goods receiving acceptance
-supplier invoice validation
-supplier payment execution
-ledger posting
+```text
+inventory stock truth
+warehouse storage truth
+cashflow forecast truth
+budget ledger truth
+supplier master truth
+supplier bank trust truth
+payment execution
+goods receiving execution
+invoice/AP payable creation
+supplier payment
 tax treatment
-final budget ownership
-final cashflow ownership
+final accounting posting
+user access master rules
+Broadcast / Delivery infrastructure
+Reminder infrastructure
 ```
 
-### 5.3 Correct owner split
+### 3.3 Correct owner split
 
-```text id="procurement_owner_split"
-PH1.PRODUCT = what the item is.
-PH1.INVENTORY = what stock is needed.
-PH1.SUPPLIER = which suppliers are approved/risky/good.
-PH1.PROCUREMENT = whether/how Selene buys and creates PO.
-PH1.PROC.RECEIVE = what arrived and was accepted.
-PH1.CREDITORS / AP = invoice matching and payable amount.
-PH1.SUPPLIER_PAYMENT = payment scheduling and banking handoff.
-PH1.ACCOUNTING = final financial posting.
-PH1.BUDGET = approved spend plan.
-PH1.CASHFLOW = liquidity and payment timing.
-PH1.ACCESS / AUTHORITY = approval rights.
+```text
+PH1.PROCUREMENT = purchase order drafting, approval routing need, supplier/order decision.
+PH1.INVENTORY = stock truth, reorder points, usage, JIT signals.
+PH1.CASHFLOW = current/future cashflow effect.
+PH1.BUDGET = budget/cost centre/project availability.
+PH1.SUPPLIER = supplier identity, supplier score, supplier terms.
+PH1.SUPPLIER_BANK_TRUST = supplier bank safety.
+PH1.ACCESS / AUTHORITY = who may approve / issue / request access.
+PH1.BCAST / DELIVERY = sends approval/access/PO/receiving notifications.
+PH1.REM = reminders and escalation timing.
+PH1.RECEIVING = physical receipt, inspection, storage confirmation.
+PH1.AP = invoice/PO/receiving matching.
+PH1.ACCOUNTING = ledger.
 PH1.AUDIT = proof.
 ```
 
-Procurement creates the buying event.
+Procurement is the buying brain.
 
-It does not become Supplier, Inventory, Receiving, AP, or Accounting.
+It is not the warehouse, not the bank, not the approver, and not the accountant. We’re keeping the goblins in their boxes.
 
-That sentence alone prevents several species of enterprise swamp creature.
+### 3.4 Receiver assignment ownership clarification
 
----
+Procurement does not own final receiver assignment.
 
-## 6. Procurement Master Record
+Procurement creates the receiving requirement and handoff.
 
-Every procurement action creates a controlled record.
+Receiving Engine owns receiver assignment and receipt execution.
 
-```text id="procurement_master_record"
-procurement_id
-legal_entity_id
-branch_id
-department_id
-cost_center_id
-requester_id
-purchase_owner_id
-purchase_type
-purchase_reason
-source_trigger
-urgency_level
-product_id
-service_id
-asset_id
-inventory_need_ref
-customer_order_ref
-production_order_ref
-maintenance_ref
-budget_ref
-cashflow_ref
-supplier_recommendation_ref
-selected_supplier_id
-supplier_score_snapshot
-supplier_risk_snapshot
-estimated_amount
-currency
-tax_category_hint
-delivery_location
-required_date
-approval_status
-PO_status
-receiving_requirement
-inspection_requirement
-AP_matching_requirement
-audit_ref
-```
+Task / Human Workload / Rosters check availability.
 
-Procurement status:
+Access / Authority checks receiver permission.
 
-```text id="procurement_status"
-NeedDetected
-RequestDrafted
-SupplierEvaluating
-BudgetChecking
-CashflowChecking
-AuthorityChecking
-PendingApproval
-Approved
-Rejected
-POCreated
-POIssued
-SupplierAcknowledged
-InFulfillment
-PartiallyReceived
-FullyReceived
-Closed
-Cancelled
-Disputed
-Archived
-```
+Broadcast / Delivery notifies.
+
+Reminder Engine reminds.
+
+Audit records proof.
+
+### 3.5 Supplier qualification ownership clarification
+
+Procurement does not own supplier discovery, qualification, or supplier rating.
+
+Supplier Intelligence Engine owns supplier finding, qualification, scoring, and rating.
+
+Supplier Bank Trust Engine owns supplier bank safety.
+
+Procurement consumes supplier recommendations and uses them for PO drafting.
 
 ---
 
-## 7. Purchase Sources
+## 4. Conversation-to-Action Guardrail
 
-Selene Procurement may be triggered by:
+Procurement must follow the global Conversation-to-Action Guardrail.
 
-```text id="purchase_sources"
-Inventory low-stock forecast
-Inventory JIT replenishment need
-Product launch
-B2B customer order
-E-commerce order
-POS demand trend
-Manufacturing production demand
-Restaurant ingredient prep demand
-Routine office supply cycle
-Employee purchase request
-Manager purchase request
-Asset purchase request
-Fleet repair / maintenance
-Insurance-required repair
-Contract renewal
-Supplier minimum order
-Emergency repair
-Marketing campaign
-Project spend
-Tax/compliance requirement
-```
-
-Example:
-
-```text id="source_example"
-Inventory:
-Product X will stock out in five days.
-
-Supplier:
-Supplier A is cheaper but unreliable.
-Supplier B is reliable and approved.
-
-Cashflow:
-Cashflow supports split order.
-
-Procurement:
-Create PO for 60% now, 40% later if sales pace confirms.
-```
-
-This is buying with context.
-
-Not “someone typed a PO.” Deeply moving, in a tragic old-software way.
-
----
-
-## 8. Purchase Request
-
-A purchase request is the pre-PO buying need.
-
-Purchase request fields:
-
-```text id="purchase_request_fields"
-purchase_request_id
-requester_id
-department_id
-cost_center_id
-branch_id
-purchase_type
-item_or_service_description
-product_id / service_id / asset_id
-quantity_requested
-unit_of_measure
-estimated_cost
-currency
-required_date
-urgency
-business_reason
-source_trigger
-preferred_supplier_id
-alternative_supplier_ids
-budget_ref
-cashflow_ref
-approval_status
-audit_ref
-```
-
-Purchase request types:
-
-```text id="purchase_request_types"
-inventory reorder
-routine consumable
-production material
-customer-specific purchase
-asset purchase
-service purchase
-repair/maintenance
-contract renewal
-emergency purchase
-marketing/campaign spend
-project spend
-compliance-required purchase
-```
-
-Selene should auto-create routine purchase requests when evidence is clear.
-
-Human involvement should be:
-
-```text id="request_human_involvement"
-routine = Selene creates/acts under policy
-exception = Selene routes
-unclear business reason = Selene asks
-high-risk/high-value = authority approves
-```
-
-No one should approve a routine cleaning supply request 11 times like an office ceremony. We are not worshipping stationery.
-
----
-
-## 9. Purchase Order Record
-
-Every PO must be structured enough to support receiving, AP, and audit.
-
-```text id="po_record"
-po_id
-procurement_id
-supplier_id
-supplier_status_snapshot
-supplier_bank_safety_snapshot
-supplier_terms_snapshot
-legal_entity_id
-branch_id
-department_id
-cost_center_id
-requester_id
-approver_id
-purchase_owner_id
-items
-quantities
-unit_of_measure
-unit_price
-tax_hint
-total_amount
-currency
-delivery_address
-delivery_contact
-expected_delivery_date
-delivery_terms
-payment_terms
-inspection_required
-receiver_id
-backup_receiver_id
-quality_inspector_id
-budget_ref
-cashflow_ref
-approval_ref
-supplier_acknowledgement_ref
-PO_status
-audit_ref
-```
-
-PO line fields:
-
-```text id="po_line_fields"
-po_line_id
-product_id
-variant_id
-service_id
-asset_id
-supplier_sku
-description
-quantity_ordered
-unit_of_measure
-unit_price
-tax_hint
-expected_delivery_date
-inspection_required
-linked_inventory_need
-linked_customer_order
-linked_production_order
-linked_asset_request
-```
-
-A PO must answer:
-
-```text id="po_must_answer"
-what was ordered
-why it was ordered
-who requested it
-who approved it
-which supplier
-which price
-which quantity
-where it should arrive
-who receives it
-what inspection is required
-what AP should expect later
-```
-
-If the PO cannot answer that, it is not a PO. It is a wish with a number.
-
----
-
-## 10. Procurement Lifecycle
-
-### 10.1 Need Detection
-
-Selene detects need from Inventory, Product, B2B, E-commerce, POS, Manufacturing, Maintenance, HR, Asset, or human request.
-
-```text id="need_detection"
-NeedDetected
-```
-
-Example:
-
-> “Warehouse gloves are likely to run out in eight days based on usage. I recommend reordering now.”
-
-### 10.2 Need Classification
-
-Selene classifies:
-
-```text id="need_classification"
-routine
-inventory reorder
-customer-specific
-production-critical
-asset/capex
-repair/maintenance
-contract renewal
-emergency
-compliance-required
-```
-
-### 10.3 Supplier Evaluation
-
-Selene asks Supplier Engine:
-
-```text id="supplier_eval_questions"
-approved?
-preferred?
-restricted?
-blocked?
-lead time?
-quality score?
-delivery score?
-open obligations?
-bank safety?
-certificates current?
-category approved?
-```
-
-### 10.4 Budget Check
-
-Selene asks Budget:
-
-```text id="budget_questions"
-is budget available?
-is cost center correct?
-does spend exceed monthly/quarterly limit?
-is this capex or opex?
-is budget transfer needed?
-```
-
-### 10.5 Cashflow Check
-
-Selene asks Cashflow:
-
-```text id="cashflow_questions"
-can cash support this?
-will this affect payroll/tax/rent buffer?
-should order be split?
-should supplier terms be negotiated?
-should purchase be delayed?
-```
-
-### 10.6 Authority Check
-
-Selene asks Access/Authority:
-
-```text id="authority_questions"
-is auto-approval allowed?
-does manager have limit?
-does Finance need approval?
-does board need approval?
-does dual approval apply?
-```
-
-### 10.7 PO Creation
-
-Selene creates PO or draft PO.
-
-### 10.8 Supplier Issue
-
-Selene sends PO to supplier.
-
-### 10.9 Supplier Acknowledgement
-
-Supplier accepts, rejects, changes, or backorders.
-
-### 10.10 Receiving Preparation
-
-Procurement sends expected delivery to Receiving.
-
-### 10.11 Closure
-
-PO closes after receiving/AP matching, cancellation, or dispute resolution.
-
----
-
-## 11. Routine Order Automation
-
-Selene must learn routine purchases.
-
-Routine examples:
-
-```text id="routine_examples"
-toilet paper
-cleaning supplies
-printer toner
-packaging tape
-office supplies
-restaurant ingredients
-regular raw materials
-spare parts
-fuel cards / consumables
-salon supplies
-standard maintenance consumables
-```
-
-Selene tracks:
-
-```text id="routine_tracking"
-usual frequency
-usual supplier
-usual quantity
-usual cost
-usage trend
-seasonality
-stock level
-lead time
-budget
-cashflow
-approval policy
-```
-
-Selene says:
-
-> “Tom usually orders packaging tape around this week. Stock suggests seven days remaining. I can prepare the usual order.”
-
-If within policy:
-
-```text id="routine_auto"
-create PO automatically
-notify responsible owner
-audit
-```
-
-If abnormal:
-
-```text id="routine_abnormal"
-quantity unusually high
-supplier changed
-price changed
-cashflow tight
-budget exceeded
-authority required
-```
-
-Selene escalates only the abnormal part.
-
-No need for humans to babysit toilet paper unless the toilet paper has become suspiciously strategic.
-
----
-
-## 12. Reorder Automation from Inventory
-
-Inventory sends:
-
-```text id="inventory_reorder_packet"
-product_id
-location_id
-current_available_stock
-reserved_stock
-forecast_demand
-stockout_date
-recommended_quantity
-recommended_timing
-cash_impact
-supplier_candidates
-transfer_alternative
-urgency
-confidence_score
-```
-
-Procurement decides:
-
-```text id="procurement_decisions"
-create PO
-create draft PO
-split order
-delay order
-transfer stock instead
-source alternative supplier
-route approval
-reject reorder
-```
-
-Selene says:
-
-> “Inventory recommends reorder, but Branch 2 has excess stock. I recommend transfer instead of purchase.”
-
-This is how Selene saves cash instead of buying what the company already owns somewhere else, which is apparently a revolutionary concept in multi-branch businesses.
-
----
-
-## 13. Supplier Selection Logic
-
-Procurement ranks suppliers using Supplier Engine data.
-
-Inputs:
-
-```text id="supplier_selection_inputs"
-approved category
-supplier status
-supplier score
-delivery reliability
-quality score
-lead time
-MOQ
-price
-payment terms
-open obligations
-credit notes owed
-bank safety
-certificates/insurance
-delivery zones
-single-source risk
-strategic relationship
-cashflow impact
-sustainability/compliance requirement
-cyber risk if relevant
-```
-
-Selection outcomes:
-
-```text id="supplier_selection_outcomes"
-recommended supplier
-backup supplier
-split supplier order
-supplier blocked
-supplier review required
-new supplier qualification required
-RFQ required
-```
-
-Selene says:
-
-> “Supplier A is 4% cheaper, but Supplier B is more reliable and can deliver before stockout. I recommend Supplier B.”
-
-Procurement must not be price-only.
-
-Price-only procurement is how cheap becomes expensive in three easy deliveries.
-
----
-
-## 14. Budget and Spend Governance
-
-Procurement must integrate with Budget / Spend Governance.
-
-Budget check outputs:
-
-```text id="budget_outputs"
-within budget
-near limit
-over budget
-budget transfer recommended
-budget owner review required
-capex review required
-board threshold triggered
-blocked by budget policy
-```
-
-Selene says:
-
-> “This purchase is within the warehouse monthly limit and below Tom’s authority. I can approve it under policy.”
-
-Or:
-
-> “This exceeds the remaining marketing budget by $1,800. I recommend budget transfer or delay.”
-
-Budget availability is not cash availability.
-
-Cash availability is not budget approval.
-
-Selene must check both, because businesses enjoy having two ways to be wrong.
-
----
-
-## 15. Cashflow-Aware Procurement
-
-Procurement must never ignore cashflow.
-
-Cashflow check outputs:
-
-```text id="cashflow_outputs"
-cashflow green
-cashflow watch
-cashflow warning
-split order recommended
-delay recommended
-supplier terms negotiation recommended
-blocked by payroll/tax/rent buffer
-urgent purchase allowed
-```
-
-Selene says:
-
-> “This purchase is operationally needed, but paying it all now would reduce cash below payroll buffer. I recommend splitting the order.”
-
-Procurement does not hoard stock like a dragon sitting on cash.
-
-It buys what the business needs, when the business can support it.
-
----
-
-## 16. Authority and Purchase Limits
-
-Selene must respect role-based purchase limits.
-
-Examples:
-
-```text id="purchase_limits"
-Warehouse Manager: up to $2,000 per month routine warehouse supplies
-Restaurant Manager: up to $500 per day perishable ingredients
-Branch Manager: up to $5,000 monthly consumables
-Finance Manager: approve budget exceptions
-CFO: approve high-value or cashflow-risk purchase
-Board: approve strategic/capital spend over threshold
-```
-
-Authority inputs:
-
-```text id="authority_inputs"
-requester
-role
-department
-cost center
-monthly limit
-single-purchase limit
-category limit
-supplier risk
-budget status
-cashflow status
-capex/opex
-emergency flag
-```
-
-Selene says:
-
-> “This exceeds Tom’s warehouse monthly limit. I’m routing only the excess approval to Finance.”
-
-Not the entire request if part is routine.
-
-Selene should route the smallest necessary exception, not summon the whole approval circus.
-
----
-
-## 17. Purchase Order Creation
-
-PO creation can be:
-
-```text id="po_creation_modes"
-manual request
-Selene draft
-Selene auto-create under policy
-recurring order
-inventory-triggered
-customer-order-triggered
-production-triggered
-emergency-triggered
-contract-triggered
-```
-
-PO states:
-
-```text id="po_states"
-Draft
-PendingBudgetCheck
-PendingCashflowCheck
-PendingAuthorityCheck
-Approved
-Issued
-SupplierAcknowledged
-SupplierChangeRequested
-PartiallyFulfilled
-Fulfilled
-Cancelled
-Closed
-Disputed
-Archived
-```
-
-Selene says:
-
-> “I created the PO and sent it to Supplier B. Receiving has been assigned to Sarah, and expected delivery is Friday.”
-
-The PO is not just buying.
-
-It sets up Receiving and AP.
-
-That is the whole point. The invoice later should not arrive like a mysterious stranger asking for money.
-
----
-
-## 18. PO Transmission
-
-PO can be sent through:
-
-```text id="po_transmission"
-Supplier Selene
-supplier portal
-email
-EDI/API
-B2B network
-PDF
-secure link
-```
-
-Selene-connected supplier flow:
-
-```text id="selene_po_flow"
-Buyer Selene sends PO.
-Supplier Selene validates.
-Supplier Selene accepts/rejects/proposes changes.
-Buyer Selene records acknowledgement.
-Procurement updates PO status.
-Receiving manifest updates.
-```
-
-Non-Selene supplier flow:
-
-```text id="non_selene_po_flow"
-Selene sends PO by approved channel.
-Supplier response captured.
-Manual or email acknowledgement parsed.
-Procurement records status.
-```
-
-Selene says:
-
-> “Supplier acknowledged the PO but changed delivery date. I’ll check stockout impact before accepting.”
-
-No automatic acceptance of supplier changes. Suppliers are creative. Often with your delivery date.
-
----
-
-## 19. Supplier Acknowledgement and Change Handling
-
-Supplier may respond:
-
-```text id="supplier_ack_types"
-accepted
-rejected
-partially accepted
-backordered
-price changed
-quantity changed
-delivery date changed
-substitute proposed
-MOQ changed
-split delivery proposed
-```
-
-Selene checks:
-
-```text id="change_checks"
-price tolerance
-quantity tolerance
-delivery impact
-stockout risk
-customer impact
-production impact
-budget impact
-cashflow impact
-authority requirement
-supplier risk
-```
-
-Possible outcomes:
-
-```text id="change_outcomes"
-accept automatically under tolerance
-route approval
-reject change
-source backup supplier
-split supplier order
-cancel PO
-```
-
-Example:
-
-> “Supplier can deliver 80 now and 20 next week. This creates stockout risk for B2B order #554. I recommend sourcing the remaining 20 from backup supplier.”
-
-Selene does not just nod at supplier changes like a bobblehead with procurement access.
-
----
-
-## 20. Receiving Preparation
-
-Every PO must prepare Receiving.
-
-Procurement sends:
-
-```text id="receiving_preparation"
-supplier
-PO number
-expected items
-expected quantities
-expected delivery date
-delivery location
-receiver
-backup receiver
-inspection requirement
-special handling
-batch/serial/expiry requirements
-documents required
-```
+Selene must not use fixed phrase matching.
 
-This creates:
+Correct flow:
 
-```text id="receiving_manifest_input"
-Expected Delivery
-Daily Receiving Manifest
-Inspection Checklist
-AP Matching Expectation
+```text
+1. GPT-5.5 understands the request.
+2. PH1.X resolves live context.
+3. PH1.M / procurement memory resolves usual supplier, usual item, usual quantity, prior instruction.
+4. Procurement verifies supplier, stock, quantity, price, budget, cashflow, authority, receiving readiness.
+5. Protected actions require authority.
+6. Broadcast / Delivery quietly routes approval/access requests where needed.
+7. PO is issued only after rules are satisfied.
+8. Everything important is audited.
 ```
-
-Selene says:
-
-> “Delivery is expected tomorrow. Sarah is assigned as receiver. This product requires expiry and batch capture.”
-
-This is how Receiving knows what is coming, instead of being surprised by pallets like a warehouse jump scare.
-
----
-
-## 21. Purchase Commitment Handoff to Budget and Accounting
-
-A PO creates a commitment.
-
-Budget should know:
-
-```text id="commitment_to_budget"
-amount committed
-cost center
-department
-supplier
-expected period
-capex/opex
-budget line
-```
-
-Accounting may later use:
-
-```text id="commitment_to_accounting"
-commitment evidence
-expected invoice
-GRNI/accrual candidates
-asset/capex classification hints
-inventory valuation hints
-```
-
-Procurement does not post ledger.
-
-It creates commitment truth.
-
-Accounting posts after actual evidence.
-
-Selene says:
-
-> “This PO commits $12,400 of the maintenance budget, but no expense is posted until invoice/receiving rules are satisfied.”
-
-Commitment is not actual spend. Another tiny distinction with giant reporting consequences.
-
----
-
-## 22. Emergency Purchase Path
-
-Emergency purchases must exist, but not become a fraud tunnel.
-
-Emergency reasons:
-
-```text id="emergency_reasons"
-machine breakdown
-safety issue
-critical stockout
-customer delivery failure risk
-urgent legal/compliance need
-storm/damage repair
-IT/security incident
-```
-
-Emergency flow:
-
-```text id="emergency_flow"
-emergency reason captured
-supplier checked if possible
-budget/cashflow checked if possible
-temporary authority route
-PO created or retrospective PO flagged
-receiving required
-AP matching required
-post-event review required
-```
-
-Selene says:
-
-> “This is an emergency purchase. I can route urgent approval now, and I’ll schedule post-event review.”
-
-Emergency does not mean “skip proof.”
-
-Emergency means “move faster, audit harder.”
-
-Put that on the procurement office wall, if it has survived the toner shortage.
-
----
-
-## 23. Retrospective Purchase Orders
-
-Retrospective POs are dangerous.
-
-APQC even tracks the percentage of POs created after receipt of the supplier invoice as a procurement measure, because late POs undermine control. ([APQC][3])
-
-Selene must flag:
-
-```text id="retro_po_triggers"
-supplier invoice arrived before PO
-goods received before PO
-emergency purchase
-manual off-system purchase
-contract renewal invoice without PO
-```
-
-Retrospective PO state:
-
-```text id="retro_po_state"
-Detected
-ReasonRequired
-EvidenceRequired
-ApprovalRequired
-CreatedAsException
-Rejected
-Closed
-```
-
-Selene says:
-
-> “This invoice arrived without a matching PO. I’ll not allow normal payment until Procurement confirms whether this was authorized.”
-
-Retrospective POs should be exceptions, not lifestyle.
-
----
-
-## 24. Procurement Fraud and Control
-
-Procurement must reduce fraud.
-
-Fraud signals:
-
-```text id="procurement_fraud_signals"
-invoice without PO
-PO created after invoice
-split purchases to avoid approval
-new supplier for urgent purchase
-supplier bank change near payment
-same requester repeatedly uses same supplier
-PO price above contract
-quantity above usual usage
-duplicate supplier
-fake supplier
-supplier related to employee
-unusual delivery address
-manual override pattern
-```
-
-Selene actions:
-
-```text id="procurement_fraud_actions"
-hold PO
-route review
-require dual approval
-notify Audit
-block supplier
-request evidence
-force Receiving proof
-block AP payment path
-```
-
-Selene says:
-
-> “This purchase appears split into three POs below approval threshold. I’m routing to Finance review.”
-
-Not every pattern is fraud.
-
-But Selene should notice patterns humans pretend not to see because meetings are easier.
-
----
-
-## 25. Procurement and Sustainability / Responsible Sourcing
-
-Where company policy requires, Procurement must consider sustainability and responsible sourcing.
-
-Checks may include:
-
-```text id="sustainable_procurement_checks"
-supplier due diligence
-environmental certificate
-human rights / labor risk
-modern slavery risk
-local sourcing preference
-recycled content
-carbon footprint
-ethical sourcing
-conflict mineral risk
-waste/packaging impact
-supplier code of conduct
-```
-
-ISO 20400 is guidance, not a certifiable management system standard, but it supports integrating sustainability into procurement decisions, which means Selene must be able to store and apply sustainability procurement criteria without forcing every tiny purchase through ESG theatre. ([ISO][1])
-
-Selene says:
-
-> “This supplier is cheaper but lacks required sourcing documentation. I recommend Supplier B for this category under your responsible procurement policy.”
-
-Responsible procurement should be practical. Not a 41-page form for paper towels. Unless the paper towels are suspiciously political, in which case everyone has bigger problems.
-
----
-
-## 26. Procurement and Product Relationship
-
-Product provides:
-
-```text id="product_to_procurement"
-product_id
-variant_id
-supplier SKU
-pack size
-case quantity
-MOQ
-product status
-channel readiness
-compliance requirements
-storage requirements
-batch/serial/expiry requirements
-```
-
-Procurement uses this to buy the right item.
-
-If Product data is incomplete:
-
-```text id="product_incomplete_procurement"
-PO may remain draft
-human confirmation required
-supplier clarification requested
-Product update requested
-```
-
-Selene says:
-
-> “This product is missing supplier SKU and pack size. I can draft the PO, but I need confirmation before sending it.”
-
-Product truth prevents procurement from ordering “the blue one.” Suppliers love ambiguity because it becomes invoiceable.
-
----
-
-## 27. Procurement and Inventory Relationship
-
-Inventory provides:
-
-```text id="inventory_to_procurement"
-reorder need
-stockout risk
-recommended quantity
-location demand
-transfer alternative
-JIT mode
-safety stock target
-cash tied in stock
-expiry/overstock constraints
-```
-
-Procurement provides back:
-
-```text id="procurement_to_inventory"
-PO created
-supplier selected
-quantity ordered
-expected delivery
-supplier acknowledgement
-supplier delay
-PO cancelled
-```
-
-Selene says:
-
-> “PO created for 240 units. Expected delivery is Friday. Inventory forecast updated to avoid stockout.”
-
-Good. Inventory should know what Procurement did. Otherwise it screams forever.
-
----
-
-## 28. Procurement and Supplier Relationship
-
-Supplier Engine provides:
-
-```text id="supplier_to_procurement"
-approval status
-risk status
-performance score
-lead time
-payment terms
-MOQ
-open disputes
-credit notes owed
-bank safety
-certificate status
-alternative suppliers
-```
-
-Procurement provides:
-
-```text id="procurement_to_supplier"
-PO issued
-PO changes
-supplier selected frequency
-supplier rejected reason
-supplier change response
-purchase volume
-```
-
-This creates supplier performance feedback.
-
-Selene says:
-
-> “Supplier ABC was not selected because unresolved credit notes remain open.”
-
-Supplier should know why business is moving away. Polite pressure. Very satisfying.
-
----
-
-## 29. Procurement and Receiving Relationship
-
-Procurement prepares receiving.
-
-Receiving returns:
-
-```text id="receiving_to_procurement"
-fully received
-partially received
-not arrived
-short delivery
-damaged goods
-wrong item
-over-delivery
-inspection failed
-replacement pending
-credit note required
-```
-
-Procurement may respond:
-
-```text id="procurement_response_receiving"
-amend PO
-cancel remaining quantity
-request replacement
-request credit
-source backup supplier
-close PO
-open dispute
-```
-
-Selene says:
-
-> “Only 90 of 100 units were accepted. I’ll leave the PO partially open and request replacement or credit under policy.”
-
-Receiving tells reality. Procurement updates the order. AP later pays only the truth.
-
----
-
-## 30. Procurement and AP Relationship
-
-AP needs procurement proof.
-
-Procurement provides:
-
-```text id="procurement_to_ap"
-PO
-approved supplier
-approved quantity
-approved price
-payment terms
-approval proof
-budget code
-expected invoice
-receiving requirement
-inspection requirement
-```
-
-AP uses it for matching:
-
-```text id="ap_matching"
-2-way match: PO + invoice
-3-way match: PO + receiving + invoice
-4-way match: PO + receiving + inspection + invoice
-```
-
-Three-way matching compares purchase order, goods receipt, and invoice details before payment; CIPS describes it as a critical invoice-verification control, and modern AP tools describe the same PO/GR/invoice comparison as a core control. ([CIPS Download][2])
-
-Selene says:
-
-> “AP received an invoice with no matching PO. I’m blocking normal payment and routing to Procurement review.”
-
-Invoice without buying proof is not payment-ready. It is a claim wearing a PDF costume.
-
----
-
-## 31. Procurement and Cashflow Relationship
-
-Procurement must consider liquidity.
-
-Cashflow provides:
-
-```text id="cashflow_to_procurement"
-cash status
-cash buffer
-payment timing risk
-supplier payment capacity
-payroll/tax/rent protection
-early-payment discount capacity
-purchase deferral recommendation
-```
-
-Procurement may choose:
-
-```text id="procurement_cashflow_options"
-split order
-delay order
-negotiate terms
-use supplier credit
-transfer stock
-use backup supplier
-decline optional purchase
-```
-
-Selene says:
-
-> “Cashflow is orange. I recommend ordering only the stock needed for the next 14 days and delaying non-critical items.”
-
-Inventory might want more stock.
-
-Cashflow might say no.
-
-Procurement must mediate like a tired parent in a supermarket.
-
----
-
-## 32. Procurement and Accounting Relationship
-
-Procurement sends Accounting evidence, not journals.
-
-Accounting handoff may include:
-
-```text id="procurement_accounting_handoff"
-approved commitment
-cost center
-budget code
-capex/opex hint
-asset candidate
-inventory candidate
-service candidate
-tax category hint
-supplier terms
-expected invoice
-audit ref
-```
-
-Accounting owns:
-
-```text id="accounting_procurement_owns"
-final classification
-journal posting
-accrual
-GRNI
-inventory asset
-expense
-capex
-tax posting
-```
-
-Procurement does not post ledger.
-
-It creates structured buying proof that Accounting can trust later.
-
----
-
-## 33. Procurement and Asset / Capex
-
-Asset purchases require special handling.
-
-Triggers:
-
-```text id="asset_procurement_triggers"
-high-value equipment
-vehicle
-machinery
-building improvement
-IT hardware
-capital project
-fleet asset
-lease candidate
-intangible/software project
-```
-
-Procurement checks:
-
-```text id="asset_procurement_checks"
-capex budget
-asset approval
-insurance requirement
-receiving/inspection requirement
-asset custodian
-warranty
-serial/VIN
-capitalization review
-board threshold
-```
-
-Selene says:
-
-> “This looks like a capital asset. I’ll route capex approval and require serial/condition capture during receiving.”
-
-No capital asset should arrive without a custodian and accounting handoff, unless the business enjoys expensive mysteries.
-
----
-
-## 34. Procurement and Contract Renewal
-
-Procurement tracks contract-related purchases.
-
-Contract triggers:
-
-```text id="contract_triggers"
-subscription renewal
-maintenance contract renewal
-lease renewal
-supplier contract renewal
-software renewal
-insurance renewal
-professional retainer
-```
-
-Selene checks:
-
-```text id="contract_checks"
-renewal date
-notice period
-price increase
-usage
-supplier performance
-budget
-cashflow
-cancellation option
-alternative supplier
-```
-
-Selene says:
-
-> “This software contract renews in 21 days. Usage dropped 40% and price increased 18%. I recommend review before renewal.”
-
-No auto-renewing bad contracts because nobody noticed the email. That email was the villain.
-
----
-
-## 35. Procurement Analytics
-
-Procurement must report:
-
-```text id="procurement_reports"
-spend by supplier
-spend by category
-spend by department
-PO cycle time
-POs created after invoice
-manual PO rate
-supplier acceptance rate
-supplier change rate
-budget exceptions
-cashflow-blocked purchases
-emergency purchases
-retrospective POs
-savings achieved
-supplier consolidation opportunity
-single-source dependency
-maverick spend
-```
-
-Selene says:
-
-> “22% of this month’s purchases were retrospective POs. That weakens AP control. I recommend tightening purchase-request policy.”
-
-A business can only improve what Selene is willing to point at without flinching.
-
----
-
-## 36. Automation and Exception-Only Review
-
-Selene auto-handles:
-
-```text id="procurement_auto_handles"
-routine purchase request creation
-routine PO creation under policy
-supplier score check
-budget check request
-cashflow check request
-approval routing
-PO transmission
-supplier acknowledgement capture
-receiving assignment
-expected delivery creation
-routine reorder cycle
-routine contract reminder
-procurement analytics
-```
-
-Selene escalates:
-
-```text id="procurement_escalates"
-new supplier
-restricted supplier
-blocked supplier
-budget exceeded
-cashflow warning
-high value
-capex
-contract commitment
-emergency purchase
-retrospective PO
-supplier change outside tolerance
-supplier bank risk
-fraud signal
-board threshold
-manual override
-```
-
-Rule:
-
-```text id="procurement_exception_rule"
-Routine = Selene handles.
-Exception = Selene routes.
-Protected = authority approves.
-Everything = audited.
-```
-
-No approval circus. No free-for-all. Just an adult purchasing system, which is apparently rare enough to celebrate quietly.
-
----
-
-## 37. PH1.D / GPT-5.5 Role
 
-GPT-5.5 may help:
+GPT-5.5 may:
 
-```text id="gpt_procurement_allowed"
-summarize purchase request
-draft supplier PO notes
-explain supplier comparison
-draft approval request
-explain cashflow/budget tradeoff
-summarize procurement exception
-draft supplier change response
-draft emergency purchase justification
-prepare procurement review report
+```text
+understand messy buying requests
+summarize supplier comparison
+explain price changes
+draft PO summaries
+explain approval reasons
+suggest negotiation wording
 ```
 
 GPT-5.5 must not:
 
-```text id="gpt_procurement_forbidden"
-approve purchase
-create protected PO without authority
-invent supplier facts
-override budget
-override cashflow warning
-ignore supplier restriction
-accept supplier change without policy
-change PO terms without approval
-post accounting
-execute payment
+```text
+issue PO without authority
+invent supplier terms
+invent stock levels
+invent cashflow status
+invent approval
+invent receiving readiness
+bypass access rules
+override budget/cashflow/authority gates
 ```
 
-GPT-5.5 writes beautifully.
+Selene can sound human.
 
-Selene controls the buying. Because apparently eloquence should not be allowed to spend $80,000.
+The PO still needs proof.
 
 ---
 
-## 38. Human-Like Selene Interaction
+## 5. Conversational PO Creation
 
-### Routine reorder
+User can say:
 
-> “You usually order packing tape around now. Stock suggests seven days remaining. I can create the normal PO under policy.”
+```text
+“Order the usual toilet paper.”
+“Order more screws.”
+“Buy the usual packaging.”
+“Who do we normally buy this from?”
+“Place the normal order.”
+“Get enough stock for next month.”
+```
 
-### Supplier choice
+Selene should respond with useful buying intelligence, not a blank form.
 
-> “Supplier A is cheaper, but Supplier B is more reliable and will arrive before stockout. I recommend Supplier B.”
+Example:
 
-### Budget issue
+```text
+“You usually buy toilet paper from Supplier A.
+Usual quantity is 60 cases.
+Last order was 5 weeks ago.
+Current stock appears low.
+Supplier delivers in 3 days.
+I recommend 30 cases because cashflow is tight and delivery is reliable.
+I can draft the PO now.”
+```
 
-> “This exceeds the department’s remaining budget by $1,200. I recommend budget transfer or delay.”
-
-### Cashflow issue
-
-> “We need the stock, but cashflow is tight. I recommend splitting the order.”
-
-### Supplier change
-
-> “Supplier changed delivery date. This may affect B2B order #881. I recommend checking backup supplier.”
-
-### Retrospective invoice
-
-> “This invoice arrived without a matching PO. I’ve blocked normal payment and opened Procurement review.”
-
-This is how Selene should feel: helpful, firm, commercially literate, and allergic to invoice chaos.
+If user confirms, Selene drafts the PO and continues through authority, approval, issuing, receiving, and tracking flows.
 
 ---
 
-## 39. Procurement State Machines
+## 6. Usual Supplier Memory
 
-### Purchase Request State
+Selene should know:
 
-```text id="purchase_request_state"
-NeedDetected
-Drafted
-PendingSupplierEvaluation
-PendingBudgetCheck
-PendingCashflowCheck
-PendingAuthorityCheck
-Approved
-Rejected
-ConvertedToPO
-Cancelled
-Archived
+```text
+usual supplier
+usual price
+usual quantity
+usual delivery time
+last order date
+last invoice price
+supplier reliability
+supplier issues
+supplier delivery performance
+supplier return/credit history
+agreed supplier pricing
+contract pricing
+group pricing
+branch pricing
 ```
 
-### Purchase Order State
+Example:
 
-```text id="purchase_order_state"
+```text
+“You usually buy this from Supplier A.
+Last order was 60 cases at $18.40 each.
+Current agreed price is $18.90.”
+```
+
+If there is no usual supplier:
+
+```text
+Selene compares available suppliers and recommends one.
+```
+
+---
+
+## 7. Usual Order Memory
+
+Selene should remember recurring and routine orders:
+
+```text
+toilet paper monthly
+packaging every Friday
+cleaning supplies first Monday
+printer paper every 6 weeks
+screws every 2 weeks
+raw ingredients by production cycle
+```
+
+Selene should suggest when routine order timing appears due.
+
+Example:
+
+```text
+“Toilet paper is usually reordered around now.
+Current stock suggests 12 days remaining.
+Should I prepare the usual order?”
+```
+
+---
+
+## 8. Reorder Reminders
+
+Procurement must generate reorder reminders when history and stock suggest it is time to buy.
+
+Signals:
+
+```text
+order history
+usage rate
+current stock
+minimum stock
+safety stock
+supplier lead time
+seasonal demand
+sales activity
+production schedule
+receiver feedback
+supplier delivery reliability
+```
+
+Engines involved:
+
+```text
+Inventory confirms stock.
+Memory Pattern detects buying habit.
+Procurement prepares reorder recommendation.
+Reminder Engine schedules reminder.
+Broadcast / Delivery sends it to the responsible person.
+```
+
+Example reminder:
+
+```text
+“Toilet paper usually gets reordered every 4 weeks.
+You are approaching the usual reorder window.
+Current stock looks low.
+Should I prepare the usual PO?”
+```
+
+Procurement does not just wait for someone to remember. Humans forget. That is apparently their hobby.
+
+---
+
+## 9. Quantity Recommendation + Optimization
+
+Selene must not blindly copy the last order.
+
+Selene should recommend quantity using:
+
+```text
+current stock
+usage history
+time between orders
+supplier lead time
+delivery reliability
+minimum stock
+safety stock
+storage capacity
+cashflow
+budget
+bulk discount
+price break
+expiry/spoilage risk
+cash tied up in inventory
+sales forecast
+production forecast
+seasonality
+```
+
+Bad:
+
+```text
+“You ordered 400 cases last time. Order 400 again?”
+```
+
+Selene-level:
+
+```text
+“You ordered 400 cases last time, but it took 18 months to use them.
+Supplier delivers weekly.
+Cashflow is tighter this month.
+I recommend 30 cases.”
+```
+
+Selene should balance:
+
+```text
+unit price
+delivery frequency
+stockout risk
+storage limits
+cash tied up
+bulk savings
+waste/spoilage risk
+```
+
+Cheap bulk buying is not cheap if it traps cash for 18 months and blocks the storeroom like a toilet paper monument.
+
+---
+
+## 10. Cashflow Protection Gate
+
+A user’s spend limit is not enough.
+
+A person may be authorized, but the company may still be cashflow-tight.
+
+Selene must check:
+
+```text
+current cash
+forecast cash
+upcoming payroll
+tax obligations
+loan repayments
+upcoming supplier payments
+expected customer receipts
+sales slowdown
+seasonality
+budget remaining
+inventory cash tied up
+critical spending commitments
+```
+
+Example:
+
+```text
+“This is within your purchase limit, but cashflow is tight for the next 21 days.
+I recommend ordering 20 cases instead of 60.”
+```
+
+Procurement must prevent the bleed before it starts.
+
+If the company is tight on cash, Selene should recommend:
+
+```text
+reduced quantity
+split delivery
+defer optional items
+use supplier credit terms
+choose smaller order
+choose cheaper supplier
+wait for expected receipts
+escalate for management review
+```
+
+---
+
+## 11. Essential vs Deferrable Classification
+
+Selene must classify purchase need:
+
+```text
+Essential
+Important
+Routine
+Optional
+Deferrable
+Risky
+Cashflow-sensitive
+```
+
+Examples:
+
+```text
+toilet paper = essential
+raw materials for confirmed customer order = important / essential
+luxury office chairs = deferrable
+extra promotional stock = cashflow-sensitive
+equipment upgrade = may need management review
+```
+
+If cashflow is tight, Selene should reduce essential order quantity rather than block it.
+
+Example:
+
+```text
+“Cashflow is tight, but toilet paper is essential.
+I recommend ordering 20 cases to cover four weeks instead of the usual 60.”
+```
+
+Some spending is not optional. Apparently business civilisation still requires bathroom supplies.
+
+---
+
+## 12. Suspicious Reorder Detection
+
+Selene must challenge orders that do not make sense.
+
+Example:
+
+```text
+Someone tries to order toilet paper again.
+Selene expects 6,000 boxes still in storage.
+```
+
+Selene should say internally or to the responsible user as appropriate:
+
+```text
+“This looks unusual. Based on the last order and expected usage, you should still have enough stock.
+Please check storage before I proceed.”
+```
+
+Possible explanations:
+
+```text
+stock stolen
+stock damaged
+wrong location count
+inventory not updated
+unexpected usage increase
+previous receipt was wrong
+duplicate ordering
+ordering person missed stored inventory
+```
+
+Selene should route to:
+
+```text
+Inventory check
+Warehouse check
+Receiver check
+Audit check
+Shrinkage/loss review if needed
+```
+
+This is not just procurement. It is responsible buying. Imagine that, a company not purchasing while blindfolded.
+
+---
+
+## 13. Budget Check
+
+Selene must check budget before PO issue.
+
+Checks:
+
+```text
+cost centre budget
+department budget
+project budget
+branch budget
+monthly cap
+category cap
+remaining allocation
+committed spend
+pending POs
+future obligations
+```
+
+Example:
+
+```text
+“This fits the office supplies budget.”
+```
+
+Or:
+
+```text
+“This exceeds the monthly budget by $420.”
+```
+
+Budget issues should route for approval or recommendation, not silently proceed.
+
+---
+
+## 14. Person Purchase Limits
+
+Each user should have purchasing limits:
+
+```text
+single purchase limit
+monthly limit
+category limit
+supplier limit
+department limit
+project limit
+branch/location limit
+emergency limit
+```
+
+Example:
+
+```text
+“Tom can approve office supplies up to $1,000.”
+```
+
+Limit checks must use Master Access and Per-User Access rules.
+
+Procurement does not own identity authority.
+
+It asks Access / Authority.
+
+---
+
+## 15. Access Request Auto-Routing
+
+If a user lacks authority, Selene should not hard-deny immediately.
+
+Follow Master Access / Per-User Access rules.
+
+Correct rule:
+
+```text
+If user lacks authority, Selene quietly routes the access/approval request to the correct authority where policy allows.
+If authority approves, Selene proceeds.
+If authority rejects, Selene informs the requester politely.
+```
+
+Selene does not need to say upfront:
+
+```text
+“You do not currently have authority.”
+```
+
+unless policy requires disclosure or action is blocked without routing.
+
+Quiet flow:
+
+```text
+User asks to issue PO.
+Selene detects authority missing.
+Selene routes request to correct approver/authority.
+If approved, Selene continues.
+If rejected, Selene informs user.
+```
+
+Authority can decide:
+
+```text
+approve one-time action
+grant permanent access
+grant temporary access
+grant amount-limited access
+grant category-limited access
+reject request
+request more information
+```
+
+Procurement must follow Master Access / Per-User Access rules.
+
+No such thing as “you can’t” until the right authority has actually rejected it. Then yes, Selene can gently tell the idiot no. Professionally. Tragically.
+
+---
+
+## 16. Clerk / Assistant Drafting
+
+A clerk or assistant may draft a PO but not issue it.
+
+Example:
+
+```text
+Assistant drafts order.
+Selene checks quantity, supplier, price, cashflow, budget, and receiving readiness.
+Selene routes to manager for authority.
+Manager approves.
+Selene issues PO.
+```
+
+This matches the real world:
+
+```text
+Assistant prepares.
+Boss approves.
+Selene handles the boring middle.
+```
+
+Finally, management gets to approve things before they are broken.
+
+---
+
+## 17. Multi-Approver Routing
+
+Some purchases require more than one approval.
+
+Selene must support:
+
+```text
+single approver
+dual approval
+sequential approval
+parallel approval
+manager + finance approval
+department head + owner approval
+board approval
+substitute approver
+delegated approver
+conflict-aware approver exclusion
+```
+
+Example:
+
+```text
+“This PO needs Sarah and Michael approval.”
+```
+
+If one approver is unavailable:
+
+```text
+Selene routes to delegated substitute if allowed.
+```
+
+If there is a conflict of interest:
+
+```text
+Selene excludes conflicted approver and routes to alternate authority.
+```
+
+---
+
+## 18. Approval Routing Through Broadcast + Delivery
+
+Approval routing must use Broadcast + Delivery.
+
+Procurement owns approval need.
+
+Authority owns approval rule.
+
+Broadcast / Delivery sends the request.
+
+Reminder handles follow-up.
+
+Audit proves it happened.
+
+Selene must:
+
+```text
+send approval request
+show PO summary
+allow approve/reject/comment
+remind if no response
+escalate if overdue
+route to substitute approver if needed
+record proof
+```
+
+Approval request includes:
+
+```text
+PO summary
+supplier
+items
+quantity
+price
+cashflow effect
+budget effect
+why approval is required
+risk flags
+receiving readiness
+recommended action
+approve/reject/comment options
+```
+
+Approval is not a status hidden in a screen. It is a message to an actual human, which means Broadcast and Delivery need to do their jobs instead of lurking like decorative modules.
+
+---
+
+## 19. Approval Reminders and Escalation
+
+Selene should remind approvers.
+
+Example:
+
+```text
+“Sarah, this PO is still waiting for approval.
+Delivery is needed by Friday.”
+```
+
+If no action:
+
+```text
+remind again
+escalate to next authority
+route to backup approver
+warn requester
+pause draft
+expire draft
+cancel if stale
+```
+
+Escalation uses:
+
+```text
+Reminder Engine
+Broadcast / Delivery
+Authority Engine
+Audit
+```
+
+---
+
+## 20. Conflict-of-Interest Check
+
+Selene should flag:
+
+```text
+employee buying from related supplier
+approver owns supplier
+requester and approver are same person where not allowed
+supplier bank recently changed
+new supplier added
+urgent purchase with weak explanation
+price unusually high
+same supplier repeatedly selected despite better alternatives
+```
+
+Conflict routes to authority, audit, or compliance.
+
+---
+
+## 21. Supplier Comparison
+
+Selene should compare suppliers by:
+
+```text
+price
+agreed price
+delivery speed
+delivery reliability
+quality
+supplier score
+return rate
+credit terms
+discounts
+free delivery threshold
+past issues
+availability
+location
+cashflow impact
+```
+
+Example:
+
+```text
+“Supplier B is cheaper, but Supplier A delivers faster and has fewer receiving issues.”
+```
+
+Selene should recommend, not blindly choose.
+
+---
+
+## 22. Agreed Supplier Pricing
+
+If a supplier has agreed pricing, Selene must enforce or alert.
+
+Checks:
+
+```text
+contract price
+group price
+branch price
+volume price
+promo price
+last invoice price
+quote price
+supplier increase
+free delivery threshold
+bulk discount
+```
+
+If quote differs from agreed price:
+
+```text
+“This quote is above the agreed price.
+I recommend querying the supplier before issuing the PO.”
+```
+
+---
+
+## 23. Price Movement Detection
+
+Selene should warn when price changes.
+
+Checks:
+
+```text
+last price
+current price
+agreed price
+percentage increase
+supplier explanation
+alternate suppliers
+bulk discount impact
+```
+
+Example:
+
+```text
+“Price increased 14% since last order.
+I recommend asking Supplier A to confirm or match Supplier B.”
+```
+
+---
+
+## 24. Supplier Negotiation Recommendation
+
+Selene should suggest negotiation when useful:
+
+```text
+price increased
+large order
+supplier late recently
+competitor cheaper
+cashflow supports early payment discount
+bulk discount available
+free delivery threshold nearby
+```
+
+Example:
+
+```text
+“Add 3 more boxes to qualify for free delivery, but only if storage and cashflow allow it.”
+```
+
+Selene may draft negotiation message but must not send without authority.
+
+---
+
+## 25. Centralized / Group Ordering
+
+Selene must support central purchasing.
+
+Example:
+
+```text
+Head Office orders toilet paper for 12 branches.
+Supplier ships to multiple locations.
+Each branch receives its own allocation.
+```
+
+Central order supports:
+
+```text
+one central PO
+multiple delivery locations
+multiple receiving parties
+branch allocation
+branch-level expected quantities
+branch-level receiver assignment
+central approval
+local receiving proof
+group pricing
+shared supplier terms
+split delivery dates
+```
+
+---
+
+## 26. Local Purchasing Authority
+
+Some branches/locations may be authorized to buy locally.
+
+Example:
+
+```text
+Branch A can buy cleaning supplies locally up to $500.
+Head Office handles bulk stock above $500.
+```
+
+Selene must know:
+
+```text
+central purchasing rules
+local purchasing rules
+branch authority
+local supplier list
+group supplier pricing
+emergency purchase rules
+approval difference between local and central
+```
+
+Selene should decide whether the request belongs to:
+
+```text
+local procurement
+central procurement
+emergency local procurement
+group purchasing
+```
+
+---
+
+## 27. Delivery Address Intelligence
+
+PO must know where goods go.
+
+Possible delivery locations:
+
+```text
+warehouse
+store
+branch
+project site
+office
+restaurant
+salon
+customer site
+temporary site
+central depot
+multiple locations
+```
+
+Selene should ask only if unclear.
+
+If group order:
+
+```text
+Selene splits expected receiving by location.
+```
+
+---
+
+## 28. Storage Capacity Check Before Ordering
+
+Before issuing PO, Selene should check whether the receiving/storage location can handle the order.
+
+Checks:
+
+```text
+freezer capacity
+cold room space
+shelf space
+warehouse capacity
+hazardous goods storage
+secure storage
+expiry constraints
+dock access
+forklift/staff availability
+```
+
+If not enough space:
+
+```text
+“Storage capacity is insufficient for this quantity.
+I recommend reducing quantity or scheduling split delivery.”
+```
+
+This prevents ordering frozen goods when no freezer space exists. A lesson apparently learned the expensive way.
+
+---
+
+## 29. Split Delivery / Staged Delivery
+
+For big orders, Selene should suggest split delivery.
+
+Example:
+
+```text
+Instead of 400 cases at once:
+100 cases monthly
+or 50 cases every two weeks
+```
+
+Helps with:
+
+```text
+cashflow
+storage
+spoilage
+warehouse space
+supplier delivery schedule
+```
+
+---
+
+## 30. Receiving Handoff
+
+Once PO is approved/issued, Receiving must know what is coming.
+
+Procurement sends Receiving:
+
+```text
+PO number
+supplier
+expected items
+quantity
+expected date/time
+delivery location
+inspection requirements
+batch/expiry requirements
+serial number requirements
+photos required
+cold-chain/freezer requirements
+shelf/storage requirements
+receiver assigned
+who to notify
+```
+
+Procurement creates buying commitment.
+
+Receiving owns physical acceptance.
+
+AP later matches invoice against PO + receiving proof.
+
+---
+
+## 31. Receiver Assignment
+
+Selene should assign the right receiver based on:
+
+```text
+delivery location
+warehouse/store
+product category
+risk level
+inspection skill
+roster/availability
+authority
+cold-chain skill
+high-value handling
+```
+
+Examples:
+
+```text
+Frozen goods → cold-chain trained receiver
+Meat → food receiver
+Electronics → serial-number receiver
+Office supplies → general warehouse receiver
+High-value asset → manager + photo proof
+```
+
+---
+
+## 32. Receiver Advance Warning
+
+Receiver must know early.
+
+Selene notifies:
+
+```text
+when PO is issued
+when supplier confirms
+one day before delivery
+same day reminder
+delay warning
+arrival warning if courier/tracking available
+```
+
+Receiver should prepare:
+
+```text
+freezer space
+shelf space
+dock access
+forklift/staff
+inspection tools
+storage bins
+cold-chain readiness
+security for high-value items
+```
+
+Example:
+
+```text
+“Frozen goods arriving Friday 9am.
+Required freezer space: 2 pallets.
+Receiver: Tom.
+Please confirm freezer capacity.”
+```
+
+Surprise is for birthdays, not frozen deliveries.
+
+---
+
+## 33. PO-to-Receiving Tracking
+
+Procurement must track whether issued POs are received.
+
+If not received by expected date:
+
+```text
+warn receiver
+warn requester
+check supplier confirmation
+check courier/tracking
+escalate if critical
+recommend cancel/reorder
+```
+
+Selene must not let missing goods quietly sit in “expected delivery” status forever like a ghost shipment.
+
+---
+
+## 34. Supplier Confirmation and Delay Tracking
+
+After PO is issued, Selene tracks:
+
+```text
+supplier acceptance
+expected delivery date
+delayed shipment
+lost in transit
+damaged in transit
+partial shipment
+supplier cancellation
+backorder
+```
+
+If delay occurs:
+
+```text
+notify requester
+notify receiver
+notify management if critical
+suggest alternate supplier
+cancel/reorder if needed
+```
+
+Example:
+
+```text
+“Toilet paper delivery is delayed.
+Current stock covers 3 days.
+I recommend urgent reorder from backup supplier.”
+```
+
+Because civilisation has minimum bathroom requirements.
+
+---
+
+## 35. Cancel and Reorder if Goods Not Received
+
+If goods do not arrive:
+
+```text
+check supplier status
+check courier status
+warn responsible person
+contact supplier
+cancel PO if necessary
+create replacement PO
+route urgent approval if needed
+notify Receiving
+notify AP if invoice exists
+```
+
+---
+
+## 36. PO Amendment Rules
+
+If something changes:
+
+```text
+price
+quantity
+supplier
+delivery date
+item
+substitution
+delivery location
+```
+
+Selene must decide:
+
+```text
+minor amendment allowed
+new approval required
+new PO version required
+cancel and recreate PO
+notify receiver
+notify AP
+```
+
+---
+
+## 37. PO Cancellation Rules
+
+Selene must support:
+
+```text
+cancel draft
+cancel before approval
+cancel after approval
+cancel after issue before supplier accepts
+cancel after supplier accepts
+partial cancellation
+cancel and reorder
+supplier cancellation
+```
+
+---
+
+## 38. PO Lifecycle
+
+PO remains a PO until goods/services are received and invoice matching begins.
+
+States:
+
+```text
 Draft
-PendingChecks
-PendingApproval
+NeedsInfo
+NeedsApproval
 Approved
 Issued
-SupplierAcknowledged
-SupplierChangeRequested
-InFulfillment
+SupplierConfirmed
 PartiallyReceived
 FullyReceived
 Closed
 Cancelled
 Disputed
-Archived
+Expired
 ```
 
-### Supplier Change State
+PO does not become payable just because someone created it.
 
-```text id="supplier_change_state"
-NoChange
-ChangeReceived
-ToleranceChecking
-ImpactReview
-Accepted
+Flow:
+
+```text
+PO issued
+goods/services received
+supplier invoice arrives
+AP matches PO + receiving + invoice
+approved payable created
+supplier payment later
+```
+
+Do not pay for ghosts. Simple. Apparently revolutionary.
+
+---
+
+## 39. Supplier Bank Safety Handoff
+
+Before issuing or paying high-risk purchases, Selene may check supplier trust.
+
+Risk triggers:
+
+```text
+new supplier
+supplier bank changed
+supplier details changed
+large value
+urgent request
+unusual supplier
+manual override
+```
+
+Procurement hands off to:
+
+```text
+Supplier Intelligence
+Supplier Bank Trust
+AP
+Supplier Payment
+```
+
+Procurement does not pay.
+
+Procurement ensures risk is visible early.
+
+---
+
+## 40. Smart PO Draft
+
+Selene should draft PO with:
+
+```text
+supplier
+items
+quantity
+unit price
+tax
+currency
+delivery location
+expected delivery date
+budget/cost centre/project
+payment terms
+supplier terms
+agreed pricing reference
+approval route
+receiver assignment
+inspection rules
+cashflow note
+quantity recommendation reason
+audit evidence
+```
+
+---
+
+## 41. Executive PO Summary
+
+Every PO should have a plain-English summary.
+
+Example:
+
+```text
+“This PO buys 30 cases of toilet paper from Supplier A for $567.
+You usually order 60 cases, but cashflow is tight and supplier delivers weekly.
+This covers 4 weeks.
+It is within your limit.
+No second approval required.
+Receiving has been notified for Friday delivery.”
+```
+
+Approval summary:
+
+```text
+“This exceeds Tom’s limit and requires Sarah + Michael approval.
+Cashflow is green.
+Storage capacity confirmed.
+Supplier price matches agreed pricing.”
+```
+
+---
+
+## 42. Approval Reason Explanation
+
+Approvers should know why they are approving.
+
+Approval summary includes:
+
+```text
+why purchase is needed
+why quantity is recommended
+budget impact
+cashflow impact
+supplier history
+price comparison
+risk flags
+delivery urgency
+storage readiness
+receiver readiness
+```
+
+No mystery approvals. Mystery approvals are how companies buy 400 chairs no one wanted.
+
+---
+
+## 43. Procurement Conversation Memory
+
+Selene should remember procurement instructions:
+
+```text
+avoid Supplier B unless Supplier A is out
+always route IT equipment to Michael
+order local if urgent
+never bulk order perishables beyond 2 weeks
+prefer Supplier C for screws unless price rises over 10%
+```
+
+Memory helps.
+
+Deterministic checks still verify.
+
+Selene remembers preferences, not excuses.
+
+---
+
+## 44. State Machines
+
+### 44.1 Purchase Request State
+
+```text
+Requested
+IntentResolved
+NeedsInfo
+SupplierSuggested
+QuantitySuggested
+CashflowChecking
+BudgetChecking
+AuthorityChecking
+DraftReady
+Closed
+```
+
+### 44.2 PO State
+
+```text
+Draft
+NeedsInfo
+NeedsApproval
+ApprovalRouting
+Approved
 Rejected
-BackupSupplierRecommended
-POAmended
+Issued
+SupplierConfirmed
+PartiallyReceived
+FullyReceived
+Closed
 Cancelled
-Archived
+Disputed
+Expired
 ```
 
-### Emergency Purchase State
+### 44.3 Approval Route State
 
-```text id="emergency_purchase_state"
-EmergencyDetected
-ReasonCaptured
-UrgentApprovalRouting
-TemporaryApprovalGranted
-POIssued
-PostEventReviewRequired
-Reviewed
-Closed
-Archived
-```
-
-### Retrospective PO State
-
-```text id="retrospective_po_state"
-Detected
-ReasonRequired
-EvidenceRequired
-AuthorityReview
-ApprovedAsException
+```text
+NotRequired
+Required
+QuietAccessRequestRouted
+OneTimeApprovalRequested
+PermanentAccessRequested
+SequentialApprovalPending
+ParallelApprovalPending
+Approved
 Rejected
+Escalated
+Expired
 Closed
-Archived
+```
+
+### 44.4 Reorder Reminder State
+
+```text
+NotDue
+DueSoon
+ReminderQueued
+ReminderSent
+UserConfirmed
+DraftCreated
+Dismissed
+Snoozed
+Escalated
+Closed
+```
+
+### 44.5 Quantity Optimization State
+
+```text
+NotRequired
+UsageAnalyzing
+StockChecking
+LeadTimeChecking
+CashflowChecking
+StorageChecking
+Recommended
+UserOverrode
+EscalationRequired
+Closed
+```
+
+### 44.6 Receiving Handoff State
+
+```text
+NotReady
+ReceiverAssignmentPending
+ReceiverAssigned
+StorageCheckPending
+StorageConfirmed
+ReceiverNotified
+ReminderScheduled
+DeliveryExpected
+Received
+IssueRaised
+Closed
+```
+
+### 44.7 Supplier Delay State
+
+```text
+NoDelay
+ConfirmationPending
+SupplierConfirmed
+DelayDetected
+ReceiverWarned
+RequesterWarned
+ManagementWarned
+AlternativeSuggested
+CancelReorderRecommended
+Resolved
+Closed
 ```
 
 ---
 
-## 40. Reason Codes
+## 45. Reason Codes
 
-```text id="procurement_reason_codes"
-PURCHASE_NEED_DETECTED
-ROUTINE_REORDER_DETECTED
-INVENTORY_REORDER_REQUIRED
-PROCUREMENT_SUPPLIER_RECOMMENDED
-SUPPLIER_RESTRICTED_WARNING
-SUPPLIER_BLOCKED
-SUPPLIER_OPEN_OBLIGATION_WARNING
-BUDGET_CHECK_REQUIRED
-BUDGET_WITHIN_LIMIT
-BUDGET_EXCEEDED
-CASHFLOW_CHECK_REQUIRED
-CASHFLOW_WARNING
-SPLIT_ORDER_RECOMMENDED
-TRANSFER_INSTEAD_OF_PURCHASE_RECOMMENDED
-AUTHORITY_CHECK_REQUIRED
-PURCHASE_AUTO_APPROVED_UNDER_POLICY
-PURCHASE_APPROVAL_REQUIRED
-PO_CREATED
-PO_ISSUED
-PO_ACKNOWLEDGED
-PO_SUPPLIER_CHANGE_REQUESTED
-PO_PRICE_VARIANCE
-PO_QUANTITY_VARIANCE
-PO_DELIVERY_DATE_VARIANCE
-PO_CANCELLED
-PO_PARTIALLY_RECEIVED
-PO_CLOSED
-RETROSPECTIVE_PO_DETECTED
-EMERGENCY_PURCHASE_PATH
-FRAUD_SIGNAL_SPLIT_PURCHASE
+```text
+PROCUREMENT_REQUEST_RECEIVED
+PROCUREMENT_INTENT_RESOLVED
+USUAL_SUPPLIER_FOUND
+USUAL_ORDER_FOUND
+REORDER_REMINDER_TRIGGERED
+QUANTITY_RECOMMENDED
+QUANTITY_REDUCED_FOR_CASHFLOW
+QUANTITY_REDUCED_FOR_STORAGE
+QUANTITY_REDUCED_FOR_USAGE_HISTORY
+BULK_ORDER_NOT_RECOMMENDED
+SUSPICIOUS_REORDER_DETECTED
+STOCK_SHOULD_EXIST_CHECK_REQUIRED
+CASHFLOW_GATE_GREEN
+CASHFLOW_GATE_WARNING
+CASHFLOW_GATE_BLOCKED
+BUDGET_GATE_GREEN
+BUDGET_GATE_WARNING
+USER_LIMIT_CHECKED
+AUTHORITY_ROUTE_REQUIRED
+QUIET_ACCESS_REQUEST_ROUTED
+ONE_TIME_APPROVAL_REQUESTED
+PERMANENT_ACCESS_REQUESTED
+MULTI_APPROVER_ROUTE_REQUIRED
+BROADCAST_APPROVAL_SENT
+DELIVERY_APPROVAL_SENT
+APPROVAL_REMINDER_SENT
+APPROVAL_ESCALATED
+CONFLICT_OF_INTEREST_FLAGGED
+SUPPLIER_PRICE_MATCHED_AGREED_PRICE
+SUPPLIER_PRICE_ABOVE_AGREED_PRICE
+SUPPLIER_COMPARISON_COMPLETED
+NEGOTIATION_RECOMMENDED
+CENTRAL_ORDER_REQUIRED
+LOCAL_ORDER_ALLOWED
+GROUP_ORDER_CREATED
 RECEIVER_ASSIGNED
-AP_MATCHING_PREPARED
+RECEIVER_ADVANCE_NOTICE_SENT
+STORAGE_CAPACITY_WARNING
+FREEZER_SPACE_REQUIRED
+SPLIT_DELIVERY_RECOMMENDED
+PO_DRAFT_CREATED
+PO_APPROVED
+PO_REJECTED
+PO_ISSUED
+SUPPLIER_CONFIRMED
+SUPPLIER_DELAY_DETECTED
+GOODS_NOT_RECEIVED_BY_EXPECTED_DATE
+CANCEL_REORDER_RECOMMENDED
+PO_AMENDMENT_REQUIRED
+PO_CANCELLED
+RECEIVING_HANDOFF_CREATED
+AP_MATCHING_HANDOFF_READY
+PROCUREMENT_AUDIT_CAPTURED
 ```
 
 ---
 
-## 41. Required Simulations
+## 46. Required Simulations
 
-```text id="procurement_simulations"
-routine reorder creates PO
-inventory-triggered purchase request
-JIT reorder creates split order
-supplier comparison selects better supplier
-supplier restricted blocks PO
-supplier open credit note warns Procurement
-budget within limit auto-approval
-budget exceeded routes approval
-cashflow warning splits order
-transfer recommended instead of purchase
-purchase authority limit exceeded
-PO issued to Selene-connected supplier
-supplier acknowledges PO
-supplier changes delivery date
-supplier changes price outside tolerance
-supplier partial acceptance
-backup supplier recommended
-receiving manifest created from PO
-AP invoice arrives without PO
-retrospective PO exception
-emergency purchase flow
-capex purchase routes asset approval
-contract renewal review
-split purchase fraud signal
-procurement analytics report
+```text
+user asks Selene to order usual toilet paper
+Selene finds usual supplier and usual quantity
+Selene recommends lower quantity due to cashflow
+Selene recommends lower quantity due to storage limit
+Selene warns last 400 cases took 18 months to use
+Selene detects suspicious reorder because stock should exist
+Selene routes inventory/warehouse check before PO
+assistant drafts PO but cannot issue
+Selene quietly routes authority request
+authority approves one-time access
+authority grants permanent category-limited access
+authority rejects access and Selene informs requester
+PO requires Sarah and Michael approval
+approval sent through Broadcast/Delivery
+approver does not respond and reminder sends
+approval escalates to substitute approver
+supplier price exceeds agreed price
+Selene recommends negotiation
+supplier B cheaper but delivery slower
+cashflow tight but item essential
+Selene recommends reduced essential order
+central group order for 12 branches
+local branch purchase allowed under limit
+PO creates receiving handoff
+receiver is assigned
+freezer space warning blocks quantity
+split delivery recommended
+receiver receives advance notice
+supplier delays delivery
+Selene warns receiver/requester/management
+goods not received by expected date
+Selene recommends cancel and reorder
+PO partially received
+PO fully received
+PO cancelled before supplier accepts
+PO amended after price change
+AP receives PO/receiving match handoff
 ```
 
 ---
 
-## 42. Integration Map
+## 47. Integration Map
 
-```text id="procurement_integration_map"
-PH1.PROCUREMENT / PH1.PROC.ORDER
-↔ PH1.PRODUCT
-↔ PH1.INVENTORY
+```text
+PH1.PROCUREMENT / PURCHASE_ORDER
 ↔ PH1.SUPPLIER
-↔ PH1.SUPPLIER.BANK_TRUST
-↔ PH1.PROC.RECEIVE
-↔ PH1.CREDITORS / AP
-↔ PH1.SUPPLIER_PAYMENT
-↔ PH1.CREDITORS.RECON
-↔ PH1.ACCOUNTING
-↔ PH1.BUDGET / SPEND_GOV
+↔ PH1.SUPPLIER_BANK_TRUST
+↔ PH1.INVENTORY
+↔ PH1.WAREHOUSE
 ↔ PH1.CASHFLOW
-↔ PH1.ASSET
-↔ PH1.ASSET_ACCOUNTING
-↔ PH1.FLEET
-↔ PH1.INSURANCE
-↔ PH1.LEGAL / CONTRACTS
-↔ PH1.COMPLIANCE
-↔ PH1.ECOMMERCE
-↔ PH1.B2B
-↔ PH1.POS
-↔ PH1.MANUFACTURING / PRODUCTION
-↔ PH1.RESTAURANT / MENU
+↔ PH1.BUDGET / COST_CENTER
 ↔ PH1.ACCESS / AUTHORITY
-↔ PH1.AUDIT
-↔ PH1.REM
 ↔ PH1.BCAST / DELIVERY
-↔ PH1.WRITE
+↔ PH1.REM
+↔ PH1.RECEIVING
+↔ PH1.AP / CREDITORS
+↔ PH1.ACCOUNTING
+↔ PH1.TAX
+↔ PH1.AUDIT
+↔ PH1.MP / MEMORY_PATTERN
 ↔ PH1.D / GPT-5.5
+↔ PH1.X / LIVE_CONTEXT
+↔ PH1.M / MEMORY
 ```
 
 ---
 
-## 43. Required Logical Packets
+## 48. Required Logical Packets
 
-```text id="procurement_packets"
-PurchaseNeedPacket
-PurchaseRequestPacket
-SupplierEvaluationRequestPacket
-SupplierSelectionPacket
-BudgetCheckRequestPacket
-BudgetCheckResultPacket
-CashflowCheckRequestPacket
-CashflowCheckResultPacket
-AuthorityCheckPacket
-PurchaseApprovalPacket
-PurchaseOrderPacket
-PurchaseOrderLinePacket
-POTransmissionPacket
-POAcknowledgementPacket
-SupplierPOChangePacket
+```text
+ProcurementRequestPacket
+ProcurementConversationIntentPacket
+UsualSupplierMemoryPacket
+UsualOrderMemoryPacket
+ReorderReminderPacket
+QuantityOptimizationPacket
+CashflowProcurementGatePacket
+EssentialityClassificationPacket
+SuspiciousReorderPacket
+SmartPODraftPacket
+PersonPurchaseLimitProfilePacket
+ApprovalPolicyMatrixPacket
+QuietAccessRoutingPacket
+MultiApproverRoutePacket
+ApprovalBroadcastPacket
+ApprovalReminderPacket
+ApprovalEscalationPacket
+SupplierComparisonPacket
+SupplierPriceMovementPacket
+SupplierNegotiationRecommendationPacket
+CentralGroupOrderPacket
+LocalPurchaseAuthorityPacket
+StorageCapacityCheckPacket
+ReceiverAssignmentPacket
+ReceivingAdvanceNoticePacket
+SupplierDelayTrackingPacket
+CancelReorderRecommendationPacket
 POAmendmentPacket
 POCancellationPacket
-ReceivingExpectationPacket
-ProcurementCommitmentPacket
-EmergencyPurchasePacket
-RetrospectivePOPacket
-ProcurementFraudSignalPacket
+POReceivingHandoffPacket
+POAPMatchingHandoffPacket
+POExecutiveSummaryPacket
 ProcurementAuditEvidencePacket
 ```
 
-Logical only. Codex maps later. No packet structs today, little schema goblin.
+Logical only.
+
+No runtime packet structs.
 
 ---
 
-## 44. What Codex Must Not Do
+## 49. What Codex Must Not Do
 
-```text id="codex_no_procurement"
-Do not merge Procurement into Inventory.
-Do not merge Procurement into Supplier.
-Do not let Procurement receive goods.
-Do not let Procurement validate supplier invoices.
-Do not let Procurement execute payments.
-Do not let Procurement post ledger.
-Do not let GPT-5.5 approve purchases.
-Do not create protected POs without authority.
-Do not bypass Supplier risk.
-Do not bypass Budget or Cashflow checks.
-Do not ignore retrospective PO risk.
-Do not auto-accept supplier changes outside tolerance.
+```text
+Do not make Procurement own inventory stock truth.
+Do not make Procurement own cashflow truth.
+Do not make Procurement own budget ledger truth.
+Do not make Procurement own supplier bank trust.
+Do not make Procurement own receiving execution.
+Do not make Procurement own AP payable creation.
+Do not make Procurement own supplier payment.
+Do not hard-deny access before routing through authority where rules allow quiet routing.
+Do not bypass Master Access / Per-User Access rules.
+Do not issue PO without required approval.
+Do not skip Broadcast / Delivery for approval routing.
+Do not skip receiver advance notice.
+Do not ignore cashflow warnings.
+Do not blindly copy last order quantity.
+Do not ignore suspicious reorder signals.
+Do not allow PO to become payable without receiving/AP match.
+Do not use fixed phrase matching.
+Do not let GPT-5.5 invent supplier, price, cashflow, stock, approval, or receiving readiness.
+Do not create runtime code from this document.
+Do not create packet structs.
 Do not implement from this document alone.
 ```
 
 ---
 
-## 45. Final Architecture Sentence
+## 50. Final Architecture Sentence
 
-Selene Procurement + Purchase Order Engine is the autonomous buying-control brain that detects purchase needs from Inventory, Product, B2B, POS, E-commerce, production, assets, maintenance, contracts, and humans; evaluates supplier reliability, obligations, risk, budget, cashflow, authority, and urgency; creates, issues, amends, cancels, and tracks purchase orders; prepares Receiving, AP, Budget, Cashflow, and Accounting handoffs; prevents invoice fraud and retrospective purchasing from becoming normal; and uses GPT-5.5 to explain and draft procurement communication while deterministic Selene policy, Access, Supplier, Budget, Cashflow, Receiving, AP, and Audit preserve truth and control.
+Selene Procurement + Purchase Order Engine is the company buying brain that turns human purchasing intent into safe, cashflow-aware, quantity-optimized, supplier-aware, approval-routed, receiving-ready purchase orders; remembers usual suppliers and routine orders; reminds responsible users when reorders are due; prevents unnecessary or suspicious reorders; quietly routes access and approval requests through Master Access / Per-User Access, Broadcast, Delivery, and Reminder engines; checks budgets, cashflow, agreed pricing, supplier risk, storage capacity, and receiver readiness; supports central and local purchasing; tracks supplier confirmation, delays, cancellation, reorder, amendment, receiving handoff, and AP matching readiness; and uses GPT-5.5 for natural procurement conversation while deterministic Selene engines verify stock, supplier, cashflow, authority, receiving, accounting, and audit truth.
 
 Simple version:
 
-```text id="procurement_simple"
-Selene sees the need.
-Selene checks the supplier.
-Selene checks budget.
+```text
+User asks Selene to buy something.
+Selene checks if it is needed.
+Selene checks who we usually buy from.
+Selene recommends how much to buy.
 Selene checks cashflow.
+Selene checks budget.
 Selene checks authority.
-Selene creates the PO.
-Selene sends it.
-Selene tracks supplier response.
-Selene prepares Receiving.
-Selene prepares AP matching.
-Selene blocks invoice chaos.
-Humans approve only real exceptions.
-Everything is audited.
+Selene quietly routes approval/access if needed.
+Selene drafts the PO.
+Selene issues it after approval.
+Selene tells Receiving early.
+Selene tracks whether goods arrive.
+Selene cancels/reorders if they do not.
+Selene hands off to AP only after receiving proof.
+Everything important is audited.
 ```
 
-That is Global Document 70 — Procurement + Purchase Order Engine. It is the buying brain between “we need this” and “supplier wants money,” which is exactly where most companies accidentally let chaos enter wearing a purchase order number.
-
-[1]: https://www.iso.org/standard/63026.html?utm_source=chatgpt.com "ISO 20400:2017 - Sustainable procurement — Guidance"
-[2]: https://cips-download.cips.org/short-reads/from-requisition-to-payment-how-the-procure-to-pay-process-streamlines-procurement?utm_source=chatgpt.com "From requisition to payment: how the procure-to-pay ..."
-[3]: https://www.apqc.org/what-we-do/benchmarking/open-standards-benchmarking/measures/percentage-purchase-orders-created?utm_source=chatgpt.com "Percentage of purchase orders created after receipt ..."
+That is the upgraded Document 70 direction. Procurement is no longer “place order.” Procurement is “make sure buying this thing will not quietly punch the company in the cashflow, storage, receiving, or approval system.” A small but meaningful improvement over buying 400 cases of toilet paper because someone forgot how cupboards work.
