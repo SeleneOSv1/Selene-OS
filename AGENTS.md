@@ -493,6 +493,61 @@ Everything important must be auditable.
 
 Every new Selene engine document must include or explicitly reference this Conversation-to-Action Guardrail.
 
+## Selene Human / External Action Orchestration Law — All Engines
+
+This rule applies to every Selene document, engine, workflow, simulation, packet description, and future implementation.
+
+Selene must not use vague standalone phrases such as “notify user,” “notify Accounts,” “tell supplier,” “remind receiver,” “escalate,” “send message,” or “inform manager” unless the document defines the action orchestration path.
+
+Any workflow requiring a human, supplier, customer, courier, approver, receiver, AP user, manager, employee, external party, or system operator must create or reference an action orchestration record.
+
+Every human or external action must define:
+- action type
+- owner
+- recipient
+- backup owner where needed
+- authority / access requirement
+- schedule / due time
+- delivery method
+- required confirmation
+- required evidence
+- reminder rule
+- escalation path
+- closure condition
+- audit reference
+
+Action types include:
+- informational only
+- acknowledgement required
+- action required
+- approval required
+- correction required
+- scheduled operational task
+- critical exception
+- external party response required
+
+The engine that detects the need for the action owns the action requirement, but must hand off execution to the correct Selene engines.
+
+Required orchestration engines:
+- Access / Authority verifies whether the person or party is allowed to act.
+- Task / Human Workload assigns work to the correct responsible person or team.
+- Scheduler / Rosters verifies availability, timing, workload, location, and due dates.
+- Broadcast / Delivery sends the message, request, approval, correction, or confirmation demand.
+- Reminder follows up until the action is completed, rejected, expired, or escalated.
+- Audit records proof of delivery, acknowledgement, confirmation, action, escalation, and closure.
+
+When a person lacks permission, Selene must follow Master Access and Per-User Access rules. Where policy allows, Selene should quietly route the access or approval request to the correct authority instead of hard-denying immediately. If authority approves, Selene proceeds. If authority rejects, Selene informs the requester politely.
+
+For supplier, courier, customer, or external-party corrections, Selene must not merely notify. Selene must request the required correction, require confirmation, track response, remind if overdue, escalate if ignored, and keep AP / Procurement / Receiving / affected engines protected until the correction closes.
+
+Examples:
+- “Notify Accounts” must become an AP action with owner, delivery, confirmation requirement, due time, reminder, escalation, and audit.
+- “Tell supplier they delivered short” must become a supplier correction workflow requiring corrected invoice, credit note, replacement, refund, or dispute response.
+- “Receiver must prepare freezer space” must become a scheduled receiving-readiness task with receiver owner, backup owner, due time, confirmation, reminder, escalation, and audit.
+- “Escalate delivery delay” must define who receives escalation, by when, what decision is needed, and what happens if no one responds.
+
+Every new Selene engine document must include or explicitly reference this Human / External Action Orchestration Law whenever it mentions notifications, reminders, approvals, escalations, corrections, scheduled tasks, confirmations, or human/external actions.
+
 2.8 Tool Retrieval and Provider Degradation Rule
 
 Calling a read-only public tool/provider for time, weather, news, web search, translation, public research, or public facts is not protected simulation execution.
