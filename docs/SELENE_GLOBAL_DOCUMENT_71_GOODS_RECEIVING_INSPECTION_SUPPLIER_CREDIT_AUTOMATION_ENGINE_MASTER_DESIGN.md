@@ -1,6 +1,8 @@
-# Global Document 71 — Selene Goods Receiving + Inspection + Supplier Credit Automation Engine
+# Global Document 71 — Selene Goods Receiving + Inspection + Supplier Credit Automation Engine v2
 
-```text id="doc71_status"
+## Receiving Proof, Inspection, Acceptance, Inventory Handoff + AP Hold Engine
+
+```text
 DOCUMENT TYPE:
 GLOBAL MASTER ARCHITECTURE DESIGN
 
@@ -8,10 +10,10 @@ GLOBAL DOCUMENT NUMBER:
 71
 
 ENGINE:
-PH1.PROC.RECEIVE / PH1.GOODS_INSPECTION / PH1.RECEIVING_PROOF
+PH1.RECEIVING / PH1.GOODS_RECEIVING / PH1.RECEIPT_PROOF
 
 FULL NAME:
-Selene Goods Receiving, Inspection, Acceptance, Variance, Quarantine, Supplier Credit, Replacement, Refund, and AP Hold Automation Engine
+Selene Goods Receiving, Inspection, Receipt Proof, Quantity Verification, Damage Evidence, Traceability Capture, Quarantine, Accepted Stock Handoff, Supplier Obligation Trigger, AP Hold, and Receiving Audit Engine
 
 STATUS:
 FUTURE_CANONICAL_ARCHITECTURE
@@ -25,549 +27,401 @@ CODEX_READY_MASTER_DESIGN
 
 ## 1. Purpose
 
-Selene Goods Receiving + Inspection Engine owns the truth of what actually arrived from a supplier and whether it is acceptable.
+Document 71 owns the **proof of what actually arrived**.
 
-It answers:
+Procurement says what was ordered.
+Receiving proves what arrived.
+Inventory only accepts proven accepted stock.
+AP only pays what can be matched to PO + receiving proof + invoice.
 
-```text id="receiving_questions"
+Receiving answers:
+
+```text
 What was expected?
 Did it arrive?
 Who received it?
-What quantity arrived?
-Was it the correct product?
+How much arrived?
 Was it damaged?
 Was it short?
 Was it over-delivered?
-Was it expired or near expiry?
-Was it the correct batch, lot, or serial item?
-Was inspection required?
-Was it accepted, rejected, quarantined, or returned?
-What evidence proves the result?
+Was it wrong?
+Was it expired?
+Was it cold-chain valid?
+Was it accepted, rejected, quarantined, or held?
+What evidence proves it?
 What can Inventory accept?
-What should AP pay?
-What should AP hold?
+What should AP pay or hold?
 What does the supplier owe?
 ```
 
-This engine is the real-world proof layer between:
+Simple rule:
 
-```text id="receiving_chain"
-Purchase Order
-→ Supplier Delivery
-→ Receiving / Inspection
-→ Inventory Accepted Stock
-→ Supplier Obligation
-→ AP Invoice Matching
-→ Supplier Payment
-→ Accounting
-```
-
-A PO says:
-
-```text id="po_says"
-We ordered 100.
-```
-
-Receiving says:
-
-```text id="receiving_says"
-We received 100, accepted 90, rejected 10 damaged, opened supplier credit obligation, and told AP to hold the disputed value.
-```
-
-That second sentence saves money. The first one is just optimism with a PO number.
-
----
-
-## 2. Why Receiving Comes After Procurement
-
-The chain must stay clean:
-
-```text id="receiving_after_procurement"
-Product defines the item.
-Inventory detects need.
-Supplier confirms supplier trust and terms.
-Procurement creates the PO.
-Receiving proves what actually arrived.
-Inventory accepts only proven usable stock.
-AP pays only matched, accepted value.
-Supplier Engine tracks supplier performance and obligations.
-Accounting posts final financial truth.
-```
-
-Receiving must not create the PO.
-
-Receiving must not pay the invoice.
-
-Receiving must not update supplier bank details.
-
-Receiving must not post accounting.
-
-Receiving’s job is reality:
-
-```text id="receiving_job"
-This arrived.
-This did not arrive.
-This is good.
-This is damaged.
-This is missing.
-This is rejected.
-This is accepted.
-Here is the proof.
-```
-
-Which is more useful than the traditional warehouse method of “Dave thinks it looked fine.” Dave is trying, but Dave is not an audit trail.
-
----
-
-## 3. Modern Receiving Standards Selene Must Be Ready For
-
-Receiving must support traceability, shipping identifiers, advance shipment messages, inspection proof, and AP matching.
-
-GS1’s Global Traceability Standard is designed to help organizations implement traceability systems using GS1 standards, meaning Selene should treat receiving as a traceability event, not merely a quantity update. ([GS1][1])
-
-GS1 SSCCs identify logistics units such as cartons and pallets and act as a “license plate” for shipments, so Selene must be ready to capture shipment/container identifiers during receiving where available. ([GS1 US][2])
-
-GS1 delivery management guidance describes despatch advice / advance shipment notice concepts as pre-announcements of goods being shipped, so Selene should be ready for Supplier Selene, EDI, ASN, portal, or shipment-notice data before goods arrive. ([GS1][3])
-
-CIPS describes AP invoice verification against purchase order and goods receipt as a critical control mechanism to prevent errors and mitigate fraud risk, so Selene Receiving must generate proof that AP can trust later. ([CIPS Download][4])
-
-Translation:
-
-```text id="modern_receiving_translation"
-Receiving is not “box arrived.”
-Receiving is shipment identity, PO match, quantity proof, quality proof, traceability, supplier obligation, AP control, and audit.
-```
-
-A box is never just a box. It is a future invoice wearing cardboard.
-
----
-
-## 4. Core Selene Law
-
-```text id="receiving_core_law"
+```text
 No accepted receiving proof = no clean inventory increase.
 No accepted receiving proof = no clean supplier invoice payment.
-Only accepted goods become usable, sellable, or payable.
-Short, damaged, wrong, expired, rejected, or quarantined goods create supplier obligations and AP holds under policy.
-Routine receiving variances are handled automatically by Selene.
-Humans review only exceptions, high-risk cases, material value, missing evidence, supplier disputes, overrides, and protected decisions.
 ```
 
-Selene must reduce human work by:
-
-```text id="receiving_reduce_human"
-telling receivers what is expected
-opening camera/scan workflows
-matching delivery notes to POs
-reading delivery documents
-guiding quantity counts
-guiding inspection checks
-capturing photos
-capturing batch/lot/serial/expiry
-detecting short deliveries
-detecting damaged goods
-creating supplier obligations
-requesting credit notes
-requesting replacements
-requesting refunds
-holding AP disputed amounts
-updating Inventory with accepted stock only
-updating Supplier score
-preparing AP matching proof
-```
-
-Humans should not have to ask:
-
-> “What was supposed to arrive today?”
-
-Selene should say:
-
-> “Tom, Supplier ABC is expected today with PO-771: 100 units. Please confirm count and take a photo if anything is damaged.”
-
-That is receiving with a brain. Not a clipboard wearing sneakers.
+No paying for ghost toilet paper. No stocking imaginary cartons. Apparently this needs saying.
 
 ---
 
-## 5. Engine Boundary
+## 2. Core Receiving Law
 
-### 5.1 PH1.PROC.RECEIVE owns
+```text
+Only goods/services proven as received and accepted may become clean inventory, usable assets, service completion proof, or payable supplier obligation.
 
-```text id="receiving_owns"
-expected delivery intake from Procurement
+Short, damaged, wrong, expired, rejected, quarantined, missing, or unaccepted goods/services must create supplier obligations, AP holds, Procurement updates, and audit evidence.
+
+Receiving proof must be source-backed, receiver-linked, location-linked, PO-linked, supplier-linked, Inventory-linked, AP-linked, and audit-linked.
+```
+
+Receiving must protect against:
+
+```text
+paying for goods not received
+adding damaged goods to usable stock
+accepting wrong items silently
+accepting over-delivery without authority
+accepting goods without PO proof
+losing traceability
+missing batch/serial/expiry evidence
+ignoring cold-chain breaches
+allowing AP to pay incorrect invoices
+letting supplier shortages become company losses
+```
+
+Receiving is not a polite warehouse nod. It is proof.
+
+---
+
+## 3. Engine Ownership Boundary
+
+### 3.1 Receiving owns
+
+```text
+expected delivery intake from Procurement / Document 70
 delivery arrival confirmation
-delivery note capture
-ASN/despatch advice reference
-SSCC/logistics unit capture where available
+delivery note / ASN / despatch advice reference
+SSCC / logistics unit capture where available
 PO matching at delivery
-receiver assignment reference
+receiver identity reference
 quantity check
 condition check
 damage capture
 photo/video evidence
-batch/lot/serial capture
+batch / lot / serial capture
 expiry capture
-temperature/cold-chain capture where required
+manufacture date capture where required
+temperature / cold-chain capture
 quality inspection workflow
 accepted quantity
 rejected quantity
 short quantity
 over-delivered quantity
-quarantined quantity
+damaged quantity
+quarantine
 wrong item record
-supplier variance record
 supplier obligation trigger
-supplier credit/replacement/refund trigger
+supplier credit / replacement / refund trigger
 AP hold instruction
 Inventory accepted-stock handoff
+asset/service receiving proof
 receiving audit evidence
 ```
 
-### 5.2 PH1.PROC.RECEIVE does not own
+### 3.2 Receiving references but does not own
 
-```text id="receiving_not_own"
-product identity
+```text
+PO creation
+supplier selection
+supplier qualification / rating
+supplier bank trust
 stock forecasting
-supplier qualification
-purchase order creation
-supplier invoice validation
-supplier payment execution
-ledger posting
+quantity recommendation
+cashflow approval
+budget approval
+final receiver scheduling
+human workload allocation
+Broadcast / Delivery infrastructure
+Reminder infrastructure
+supplier payment
+invoice payable creation
+final accounting posting
 tax treatment
-supplier bank details
-final supplier score ownership
 ```
 
-### 5.3 Correct owner split
+### 3.3 Correct owner split
 
-```text id="receiving_owner_split"
-PH1.PROCUREMENT = what was ordered and expected.
-PH1.PROC.RECEIVE = what arrived and what was accepted.
-PH1.INVENTORY = stock after accepted handoff.
-PH1.SUPPLIER = supplier performance, obligations, disputes, score.
-PH1.CREDITORS / AP = invoice matching and payable amount.
-PH1.ACCOUNTING = final financial posting.
-PH1.AUDIT = proof.
+```text
+Procurement = what was ordered, why it was ordered, and what Receiving should expect.
+Receiving = what actually arrived and what was accepted.
+Document 72 = daily manifest, assigned work, reminders, supplier chasing, correction control.
+Inventory = accepted stock truth.
+AP = PO + receiving + invoice matching.
+Supplier Intelligence = supplier performance and rating.
+Supplier Payment = supplier payment execution.
+Accounting = ledger posting.
+Audit = proof.
 ```
 
-Receiving proves reality.
-
-Inventory stores usable stock.
-
-AP pays proven value.
-
-Accounting posts final money truth.
-
-Beautiful. Suspiciously civilized.
+This boundary matters. Receiving should not become Procurement, AP, Inventory, and a warehouse babysitter all at once. We have Document 72 for the babysitting.
 
 ---
 
-## 6. Receiving Master Record
+## 4. Relationship to Document 70 and Document 72
 
-Every receiving event creates a record.
+### Document 70 — Procurement
 
-```text id="receiving_master_record"
+Procurement sends Receiving:
+
+```text
+PO number
+supplier
+expected items
+expected quantities
+expected delivery date/window
+delivery location
+special handling
+inspection requirements
+storage requirements
+batch/serial/expiry requirements
+receiver requirement
+AP matching requirement
+audit reference
+```
+
+### Document 71 — Receiving Proof
+
+Receiving proves:
+
+```text
+what arrived
+what was counted
+what was inspected
+what was accepted
+what was rejected
+what was damaged
+what was short
+what was over-delivered
+what must be held
+what Inventory may accept
+what AP must hold
+```
+
+### Document 72 — Daily Receiving Control
+
+Document 72 manages:
+
+```text
+daily receiving manifest
+receiver assignment workflow
+scheduler / roster / task allocation
+receiver readiness confirmation
+shelf/freezer/dock readiness
+reminders
+escalations
+supplier/courier chasing
+supplier correction workflows
+corrected invoice / credit note / replacement confirmations
+```
+
+Simple version:
+
+```text
+71 proves reality.
+72 chases reality until it behaves.
+```
+
+---
+
+## 5. Receiving Master Record
+
+Every receiving event must create or update a Receiving Master Record.
+
+Required fields include:
+
+```text
 receiving_id
 legal_entity_id
 branch_id
 warehouse_id
 location_id
 po_id
+purchase_order_line_id
 supplier_id
-supplier_status_snapshot
-delivery_note_id
+supplier_delivery_note_ref
 ASN_ref
 SSCC_ref
 carrier_ref
 tracking_ref
-delivery_date
-delivery_time
+delivery_date_time
 received_by_user_id
-backup_receiver_id
-inspector_user_id
+backup_receiver_id where applicable
+inspector_user_id where applicable
 product_id
 variant_id
 supplier_sku
-quantity_ordered
-quantity_expected
-quantity_delivered
-quantity_counted
-quantity_accepted
-quantity_rejected
-quantity_short
-quantity_overdelivered
-quantity_damaged
-quantity_quarantined
-batch_number
-lot_number
+ordered_quantity
+expected_quantity
+delivered_quantity
+counted_quantity
+accepted_quantity
+rejected_quantity
+short_quantity
+over_delivered_quantity
+damaged_quantity
+quarantined_quantity
+batch_id
+lot_id
 serial_numbers
 expiry_date
 manufacture_date
 temperature_reading
 condition_status
 inspection_status
-photos
-videos
-delivery_note_image
-supplier_documents
-variance_reason_codes
+photo_evidence_refs
+video_evidence_refs
+delivery_note_image_ref
+supplier_document_refs
 supplier_obligation_refs
 AP_hold_ref
-Inventory_handoff_ref
+inventory_handoff_ref
 audit_ref
 ```
 
 Receiving records must be:
 
-```text id="receiving_record_rules"
-source-backed
+```text
 time-stamped
 receiver-linked
 location-linked
 PO-linked
 supplier-linked
+evidence-backed
 Inventory-linked
 AP-linked
 audit-linked
 ```
 
-If it cannot be proven, Selene should not treat it as clean receiving truth. We are not running a warehouse séance.
+No receiving séance. Proof or it did not happen.
 
 ---
 
-## 7. Receiving Applies To More Than Physical Goods
+## 6. Expected Delivery Intake
 
-Receiving supports:
+Receiving consumes expected delivery data from Procurement.
 
-```text id="receiving_types"
-retail goods
-raw materials
-ingredients
-finished goods
-spare parts
-equipment
-vehicles
-machinery
-IT hardware
-office supplies
-packaging
-perishable goods
-cold-chain goods
-regulated goods
-batch/lot goods
-serialized goods
-high-value assets
-construction materials
-contractor deliverables
-service completion
-digital deliverables
-drop-ship customer-direct deliveries
+Expected Delivery Packet includes:
+
+```text
+PO number
+supplier
+items
+quantities
+expected delivery date/time
+delivery location
+receiver requirement
+inspection requirement
+batch/serial/expiry requirement
+cold-chain requirement
+storage requirement
+special handling
+AP match requirement
+audit reference
 ```
 
-For services, receiving becomes **service acceptance**.
+Receiving uses this packet to prepare:
 
-Example:
-
-```text id="service_acceptance"
-Supplier repaired air conditioner.
-Manager confirms work completed.
-Photo/report attached.
-Service accepted.
-AP may match invoice.
+```text
+delivery checklist
+inspection checklist
+traceability checklist
+Inventory handoff readiness
+AP proof readiness
+exception handling
 ```
 
-If not accepted:
-
-```text id="service_not_accepted"
-AP hold.
-Supplier follow-up.
-Service obligation remains open.
-```
-
-Invoices for “services rendered” should not win just because the phrase sounds fancy.
+Document 72 uses the same packet for daily manifest, receiver assignment, reminders, and supplier chasing.
 
 ---
 
-## 8. Expected Delivery Intake
+## 7. Delivery Arrival Confirmation
 
-Procurement sends Receiving an expected delivery.
+When delivery arrives, Receiving must match it to an expected delivery.
 
-```text id="expected_delivery_packet"
-ExpectedDeliveryPacket:
-- PO number
-- supplier
-- expected items
-- expected quantities
-- expected delivery date/window
-- delivery location
-- receiver
-- backup receiver
-- inspection requirement
-- batch/serial/expiry requirements
-- storage requirement
-- special handling
-- AP matching requirement
-- audit ref
-```
+Supported methods:
 
-Receiving uses this for:
-
-```text id="expected_delivery_uses"
-daily receiving manifest
-receiver notification
-delivery checklists
-inspection readiness
-Inventory putaway planning
-AP proof preparation
-```
-
-Detailed daily manifest automation is expanded in:
-
-```text id="doc72_reference"
-Global Document 72 — Receiving Daily Manifest + Credit Note Automation Addendum
-```
-
-Document 71 owns the core receiving proof model.
-
-Document 72 expands the daily operational cadence, receiver notifications, and policy automation. Tiny boundary. Important boundary. Please don’t make me fight another document octopus.
-
----
-
-## 9. Delivery Arrival Confirmation
-
-When delivery arrives, Selene guides the receiver.
-
-Arrival methods:
-
-```text id="arrival_methods"
+```text
 scan PO
+scan supplier delivery note
 scan barcode / QR
 scan SSCC / logistics label
 upload delivery note
 photo delivery note
-voice confirmation
-supplier Selene shipment message
 carrier tracking event
+supplier Selene shipment message
 manual receiving search
+voice-guided receiving
 ```
 
-Selene asks:
+If no matching PO or expected delivery exists:
 
-> “Which PO is this delivery for?”
-
-If delivery note contains PO:
-
-```text id="po_auto_match"
-Selene reads and matches PO.
+```text
+hold goods
+block clean Inventory acceptance
+block AP normal payment
+route Procurement review
+create supplier warning
+require authority before acceptance
 ```
 
-If no PO:
-
-```text id="no_po_receiving"
-Receiving hold.
-Procurement review.
-AP normal payment blocked.
-Supplier record warning.
-```
-
-Selene says:
-
-> “I cannot find a matching PO. I’ll hold this delivery for Procurement review.”
-
-Goods arriving without buying proof should not stroll into inventory like they own the place.
+Goods without buying proof do not stroll into inventory like they own the warehouse.
 
 ---
 
-## 10. Proof Capture Levels
+## 8. Proof Capture Levels
 
-Selene uses risk-based proof.
+Receiving must use risk-based proof.
 
-### Level 1 — Simple confirmation
-
-For low-risk goods.
-
-```text id="proof_level_1"
-receiver confirms arrival
-receiver confirms quantity
-audit timestamp
+```text
+Level 1 — simple confirmation
+Level 2 — delivery note photo
+Level 3 — goods photo
+Level 4 — barcode / QR / SSCC / batch / lot / serial / expiry scan
+Level 5 — high-risk proof: photos, count, condition, batch/lot/serial, expiry, temperature, receiver identity, location/time, inspection result
 ```
 
-### Level 2 — Delivery note photo
+Rules:
 
-```text id="proof_level_2"
-photo of delivery note
-supplier name
-PO number
-quantity
-delivery date
-receiver identity
-```
-
-### Level 3 — Goods photo
-
-```text id="proof_level_3"
-pallet/carton photo
-product label photo
-condition photo
-quantity evidence where visible
-```
-
-### Level 4 — Scan / identifier proof
-
-```text id="proof_level_4"
-barcode
-QR code
-SSCC
-batch
-lot
-serial
-expiry
-```
-
-### Level 5 — High-risk proof
-
-For high-value, perishable, regulated, cold-chain, traceable, or dispute-prone goods.
-
-```text id="proof_level_5"
-delivery note photo
-goods photo
-quantity count
-condition check
-batch/lot/serial
-expiry
-temperature
-receiver identity
-location/time proof
-inspection result
-```
-
-Rule:
-
-```text id="proof_rule"
+```text
 Low-risk delivery = light proof.
 High-risk delivery = strong proof.
-Short/damaged delivery = photo proof required.
+Short/damaged/wrong delivery = evidence required.
 Missing evidence = Selene asks for evidence, not random approval.
 ```
 
-No photographing every pencil. No accepting high-value machinery with “looks fine.” We are aiming between silly and catastrophic.
+Do not photograph every pencil. Do not accept machinery with “looks fine.” Balance, the thing humans keep forgetting.
 
 ---
 
-## 11. Quantity Check
+## 9. Quantity Verification
 
-Selene compares:
+Receiving compares:
 
-```text id="quantity_compare"
+```text
 quantity ordered
 quantity expected
 quantity delivered
 quantity counted
 quantity accepted
+quantity rejected
+quantity short
+quantity over-delivered
 ```
 
-Variance types:
+Outcomes:
 
-```text id="quantity_variance_types"
+```text
 full match
 short delivery
 over-delivery
@@ -580,274 +434,141 @@ extra cartons
 
 Example:
 
-```text id="short_quantity_example"
-PO ordered: 100
-Receiver counted: 95
-Short: 5
+```text
+PO ordered 100.
+Receiver counted 90.
+Selene records 90 received, 10 short.
+Accepted stock = 90.
+Supplier obligation = 10 short.
+AP hold = 10 not payable unless corrected.
 ```
 
-Selene action:
-
-```text id="short_quantity_action"
-record 95 received
-mark 5 short
-create supplier obligation
-notify Supplier Engine
-prepare AP hold for value of 5
-update Procurement
-```
-
-Selene says:
-
-> “You ordered 100 and received 95. I’ve marked 5 as short, opened a supplier obligation, and told AP to hold that value.”
-
-No approval required if evidence and policy allow.
-
-That is not “lack of control.” That is control doing its job without begging humans for permission to count.
+No one pays for the missing 10. The supplier can send a corrected invoice, credit note, replacement, or their best apology in PDF form.
 
 ---
 
-## 12. Over-Delivery
+## 10. Over-Delivery Handling
 
-Over-delivery occurs when supplier sends more than ordered.
+If supplier sends more than ordered, Receiving must not auto-accept the extra.
 
-```text id="over_delivery"
-PO ordered: 100
-Delivered: 120
-Extra: 20
-```
+Selene must:
 
-Selene must not automatically accept extra goods.
-
-Actions:
-
-```text id="overdelivery_actions"
+```text
 record expected quantity
+record extra quantity
 hold extra quantity
-check policy tolerance
-check demand/stock/cashflow
-ask Procurement if extra spend is allowed
-return/reject if not accepted
-amend PO if approved
-notify AP expected invoice value
+check tolerance policy
+check Procurement authority
+check Inventory need
+check cashflow/budget impact if extra spend is possible
+route Procurement decision
+accept extra only if authorized
+reject/return extra if not authorized
 ```
 
-Selene says:
-
-> “Supplier delivered 120 against a PO for 100. I’ll hold the extra 20 until Procurement decides whether to accept or return them.”
-
-Suppliers sometimes “accidentally” ship extra and invoice later. Very creative. Very not automatic.
+Suppliers do not get to ship extra and quietly invoice the company like a magician with cartons.
 
 ---
 
-## 13. Damage and Condition Check
+## 11. Damage, Condition + Wrong Item Handling
 
-Selene checks for:
+Receiving must inspect and classify goods.
 
-```text id="damage_types"
-broken item
-dented packaging
-water damage
-leakage
-contamination
+Damage/condition outcomes:
+
+```text
+accepted clean
+accepted with note
+damaged
+wrong item
+substituted item
+expired
+near expiry
 temperature breach
-expired goods
-near-expiry goods
-missing seal
-faulty item
-wrong specification
-scratched/damaged equipment
-unsafe product
+missing certificate
+missing parts
+packaging damage
+quarantine required
+rejected
 ```
 
-If damage exists:
+For damaged goods, Selene must:
 
-```text id="damage_actions"
-capture photo/video
+```text
+capture photo/video proof
 record damaged quantity
-mark damaged stock not accepted
-quarantine if needed
+mark damaged stock not accepted unless policy allows quarantine
 create supplier obligation
-request credit/replacement/refund under policy
-notify AP of hold
-update Supplier score
+request credit/replacement/refund through Document 72
+send AP hold
+update Procurement
+send supplier performance signal
 ```
-
-Selene says:
-
-> “Five units are damaged. Please take a photo. I’ll request credit or replacement under policy and keep the disputed value out of normal payment.”
-
-This is where Selene must not ask a human to approve the existence of damage. The damage is sitting there. Looking damaged. Doing its best.
 
 ---
 
-## 14. Wrong Item / Substitution
+## 12. Batch, Lot, Serial, Expiry + Cold-Chain Capture
 
-If supplier sends the wrong item:
+Receiving must capture traceability when required.
 
-```text id="wrong_item_action"
-do not accept as ordered stock
-capture evidence
-quarantine or reject
-notify Procurement
-open supplier obligation
-AP hold
+Required for:
+
+```text
+food
+medicine / health-sensitive products
+perishables
+cold-chain goods
+regulated goods
+warranty goods
+serialized goods
+high-value assets
+electronics
+vehicles
+machinery
+batch/lot controlled goods
 ```
 
-If supplier sends substitute item:
+Capture fields:
 
-```text id="substitution_action"
-hold stock
-Procurement review
-Product review if new product/variant
-Inventory template review
-Pricing/compliance review if needed
-AP hold until accepted
-```
-
-Selene says:
-
-> “The supplier sent a substitute item. I will not add it as sellable stock until Procurement approves substitution and Product confirms identity.”
-
-No mystery products entering inventory like surprise guests at a wedding.
-
----
-
-## 15. Inspection Workflow
-
-Inspection depends on product type and risk.
-
-Inspection types:
-
-```text id="inspection_types"
-visual inspection
-quantity inspection
-quality inspection
-technical inspection
-food safety inspection
-temperature inspection
-serial/VIN verification
-batch/lot verification
-certificate verification
-service completion acceptance
-asset condition inspection
-```
-
-Inspection outcomes:
-
-```text id="inspection_outcomes"
-Accepted
-AcceptedWithNote
-PartiallyAccepted
-Rejected
-Quarantined
-FurtherInspectionRequired
-```
-
-High-risk goods may require separate inspector.
-
-Examples:
-
-```text id="inspection_examples"
-Routine office supplies: receiver can accept.
-Medical/regulatory goods: quality/compliance inspection required.
-Machine part: maintenance/engineering inspection required.
-Vehicle: condition/VIN/registration inspection required.
-Food: expiry/temp/allergen/condition inspection required.
-```
-
-Selene says:
-
-> “This product requires inspection before it becomes sellable. I’ll keep it in quarantine until approved.”
-
-No inspection? No available stock. Very annoying. Very correct.
-
----
-
-## 16. Perishable, Shelf-Life, and Cold-Chain Receiving
-
-For perishables, Selene checks:
-
-```text id="perishable_checks"
-expiry date
+```text
+batch
+lot
+serial
+VIN where applicable
+expiry
 manufacture date
-remaining shelf life
-temperature at receipt
+temperature
 cold-chain evidence
-packaging condition
-batch/lot
-supplier minimum shelf-life terms
+certificate
+condition photo
 ```
 
-Outcomes:
+If required traceability is missing:
 
-```text id="perishable_outcomes"
-accept
-accept with urgent-sale flag
-accept with discount claim
-reject
-quarantine
-request credit/replacement/refund
+```text
+hold / quarantine
+do not accept clean stock
+notify Procurement / Supplier
+create AP hold
+route exception to Document 72
 ```
 
-Selene says:
-
-> “This dairy batch has only three days remaining shelf life. Your policy requires seven days. I recommend rejecting or requesting credit.”
-
-This is how Selene stops businesses from buying milk that arrives already emotionally prepared to expire.
+Traceability is not decorative. It is what saves the business when a recall arrives wearing boots.
 
 ---
 
-## 17. Batch, Lot, Serial, and Traceability Capture
+## 13. Quarantine
 
-If Product requires traceability, Receiving enforces capture.
+Quarantine applies when goods physically exist but cannot be used/sold yet.
 
-Traceability fields:
+Triggers:
 
-```text id="trace_capture_fields"
-batch number
-lot number
-serial number
-expiry date
-manufacture date
-supplier certificate
-country of origin
-SSCC / logistics unit
-receiving event
-inspection result
-```
-
-If required data missing:
-
-```text id="trace_missing"
-do not mark accepted
-quarantine or hold
-request missing data
-notify Supplier
-notify Procurement
-AP hold if invoice arrives
-```
-
-Selene says:
-
-> “This product requires batch tracking. I cannot mark it accepted until the batch number is captured.”
-
-Traceability cannot be added later by guesswork. Guesswork is not a batch number. It is a lawsuit with hobbies.
-
----
-
-## 18. Quarantine
-
-Quarantine is used when stock exists but cannot be used/sold yet.
-
-Quarantine triggers:
-
-```text id="quarantine_triggers"
+```text
 inspection pending
 damage suspected
-missing certificate
-temperature breach
 wrong item
+temperature breach
+missing certificate
 recall notice
 contamination risk
 regulatory hold
@@ -855,1035 +576,481 @@ supplier dispute
 unidentified product
 ```
 
-Quarantine states:
+Quarantined goods may be handed to Inventory only as non-sellable / non-usable stock.
 
-```text id="quarantine_states"
-QuarantinePending
-Quarantined
-InspectionRequired
-Released
-Rejected
-ReturnedToSupplier
-Disposed
-Archived
+Quarantine status must include:
+
+```text
+reason
+location
+quantity
+evidence
+owner
+review deadline
+release/reject decision
+audit reference
 ```
-
-Inventory receives quarantined stock only as **non-sellable** if needed.
-
-Selene says:
-
-> “The stock is physically here, but it is quarantined and not available for sale.”
-
-On hand, not sellable. Once again, tiny distinction, large consequences.
 
 ---
 
-## 19. Service Acceptance
+## 14. Service Acceptance
 
-Services need receiving proof too.
-
-Service receiving applies to:
-
-```text id="service_receiving_applies"
-repairs
-maintenance
-cleaning
-contractor work
-consulting milestone
-software setup
-installation
-professional services
-security service
-delivery service
-```
-
-Service acceptance evidence:
-
-```text id="service_evidence"
-work order
-completion report
-photos
-service note
-manager acceptance
-time logs
-milestone proof
-asset/service link
-```
-
-If accepted:
-
-```text id="service_accepted"
-AP may match invoice.
-Supplier performance updated.
-```
-
-If not accepted:
-
-```text id="service_rejected"
-AP hold.
-Supplier obligation.
-Procurement follow-up.
-```
-
-Selene says:
-
-> “The service invoice cannot be approved because the work order has not been accepted.”
-
-Consulting invoices also need proof. Yes, even the ones with confident fonts.
-
----
-
-## 20. Asset Receiving
-
-Asset receiving covers high-value items.
+Receiving also handles service completion proof.
 
 Examples:
 
-```text id="asset_receiving_examples"
-vehicle
-forklift
-machine
-computer equipment
-boat
-aircraft
-building equipment
-major tools
+```text
+repair work
+maintenance
+contractor work
+consulting milestone
+installation
+professional service milestone
+cleaning service
+software/digital deliverable
 ```
+
+Service acceptance must capture:
+
+```text
+service order / PO reference
+supplier
+work completed
+completion evidence
+accepting person
+defects/issues
+accepted / rejected / partially accepted
+AP hold if not accepted
+```
+
+Supplier invoice does not prove service completion. It proves someone wants money, which is a weaker standard.
+
+---
+
+## 15. Asset Receiving
+
+Receiving must support high-value assets.
 
 Asset receiving captures:
 
-```text id="asset_receiving_fields"
-PO
-invoice
-delivery note
-serial / VIN
-photos
-condition
+```text
+asset description
+serial number
+VIN / registration where applicable
+condition photos
 manuals
-warranty
-registration
-certificate
-custodian
+warranty documents
 location
+custodian
 insurance requirement
 asset accounting flag
 ```
 
-Handoff:
+Asset receiving handoff goes to:
 
-```text id="asset_receiving_handoff"
-PH1.ASSET
-PH1.ASSET_ACCOUNTING
-PH1.INSURANCE
-PH1.FLEET if vehicle
-PH1.ACCOUNTING
+```text
+Asset Engine
+Insurance Engine
+Accounting
+Inventory where applicable
+AP
+Audit
 ```
-
-Selene says:
-
-> “The forklift was received and accepted. I’ll create the asset handoff, notify Insurance, and route capitalization review.”
-
-No asset should arrive and vanish into “misc equipment.” That bucket is where fixed assets go to develop identity issues.
 
 ---
 
-## 21. Drop-Ship and Customer-Direct Receiving
+## 16. Supplier Obligation Trigger
 
-If supplier ships directly to customer, Selene creates remote receiving proof.
+Receiving exceptions create supplier obligations.
 
-Evidence sources:
+Triggers:
 
-```text id="dropship_evidence"
-carrier proof of delivery
-customer confirmation
-customer photos
-supplier dispatch proof
-delivery signature
-customer complaint
-tracking event
-Supplier Selene delivery confirmation
-```
-
-States:
-
-```text id="dropship_states"
-Shipped
-DeliveredToCustomer
-CustomerAccepted
-CustomerRejected
-DamagedAtDelivery
-ShortDeliveryReported
-PendingCustomerConfirmation
-Closed
-```
-
-If customer reports damage:
-
-```text id="dropship_damage_flow"
-open supplier/logistics obligation
-customer resolution
-AP hold if unpaid
-AR/customer credit if needed
-logistics claim if carrier fault
-```
-
-Selene says:
-
-> “Customer reports damaged delivery. I’ll hold supplier payable amount and open supplier/logistics resolution.”
-
-Customer-direct delivery does not bypass receiving. It moves receiving proof outside the warehouse.
-
----
-
-## 22. Selene-to-Selene Receiving Protocol
-
-If supplier uses Selene, Supplier Selene may send:
-
-```text id="supplier_selene_receiving_msgs"
-AdvanceShipmentNoticePacket
-ShipmentConfirmationPacket
-DeliveryDelayNoticePacket
-DeliveryDocumentPacket
-BatchSerialDataPacket
-CreditNotePacket
-ReplacementShipmentPacket
-RefundConfirmationPacket
-```
-
-Buyer Selene validates and prepares receiving.
-
-Buyer Selene may send:
-
-```text id="buyer_selene_receiving_msgs"
-ReceivingVariancePacket
-DamageEvidencePacket
-ShortDeliveryPacket
-WrongItemPacket
-CreditNoteRequestPacket
-ReplacementRequestPacket
-ReceivingAcceptancePacket
-```
-
-Example:
-
-```text id="selene_receiving_example"
-Supplier Selene:
-Delivery delayed until tomorrow.
-
-Buyer Selene:
-Updates expected delivery.
-Updates Inventory forecast.
-Checks customer/production impact.
-Notifies only if impact matters.
-```
-
-Two Selenes communicating is faster than two humans forwarding PDFs titled “final delivery note revised actual final.pdf.” Not that we judge. We absolutely judge.
-
----
-
-## 23. Supplier Obligation Creation
-
-Receiving creates supplier obligations when issues exist.
-
-Obligation triggers:
-
-```text id="supplier_obligation_triggers"
+```text
 short delivery
 damaged goods
-wrong goods
-faulty goods
-rejected goods
-expired/near-expiry below policy
+wrong item
+expired goods
+near-expiry violation
+temperature breach
 missing certificate
-temperature breach
 unaccepted service
-overcharge linked to receiving
+missing serial/batch evidence
+rejected goods
 ```
 
-Obligation types:
+Supplier obligations may require:
 
-```text id="receiving_obligation_types"
-credit note required
-replacement required
-refund required
-supplier collection required
-correct invoice required
-correct item required
-service rework required
-warranty claim required
+```text
+credit note
+corrected invoice
+replacement shipment
+refund
+re-delivery
+discount
+formal dispute
 ```
 
-Obligation handoff:
+Document 71 creates the obligation evidence.
 
-```text id="supplier_obligation_handoff"
-SupplierObligationPacket
-```
-
-Receiving sends to Supplier Engine and AP.
-
-Selene says:
-
-> “I opened a supplier obligation for five damaged units. AP will hold the disputed value until credit or replacement is complete.”
-
-This is the heartbeat of real supplier control.
-
-No more “supplier owes us something, I think.” Selene knows. Selene nags. Selene wins.
+Document 72 manages supplier chasing and closure.
 
 ---
 
-## 24. Credit Note / Replacement / Refund Automation
+## 17. AP Hold Instruction
 
-Receiving must trigger supplier credit automation under policy.
+Receiving exceptions must automatically create AP hold instructions.
 
-Routine policy examples:
+AP hold reasons:
 
-```text id="credit_policy_examples"
-damaged goods under threshold → request credit note automatically
-short delivery under threshold → request replacement automatically
-near-expiry below policy → request credit or reject
-wrong item → request replacement
-supplier over-delivery → hold excess pending Procurement decision
-```
-
-Automation flow:
-
-```text id="credit_automation_flow"
-variance detected
-→ evidence captured
-→ disputed quantity/value calculated
-→ supplier obligation created
-→ credit/replacement/refund requested
-→ AP hold applied
-→ Supplier Engine updates score
-→ Procurement notified
-→ obligation tracked until closed
-```
-
-Selene says:
-
-> “The damaged quantity is under the automatic credit policy. I’ve requested a credit note and held the AP amount.”
-
-No manager approval for obvious routine damage. That was the whole point. We are not building an approval vending machine.
-
----
-
-## 25. AP Hold Handoff
-
-Receiving sends AP proof.
-
-```text id="ap_hold_packet"
-APHoldFromReceivingPacket:
-- receiving_id
-- po_id
-- supplier_id
-- invoice_id if known
-- accepted_quantity
-- disputed_quantity
-- disputed_value
-- reason
-- evidence_refs
-- credit/replacement/refund status
-- AP_action
-- audit_ref
-```
-
-AP action:
-
-```text id="ap_actions_from_receiving"
-pay accepted quantity only
-hold disputed value
-block invoice if no receiving proof
-await credit note
-await replacement
-await refund
-route exception
-```
-
-Example:
-
-```text id="ap_example"
-Invoice claims: 100
-Accepted: 90
-Damaged: 10
-
-AP:
-Pay/approve 90
-Hold 10
-Await credit note or replacement
-```
-
-AP should not pay for damaged goods just because the supplier invoice was neatly formatted. Fraud and incompetence both own PDF software.
-
----
-
-## 26. Inventory Handoff
-
-Inventory receives only accepted stock.
-
-```text id="inventory_receipt_handoff"
-InventoryReceiptHandoffPacket:
-- receiving_id
-- po_id
-- product_id
-- variant_id
-- supplier_id
-- accepted_quantity
-- quarantine_quantity
-- damaged_quantity
-- rejected_quantity
-- batch/lot
-- serials
-- expiry
-- location
-- putaway_instruction
-- audit_ref
-```
-
-Inventory actions:
-
-```text id="inventory_actions_from_receiving"
-add accepted stock as available/putaway pending
-add quarantined stock as non-sellable
-do not add damaged/rejected as available
-track batch/serial/expiry
-update stock health
-update channel availability if needed
-```
-
-Receiving does not own stock after handoff.
-
-Inventory does.
-
-That is the contract. No warehouse turf war. Not today.
-
----
-
-## 27. Procurement Handoff
-
-Receiving sends Procurement outcomes.
-
-```text id="receiving_procurement_handoff"
-PO fully received
-PO partially received
-PO not arrived
-short delivery
-damaged goods
+```text
+short delivered
+damaged
 wrong item
-over-delivery
-supplier delay
-replacement pending
-credit note requested
-supplier substitution proposed
-```
-
-Procurement may:
-
-```text id="procurement_response_to_receiving"
-close PO
-amend PO
-cancel remainder
-request replacement
-source backup supplier
-approve/reject over-delivery
-open supplier dispute
-```
-
-Selene says:
-
-> “PO remains partially open because five units are short. I requested credit/replacement and notified Procurement.”
-
-Procurement owns the order. Receiving owns proof. AP owns payment truth. Everybody, once again, in their chair.
-
----
-
-## 28. Supplier Performance Handoff
-
-Receiving sends Supplier Engine:
-
-```text id="supplier_performance_handoff"
-delivery timeliness
-quantity variance
-damage variance
-wrong item
-quality result
-inspection result
-certificate issue
-temperature breach
-supplier response needed
-evidence refs
-```
-
-Supplier Engine updates:
-
-```text id="supplier_engine_updates"
-delivery score
-quality score
-open obligations
-dispute history
-trust score
-watchlist/restriction recommendation
-```
-
-Selene says:
-
-> “Supplier quality score reduced because 10% of delivery was damaged.”
-
-Not spite. Data.
-
-Though a little spite is understandable.
-
----
-
-## 29. Receiving and Accounting Handoff
-
-Receiving does not post accounting.
-
-Receiving provides evidence for:
-
-```text id="receiving_accounting_evidence"
-accepted inventory
-GRNI / goods received not invoiced
-accrual candidates
-damaged goods
-inventory write-off evidence
-supplier credit/refund evidence
-asset receipt evidence
-service acceptance evidence
-```
-
-Accounting owns:
-
-```text id="accounting_from_receiving"
-ledger posting
-inventory asset
-expense
-AP liability
-GRNI
-credit note accounting
-write-off
-asset capitalization
-```
-
-Selene says:
-
-> “Goods were accepted before invoice arrived. I’ll provide GRNI evidence for period close.”
-
-Receiving proves the operational fact.
-
-Accounting translates it into books.
-
-That is not optional. That is how month-end avoids interpretive dance.
-
----
-
-## 30. No-PO Delivery Handling
-
-If goods arrive without PO:
-
-```text id="no_po_delivery_handling"
-hold receiving
-capture evidence
-do not add to available inventory unless policy allows quarantine/hold
-notify Procurement
-block normal AP payment
-check fraud/maverick spend risk
-request authorization
-```
-
-Possible outcomes:
-
-```text id="no_po_outcomes"
-valid emergency purchase
-retrospective PO exception
-unauthorized delivery
-supplier mistake
-fraud risk
-return to supplier
-```
-
-Selene says:
-
-> “Delivery has no matching PO. I will hold it and request Procurement review before stock or AP can proceed.”
-
-Goods without PO are not automatically gifts. Suppliers tend to send invoices after the surprise.
-
----
-
-## 31. Receiving Variance Tolerance
-
-Companies may set tolerance rules.
-
-Tolerance types:
-
-```text id="receiving_tolerances"
-quantity tolerance
-price tolerance handled by AP/Procurement
-damage tolerance
-over-delivery tolerance
-expiry tolerance
-temperature tolerance
-service completion tolerance
-```
-
-Examples:
-
-```text id="tolerance_examples"
-short delivery under 2% may auto-request credit
-over-delivery under 1% may auto-accept if low value and policy allows
-expiry below minimum shelf life always rejects
-temperature breach always quarantines for food
-```
-
-Selene must not use one universal tolerance for everything.
-
-A 2% shortage in napkins and a 2% shortage in surgical components do not belong in the same moral universe.
-
----
-
-## 32. Receiving Evidence Quality Score
-
-Each receiving event gets an evidence score.
-
-Inputs:
-
-```text id="evidence_score_inputs"
-PO matched
-delivery note captured
-goods photo captured
-receiver identity captured
-quantity counted
-inspection completed
-batch/serial/expiry captured where required
-damage photo captured where needed
-temperature captured where required
-supplier documents attached
-```
-
-Evidence states:
-
-```text id="evidence_states"
-Strong
-Sufficient
-Weak
-MissingCritical
-Rejected
-```
-
-Selene says:
-
-> “Receiving evidence is weak because the delivery note is missing. I’ll ask the receiver to upload it before AP can match cleanly.”
-
-No proof, no clean payment. Simple. Beautiful. Deeply irritating to sloppy suppliers.
-
----
-
-## 33. Automation and Exception-Only Review
-
-Selene auto-handles:
-
-```text id="receiving_auto_handles"
-expected delivery matching
-delivery note extraction
-quantity variance detection
-damage evidence request
-supplier obligation creation
-credit note request under policy
-replacement request under policy
-refund request under policy
-AP hold instruction
-Inventory accepted-stock handoff
-Supplier performance update
-Procurement update
-routine receiving closure
-```
-
-Selene escalates:
-
-```text id="receiving_escalates"
-high-value damage
+rejected
+quarantined
+not received
+service not accepted
 missing evidence
-supplier disputes claim
-accepting damaged goods
-over-delivery acceptance increasing spend
-substitute product acceptance
-regulated/high-risk goods
-temperature breach requiring specialist review
-manual override
-write-off
-fraud risk
-no-PO delivery
+supplier correction pending
+```
+
+AP should receive:
+
+```text
+PO reference
+supplier
+invoice risk
+accepted quantity/value
+held quantity/value
+reason
+evidence refs
+supplier obligation ref
+audit ref
 ```
 
 Rule:
 
-```text id="receiving_exception_rule"
-Routine variance = Selene handles.
-Material/risky variance = Selene routes.
-Protected override = authority approves.
-Everything = audited.
+```text
+AP must not pay the disputed portion until receiving exception is resolved.
 ```
 
-No “approval required” for every dented carton.
-
-No “auto-accept” for a freezer full of warm chicken.
-
-Balance. Such a rare creature.
+Invoices are requests. Receiving proof is truth. Annoying for suppliers, excellent for the company.
 
 ---
 
-## 34. PH1.D / GPT-5.5 Role
+## 18. Inventory Accepted-Stock Handoff
 
-GPT-5.5 may help:
+Only accepted goods become clean inventory.
 
-```text id="gpt_receiving_allowed"
-summarize receiving variance
-draft supplier credit request
-draft replacement request
-draft refund request
-explain damaged goods issue
-summarize inspection notes
-translate receiving issue into human wording
-draft supplier dispute message
-prepare AP exception summary
-prepare Procurement update
+Receiving sends Inventory:
+
+```text
+product_id
+variant_id
+accepted_quantity
+location
+batch/lot/serial
+expiry
+condition
+quarantine flag if applicable
+cost reference
+PO reference
+supplier
+audit ref
 ```
 
-GPT-5.5 must not:
-
-```text id="gpt_receiving_forbidden"
-confirm goods arrived
-accept goods
-override inspection
-add stock to inventory
-release AP payment
-close supplier obligation
-invent proof
-invent photos
-override policy
-approve write-off
-```
-
-GPT-5.5 can write:
-
-> “Five units arrived damaged; attached photos show broken packaging.”
-
-GPT-5.5 cannot decide the five units are fine because it feels optimistic. This is not a motivational warehouse.
+Rejected, damaged, short, missing, or quarantined goods must not become clean sellable stock.
 
 ---
 
-## 35. Human-Like Selene Interaction
+## 19. Human / External Action Orchestration Handoff
 
-### Expected delivery
+Document 71 must follow the Selene Human / External Action Orchestration Law.
 
-> “Supplier ABC is expected today with PO-771: 100 units. Sarah is assigned to receive it.”
+Receiving may detect that an action is needed, but does not own all action execution.
 
-### Arrival
+Any action involving a person, supplier, AP user, manager, receiver, courier, or external party must define:
 
-> “Take a photo of the delivery note and I’ll match it to the PO.”
+```text
+action type
+owner
+recipient
+backup owner where needed
+authority requirement
+schedule / due time
+delivery method
+required confirmation
+required evidence
+reminder rule
+escalation path
+closure condition
+audit reference
+```
 
-### Short delivery
+Examples:
 
-> “You received 95 against an order of 100. I’ll mark 5 as short, hold that value from AP, and request credit or replacement.”
+```text
+short delivery detected → supplier correction workflow in Document 72
+AP hold needed → AP action through Broadcast/Delivery with acknowledgement if required
+damaged goods → supplier correction + AP hold + Inventory quarantine
+missing evidence → receiver task correction request
+```
 
-### Damage
+Receiving creates proof and action requirements.
 
-> “Five units are damaged. Please take a photo. I’ll request a credit note under policy.”
+Document 72, Task/Scheduler, Broadcast/Delivery, Reminder, Access/Authority, and Audit manage the action lifecycle.
 
-### Inspection
-
-> “This product requires inspection before it becomes sellable. I’ll keep it in quarantine until approved.”
-
-### Over-delivery
-
-> “The supplier delivered 120 but we ordered 100. I’ll hold the extra 20 until Procurement decides whether to accept or return them.”
-
-### No PO
-
-> “This delivery has no matching PO. I’ll hold it and request Procurement review before AP can pay.”
-
-Human-like, direct, and allergic to supplier invoice nonsense. A healthy personality trait.
+No “notify AP” nonsense. It becomes a routed, tracked, confirmed action.
 
 ---
 
-## 36. State Machines
+## 20. State Machines
 
-### Receiving State
+### Receiving Event State
 
-```text id="receiving_state"
+```text
 Expected
-DeliveryArrived
-ProofCapturePending
-POIdentified
-CountingInProgress
-QuantityVarianceDetected
+Arrived
+MatchedToPO
+Counting
 InspectionPending
+InspectionComplete
 Accepted
 PartiallyAccepted
 Rejected
 Quarantined
-SupplierObligationCreated
-InventoryHandoffComplete
-APHandoffComplete
-Closed
-Archived
-```
-
-### Inspection State
-
-```text id="inspection_state"
-NotRequired
-Pending
-InProgress
-Accepted
-AcceptedWithNote
-PartiallyAccepted
-Rejected
-Quarantined
-FurtherInspectionRequired
 Closed
 ```
 
-### Supplier Credit / Replacement State
+### Quantity State
 
-```text id="supplier_credit_state"
-NotRequired
-CreditNoteRequested
-ReplacementRequested
-RefundRequested
-SupplierResponded
-CreditNoteReceived
-ReplacementReceived
-RefundReceived
-PartiallyResolved
+```text
+NotCounted
+Matched
+Short
+OverDelivered
+Partial
+WrongUOM
 Disputed
-Escalated
 Closed
-Archived
+```
+
+### Condition State
+
+```text
+Unchecked
+Clean
+Damaged
+Expired
+NearExpiry
+WrongItem
+TemperatureBreach
+MissingCertificate
+QuarantineRequired
+Rejected
+Closed
+```
+
+### Supplier Obligation State
+
+```text
+None
+Created
+EvidenceAttached
+SentToDocument72
+AwaitingSupplierCorrection
+Resolved
+Disputed
+Closed
 ```
 
 ### AP Hold State
 
-```text id="receiving_ap_hold_state"
-NoHold
-HoldRecommended
-HoldApplied
-AwaitingCreditNote
-AwaitingReplacement
-AwaitingRefund
+```text
+NotRequired
+HoldRequired
+HoldSent
+AcknowledgementRequired
+Acknowledged
 Released
 Closed
 ```
 
-### No-PO Delivery State
+### Inventory Handoff State
 
-```text id="no_po_state"
-Detected
-EvidenceCaptured
-ProcurementReviewPending
-AuthorizedAsException
-Rejected
-ReturnedToSupplier
-FraudReview
+```text
+NotReady
+AcceptedQuantityReady
+QuarantineHandoffReady
+SentToInventory
+InventoryAccepted
+InventoryRejected
 Closed
-Archived
 ```
 
 ---
 
-## 37. Reason Codes
+## 21. Reason Codes
 
-```text id="receiving_reason_codes"
-DELIVERY_EXPECTED
-DELIVERY_ARRIVED
-DELIVERY_NOTE_CAPTURED
-ASN_MATCHED
-SSCC_CAPTURED
-PO_MATCHED
-NO_MATCHING_PO
-RECEIVER_CONFIRMED
-QUANTITY_MATCH
-SHORT_DELIVERY
-OVER_DELIVERY
-PARTIAL_DELIVERY
-WRONG_ITEM_RECEIVED
-SUBSTITUTE_ITEM_RECEIVED
-DAMAGE_DETECTED
-PHOTO_PROOF_REQUIRED
-PHOTO_PROOF_CAPTURED
-INSPECTION_REQUIRED
-INSPECTION_ACCEPTED
-INSPECTION_REJECTED
-QUARANTINE_REQUIRED
-EXPIRY_TOO_SHORT
-TEMPERATURE_BREACH
-BATCH_REQUIRED
-LOT_REQUIRED
-SERIAL_REQUIRED
-CERTIFICATE_MISSING
-ACCEPTED_QUANTITY_RECORDED
-REJECTED_QUANTITY_RECORDED
+```text
+RECEIVING_EXPECTED_DELIVERY_LOADED
+RECEIVING_DELIVERY_ARRIVED
+RECEIVING_PO_MATCHED
+RECEIVING_NO_PO_FOUND
+RECEIVING_DELIVERY_NOTE_CAPTURED
+RECEIVING_PHOTO_EVIDENCE_CAPTURED
+RECEIVING_QUANTITY_MATCHED
+RECEIVING_SHORT_DELIVERY
+RECEIVING_OVER_DELIVERY
+RECEIVING_PARTIAL_DELIVERY
+RECEIVING_WRONG_ITEM
+RECEIVING_DAMAGED_GOODS
+RECEIVING_EXPIRED_GOODS
+RECEIVING_NEAR_EXPIRY_WARNING
+RECEIVING_TEMPERATURE_BREACH
+RECEIVING_BATCH_CAPTURED
+RECEIVING_LOT_CAPTURED
+RECEIVING_SERIAL_CAPTURED
+RECEIVING_QUARANTINE_REQUIRED
+RECEIVING_ACCEPTED_QUANTITY_SET
+RECEIVING_REJECTED_QUANTITY_SET
 SUPPLIER_OBLIGATION_CREATED
-CREDIT_NOTE_REQUIRED
-REPLACEMENT_REQUIRED
-REFUND_REQUIRED
-AP_HOLD_REQUIRED
-INVENTORY_HANDOFF_READY
-SUPPLIER_SCORE_UPDATE_REQUIRED
-PROCUREMENT_UPDATE_REQUIRED
-RECEIVING_EVIDENCE_WEAK
-RECEIVING_EXCEPTION_REVIEW_REQUIRED
+SUPPLIER_CORRECTION_HANDOFF_TO_DOC72
+AP_HOLD_FROM_RECEIVING_CREATED
+INVENTORY_ACCEPTED_STOCK_HANDOFF_CREATED
+SERVICE_ACCEPTANCE_CONFIRMED
+SERVICE_ACCEPTANCE_REJECTED
+ASSET_RECEIVING_CAPTURED
+RECEIVING_AUDIT_CAPTURED
 ```
 
 ---
 
-## 38. Required Simulations
+## 22. Required Simulations
 
-```text id="receiving_simulations"
-expected delivery received cleanly
-delivery note photo matched to PO
-ASN matched to PO
-SSCC captured
-full quantity accepted
-short delivery auto-credit
-damaged goods photo proof
-damaged goods credit note request
-wrong item received
-substitute item received and held
-over-delivery held
-over-delivery accepted after Procurement review
-perishable received with short shelf life
-temperature breach quarantine
-batch-tracked goods received
-serialised asset received
-service accepted
-service rejected and AP held
-drop-ship customer delivery confirmed
-drop-ship customer damage reported
-no-PO delivery held
-supplier obligation created
-AP hold created from receiving
-Inventory accepted-stock handoff
-Supplier score updated from receiving issue
-Receiving evidence weak blocks clean AP match
+```text
+expected delivery arrives and matches PO
+delivery arrives with no PO
+delivery note captured by photo
+100 ordered and 100 accepted
+100 ordered and 90 accepted with 10 short
+supplier over-delivers 120 against 100 ordered
+wrong item delivered
+damaged goods delivered with photos
+expired goods delivered
+cold-chain temperature breach
+batch/lot/serial captured before acceptance
+goods quarantined pending inspection
+partial delivery received
+supplier obligation created for short goods
+AP hold created for damaged goods
+accepted stock handed to Inventory
+service completion accepted
+service completion rejected
+asset received with serial/photo/warranty
+high-value equipment requires stronger proof
+Receiving sends supplier correction requirement to Document 72
+Receiving sends AP hold requirement as action orchestration record
 ```
 
 ---
 
-## 39. Integration Map
+## 23. Integration Map
 
-```text id="receiving_integration_map"
-PH1.PROC.RECEIVE / GOODS_INSPECTION
-↔ PH1.PROCUREMENT / PH1.PROC.ORDER
+```text
+PH1.RECEIVING
+↔ PH1.PROCUREMENT / PURCHASE_ORDER
+↔ PH1.RECEIVING_DAILY_MANIFEST / DOCUMENT_72
 ↔ PH1.SUPPLIER
-↔ PH1.SUPPLIER.BANK_TRUST
-↔ PH1.PRODUCT
+↔ PH1.SUPPLIER_BANK_TRUST
 ↔ PH1.INVENTORY
-↔ PH1.CREDITORS / AP
+↔ PH1.WAREHOUSE
+↔ PH1.AP / CREDITORS
 ↔ PH1.SUPPLIER_PAYMENT
-↔ PH1.CREDITORS.RECON
 ↔ PH1.ACCOUNTING
 ↔ PH1.CASHFLOW
-↔ PH1.BUDGET
-↔ PH1.LOGISTICS
+↔ PH1.TAX
+↔ PH1.LOGISTICS / DELIVERY
 ↔ PH1.RETURNS
 ↔ PH1.ASSET
-↔ PH1.ASSET_ACCOUNTING
-↔ PH1.FLEET
 ↔ PH1.INSURANCE
 ↔ PH1.COMPLIANCE
-↔ PH1.ECOMMERCE
-↔ PH1.B2B
-↔ PH1.POS
-↔ PH1.MANUFACTURING / PRODUCTION
-↔ PH1.RESTAURANT / MENU
 ↔ PH1.ACCESS / AUTHORITY
-↔ PH1.AUDIT
-↔ PH1.REM
+↔ PH1.TASK / HUMAN_WORKLOAD
+↔ PH1.SCHEDULER / ROSTERS
 ↔ PH1.BCAST / DELIVERY
-↔ PH1.WRITE
+↔ PH1.REM
+↔ PH1.AUDIT
 ↔ PH1.D / GPT-5.5
+↔ PH1.X / LIVE_CONTEXT
+↔ PH1.M / MEMORY
 ```
 
 ---
 
-## 40. Required Logical Packets
+## 24. Required Logical Packets
 
-```text id="receiving_packets"
+```text
 ExpectedDeliveryPacket
 ReceivingEventPacket
 DeliveryArrivalPacket
 DeliveryNoteCapturePacket
-ASNMatchPacket
-SSCCCapturePacket
 QuantityCheckPacket
-ConditionCheckPacket
 InspectionPacket
 DamageEvidencePacket
-ExpiryCheckPacket
-TemperatureCheckPacket
-BatchLotSerialCapturePacket
+TraceabilityCapturePacket
+ColdChainCapturePacket
 QuarantinePacket
-AcceptedQuantityPacket
-RejectedQuantityPacket
-ReceivingVariancePacket
+AcceptedStockHandoffPacket
 SupplierObligationPacket
-SupplierCreditRequestPacket
-SupplierReplacementRequestPacket
-SupplierRefundRequestPacket
 APHoldFromReceivingPacket
 InventoryReceiptHandoffPacket
-ProcurementReceivingUpdatePacket
-SupplierPerformanceEventPacket
 ServiceAcceptancePacket
-DropShipReceivingPacket
-NoPODeliveryPacket
+AssetReceivingPacket
+ReceivingActionRequirementPacket
 ReceivingAuditEvidencePacket
 ```
 
-Logical only. Codex maps later. No runtime packet structs, please. The schema goblin can wait outside.
+Logical only.
+
+No runtime packet structs. The schema goblin can wait behind the loading dock.
 
 ---
 
-## 41. What Codex Must Not Do
+## 25. What Codex Must Not Do
 
-```text id="codex_no_receiving"
+```text
 Do not merge Receiving into Inventory.
 Do not merge Receiving into AP.
-Do not let supplier invoices create receiving truth.
-Do not add stock to Inventory before accepted quantity is proven.
-Do not pay for damaged/missing goods.
+Do not merge Receiving into Procurement.
+Do not let supplier invoice create receiving truth.
+Do not add stock before accepted quantity is proven.
+Do not pay for damaged, missing, rejected, quarantined, or unaccepted goods.
 Do not close supplier obligations without proof.
-Do not accept over-delivery automatically if it increases spend.
+Do not auto-accept over-delivery.
 Do not treat no-PO deliveries as clean receiving.
-Do not let GPT-5.5 confirm goods were received.
-Do not let GPT-5.5 invent evidence.
-Do not require human approval for routine policy-covered shortages/damage.
+Do not make Receiving own final receiver scheduling/reminders; Document 72 and Task/Scheduler/Reminder own action control.
+Do not use vague “notify” without action orchestration.
+Do not let GPT-5.5 invent delivery proof, photos, count, condition, batch, serial, expiry, or temperature.
+Do not let GPT-5.5 confirm goods arrived.
+Do not create runtime code from this document.
+Do not create packet structs.
 Do not implement from this document alone.
 ```
 
 ---
 
-## 42. Final Architecture Sentence
+## 26. Final Architecture Sentence
 
-Selene Goods Receiving + Inspection + Supplier Credit Automation Engine is the real-world proof layer that receives supplier deliveries, matches them to purchase orders and shipment notices, captures delivery notes, photos, scans, SSCCs, batch/lot/serial/expiry/temperature evidence, verifies quantity and condition, controls inspection, quarantine, rejection, and acceptance, sends only accepted stock to Inventory, creates supplier obligations for short, damaged, wrong, expired, or rejected goods, triggers credit note, replacement, or refund automation under policy, instructs AP to hold disputed amounts, updates Procurement and Supplier performance, and uses GPT-5.5 for clear human communication while deterministic Selene proof, policy, authority, and audit preserve operational and financial truth.
+Selene Goods Receiving + Inspection Engine is the receiving proof layer that verifies what actually arrived against Procurement expectations, captures quantity, condition, traceability, damage, expiry, cold-chain, service, and asset evidence, determines accepted/rejected/short/over-delivered/quarantined quantities, triggers supplier obligations, blocks AP from paying incorrect invoices, hands only accepted stock to Inventory, and creates audit-backed receiving truth while Document 72 manages the daily manifest, human task orchestration, receiver readiness, supplier chasing, reminders, escalations, and correction closure.
 
 Simple version:
 
-```text id="receiving_simple"
+```text
 Procurement says what should arrive.
 Receiving proves what actually arrived.
-Inspection proves what is usable.
-Good stock goes to Inventory.
-Bad, missing, wrong, or rejected stock creates supplier credit/replacement/refund.
-AP holds disputed value.
-Supplier score updates.
-Humans approve only real exceptions.
-Everything is audited.
+Inventory only accepts proven accepted stock.
+AP only pays what matches PO + receiving + invoice.
+Document 72 chases the humans and suppliers until exceptions are fixed.
+Everything important is audited.
 ```
-
-That is Global Document 71 — Goods Receiving + Inspection + Supplier Credit Automation Engine. The warehouse door now has a brain, a camera, a PO match, and enough backbone to tell a supplier, “Nice invoice, but ten units were broken, champ.”
-
-[1]: https://www.gs1.org/standards/gs1-global-traceability-standard/current-standard?utm_source=chatgpt.com "GS1 Global Traceability Standard"
-[2]: https://www.gs1us.org/upcs-barcodes-prefixes/serialized-shipping-container-codes?utm_source=chatgpt.com "Serialized Shipping Container Codes (SSCC) - GS1 US"
-[3]: https://www.gs1.org/docs/tl/GS1Standards_DeliveryManagement.pdf?utm_source=chatgpt.com "GS1 Standards for Delivery Management"
-[4]: https://cips-download.cips.org/short-reads/from-requisition-to-payment-how-the-procure-to-pay-process-streamlines-procurement?utm_source=chatgpt.com "From requisition to payment: how the procure-to-pay ..."

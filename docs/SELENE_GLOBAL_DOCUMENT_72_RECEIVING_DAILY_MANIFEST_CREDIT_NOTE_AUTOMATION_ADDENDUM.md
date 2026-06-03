@@ -1,20 +1,19 @@
-# Global Document 72 — Receiving Daily Manifest + Credit Note Automation Addendum
+# Global Document 72 — Receiving Daily Manifest + Credit Note Automation Addendum v2
 
-```text id="doc72_status"
+## Daily Receiving Control Tower, Task Orchestration, Supplier Correction + AP Protection Engine
+
+```text
 DOCUMENT TYPE:
-GLOBAL MASTER ARCHITECTURE ADDENDUM / RECEIVING OPERATIONS AUTOMATION DESIGN
+GLOBAL MASTER ARCHITECTURE DESIGN
 
 GLOBAL DOCUMENT NUMBER:
 72
 
-PARENT ENGINE:
-Global Document 71 — Selene Goods Receiving + Inspection + Supplier Credit Automation Engine
-
 ENGINE:
-PH1.PROC.RECEIVE.MANIFEST / PH1.RECEIVING_AUTOMATION / PH1.SUPPLIER_CREDIT_AUTOMATION
+PH1.RECEIVING_MANIFEST / PH1.RECEIVING_ACTION_CONTROL / PH1.SUPPLIER_CORRECTION_AUTOMATION
 
 FULL NAME:
-Selene Daily Receiving Manifest, Receiver Notification, Arrival Confirmation, Not-Arrived Tracking, Credit Note, Replacement, Refund, AP Hold, and Supplier Resolution Automation Addendum
+Selene Receiving Daily Manifest, Assigned Receiver Task Control, Scheduler/Roster Readiness, Broadcast/Delivery Notifications, Reminder Escalation, Storage/Freezer/Shelf Readiness, Supplier/Courier Chasing, Credit Note, Corrected Invoice, Replacement Confirmation, AP Hold Automation, and Daily Receiving Exception Control Engine
 
 STATUS:
 FUTURE_CANONICAL_ARCHITECTURE
@@ -28,1599 +27,1221 @@ CODEX_READY_MASTER_DESIGN
 
 ## 1. Purpose
 
-This addendum extends:
+Document 72 is Selene’s **daily receiving control tower**.
+
+Document 71 proves what arrived.
+Document 72 makes sure expected deliveries, people, suppliers, storage, reminders, corrections, and AP holds are managed until closed.
+
+Document 72 answers:
 
 ```text
-Global Document 71 — Goods Receiving + Inspection + Supplier Credit Automation Engine
+What is expected today?
+Who is responsible?
+Is the receiver working?
+Is the receiver authorized?
+Does the receiver have the right skill?
+Is storage/freezer/shelf/dock space ready?
+Has the receiver confirmed readiness?
+Has the delivery arrived?
+Is it late?
+Is the supplier short?
+Is the invoice wrong?
+Has the supplier confirmed correction?
+Has AP been protected?
+Who ignored Selene and needs escalation?
 ```
 
-Document 71 defines the **receiving proof layer**.
-
-Document 72 defines the **daily operational automation layer**.
-
-It answers:
+Core idea:
 
 ```text
-What deliveries are expected today?
-Who is responsible to receive each delivery?
-How does Selene notify them?
-How does the receiver confirm goods arrived?
-How does Selene open camera/scan proof?
-What happens when expected goods do not arrive?
-What happens when goods arrive short?
-What happens when goods arrive damaged?
-What happens when supplier must issue credit?
-What happens when supplier sends replacement goods?
-What happens when invoice already arrived?
-What happens when invoice has not arrived yet?
-What does Selene do automatically?
-When does Selene escalate?
+Selene does not merely notify.
+Selene assigns, schedules, delivers, reminds, escalates, confirms, proves, and closes.
 ```
 
-This document turns receiving from a manual warehouse habit into an autonomous Selene workflow.
-
-Old way:
-
-```text
-Someone thinks a delivery might arrive.
-Someone maybe checks it.
-Someone maybe remembers damage.
-AP maybe pays full invoice.
-Supplier maybe owes credit.
-Everyone forgets.
-```
-
-Selene way:
-
-```text
-Selene knows what is expected today.
-Selene tells the receiver.
-Selene guides proof capture.
-Selene records what arrived and what did not.
-Selene opens supplier credit/replacement/refund automatically.
-Selene tells AP what to hold.
-Selene tracks supplier response until closed.
-```
-
-A warehouse clipboard has now been given memory, camera eyes, supplier discipline, and just enough attitude to save money.
+No “email sent, good luck.” That is idiot operations with prettier fonts.
 
 ---
 
-## 2. Parent / Child Boundary
-
-Document 71 owns:
+## 2. Core Daily Receiving Control Law
 
 ```text
-receiving event truth
-quantity check
-inspection
-accepted quantity
-rejected quantity
-quarantine
-supplier obligation creation
-AP hold instruction
-Inventory accepted-stock handoff
+No receiving task, supplier correction, storage preparation, invoice correction, delivery exception, or AP hold may sit unowned, unconfirmed, or unchased.
+
+Every required action must have:
+- owner
+- backup owner where needed
+- deadline
+- required confirmation
+- required evidence
+- reminder schedule
+- escalation path
+- closure condition
+- audit trail
 ```
 
-Document 72 owns the operational automation around that:
+Document 72 must use:
+
+```text
+Task / Human Workload
+Scheduler / Rosters
+Access / Authority
+Broadcast / Delivery
+Reminder
+Audit
+```
+
+It must not say vague things like:
+
+```text
+notify receiver
+tell supplier
+inform AP
+escalate to manager
+```
+
+without defining action owner, due time, confirmation, reminders, escalation, and closure.
+
+This is Selene. We do not toss messages into the swamp and hope Dave becomes competent.
+
+---
+
+## 3. Engine Ownership Boundary
+
+### 3.1 Document 72 owns
 
 ```text
 daily receiving manifest
-receiver notification
-receiver reminders
-not-arrived tracking
-camera/scan/photo proof workflow
-end-of-day closeout
-automatic credit note request
-automatic replacement request
-automatic refund request
-supplier response chasing
-credit/replacement/refund deadline tracking
-routine-policy automation
-exception-only escalation
+expected delivery control board
+receiving task requirement creation
+receiver task orchestration request
+receiver readiness confirmation workflow
+storage/freezer/shelf/dock readiness workflow
+receiver reminder schedule
+receiver escalation path
+supplier/courier delay chasing workflow
+delivery not-arrived workflow
+supplier correction workflow
+credit note request workflow
+corrected invoice request workflow
+replacement/refund request workflow
+supplier confirmation tracking
+AP hold action orchestration
+daily receiving exception summary
+critical goods escalation
+receiving action audit evidence
 ```
 
-Simple split:
+### 3.2 Document 72 references but does not own
 
 ```text
-Document 71 = what arrived and what was accepted.
-Document 72 = how Selene runs the receiving day and chases supplier resolution automatically.
+physical receiving proof
+quantity/condition inspection truth
+accepted stock truth
+inventory stock truth
+PO creation
+supplier selection
+supplier payment
+final AP payable creation
+final accounting posting
+final tax treatment
+human roster truth
+human permission truth
+Broadcast / Delivery infrastructure
+Reminder infrastructure
 ```
 
-No duplicate ownership. No warehouse spaghetti. Very moving.
+### 3.3 Correct owner split
+
+```text
+Document 70 Procurement = creates PO and expected receiving requirement.
+Document 71 Receiving Proof = proves what actually arrived.
+Document 72 Daily Control = assigns/chases/manages receiving tasks and supplier corrections.
+Task / Human Workload = allocates human work.
+Scheduler / Rosters = confirms schedule, availability, workload, location, timing.
+Access / Authority = confirms permission.
+Broadcast / Delivery = sends messages and action requests.
+Reminder = follows up and escalates.
+Supplier = responds to correction requests.
+AP = holds/payments based on receiving proof.
+Audit = proof.
+```
+
+Document 72 is the warehouse babysitter with a clipboard, calendar, and escalation ladder. Annoying? Yes. Necessary? Also yes.
 
 ---
 
-## 3. Core Selene Law
+## 4. Relationship to Document 71
+
+Document 71 creates receiving truth.
+
+Document 72 creates and manages receiving action workflows.
+
+### Document 71 handles
 
 ```text
-Every expected delivery must have a responsible receiver, proof workflow, arrival status, variance status, supplier-resolution status, AP-hold status, and audit trail.
-
-Routine receiving issues must be handled automatically by Selene under policy.
-Humans should only handle physical confirmation, judgment-heavy exceptions, missing evidence, supplier disputes, high-value issues, and overrides.
+delivery arrival proof
+quantity count
+damage proof
+accepted/rejected/short quantity
+quarantine
+batch/serial/expiry
+cold-chain evidence
+supplier obligation evidence
+AP hold evidence
+Inventory accepted-stock handoff
 ```
 
-Selene must reduce human work by:
+### Document 72 handles
 
 ```text
-creating daily receiving manifests
-notifying receivers
-reminding backup receivers
-opening camera/scan workflows
-matching delivery notes to POs
-asking simple receiver questions
-recording arrived / not arrived
-recording short / damaged / wrong / over-delivered
-calculating disputed quantities and values
-creating supplier obligations
-requesting credit notes
-requesting replacements
-requesting refunds
-telling AP what to hold
-updating Procurement
-updating Supplier score
-updating Inventory accepted stock
-chasing supplier responses
-closing resolved obligations
+daily expected manifest
+receiver assignment workflow
+receiver readiness confirmation
+storage/freezer/shelf readiness
+reminders
+escalations
+supplier/courier chasing
+supplier correction closure
+corrected invoice / credit note / replacement tracking
+AP action confirmation
 ```
 
-Humans should do the physical reality part:
+Simple:
 
 ```text
-look at goods
-count goods
-take photos
-confirm damage
-confirm condition
+71 proves the delivery.
+72 makes sure everyone does their job before and after the delivery.
 ```
-
-Selene should do the admin, memory, matching, chasing, and accounting handoff.
-
-Because humans can count boxes. They should not also be expected to remember the supplier owes $183.40 from the damaged ones three Tuesdays ago. That is what machines are for, allegedly.
 
 ---
 
-## 4. Daily Receiving Manifest
+## 5. Daily Receiving Manifest
 
-Each day, Selene creates a receiving manifest.
+Document 72 must create a daily manifest from issued POs, supplier confirmations, carrier tracking, expected delivery packets, and Receiving requirements.
 
-```text
-DailyReceivingManifest
-```
-
-The manifest is generated from:
+Daily manifest includes:
 
 ```text
-approved POs
-supplier acknowledgements
-advance shipment notices
-supplier Selene messages
-carrier tracking
-Procurement expected delivery dates
-Inventory urgency
-B2B/customer delivery dependencies
-production dependencies
-high-risk supplier flags
-```
-
-Manifest fields:
-
-```text
-manifest_id
 date
 location
-branch
-warehouse
-expected_supplier_deliveries
-PO_refs
-supplier_refs
-expected_delivery_windows
-expected_items
-expected_quantities
-receiver_id
-backup_receiver_id
-inspector_id
-risk_level
-proof_level_required
-inspection_required
-storage_requirement
-batch/serial/expiry_required
-temperature_required
-customer_order_dependency
-production_dependency
-Inventory_stockout_risk
-AP_matching_requirement
-audit_ref
+warehouse/store/branch
+PO number
+supplier
+expected delivery time/window
+expected items
+expected quantities
+special handling
+inspection requirement
+storage requirement
+cold-chain requirement
+receiver requirement
+assigned receiver if known
+backup receiver if known
+supplier confirmation status
+courier/tracking status
+readiness status
+exception status
+audit ref
 ```
 
-Selene morning message:
-
-> “Tom, you have three deliveries expected today: Supplier ABC before noon, Fresh Dairy around 2 PM, and ToolPro before close. I’ll guide each receiving check when they arrive.”
-
-This is not a reminder. This is Selene running the warehouse day like she has a clipboard, a camera, and a grudge against supplier excuses.
-
----
-
-## 5. Manifest Creation Cadence
-
-Selene creates and updates the manifest continuously.
-
-### Morning generation
+Manifest statuses:
 
 ```text
-runs before business opens
-creates daily manifest
-notifies receivers
-checks high-risk deliveries
-checks stockout-critical deliveries
-```
-
-### Intraday updates
-
-Triggered by:
-
-```text
-supplier delay notice
-carrier tracking update
-Supplier Selene message
-receiver marks arrived
-receiver marks not arrived
-Procurement PO amendment
-Inventory stockout risk change
-```
-
-### End-of-day closeout
-
-```text
-checks all expected deliveries
-marks unconfirmed deliveries as pending
-asks receiver if unconfirmed deliveries arrived
-notifies Procurement of not-arrived deliveries
-updates Inventory forecast
-updates Supplier delivery score
-```
-
-Selene end-of-day message:
-
-> “Two deliveries were received. Fresh Dairy was expected but not confirmed. Did it arrive?”
-
-If no:
-
-> “I’ll mark it Not Arrived, ask the supplier for status, update Inventory forecast, and notify Procurement.”
-
-That is what “autonomous receiving operations” means. Not vibes. Workflow.
-
----
-
-## 6. Receiver Responsibility
-
-Every expected delivery must have:
-
-```text
-primary receiver
-backup receiver
-inspection owner if required
-location owner
-purchase owner
-```
-
-Receiver responsibility comes from:
-
-```text
-PO setup
-location rules
-department ownership
-warehouse roster
-skill/certification requirement
-asset custodian requirement
-food/regulated inspection rules
-```
-
-If primary receiver is unavailable:
-
-```text
-Selene notifies backup receiver
-Selene records reassignment
-Selene updates manifest
-```
-
-Selene says:
-
-> “Sarah is unavailable. I’ve assigned the delivery to Ahmed as backup receiver and updated the manifest.”
-
-No delivery should arrive to “whoever is around.” Whoever is around is how stock becomes folklore.
-
----
-
-## 7. Receiver Notification Rules
-
-Selene notifies receivers based on delivery risk and timing.
-
-Notification types:
-
-```text
-morning manifest summary
-pre-arrival reminder
-carrier-arrival alert
-supplier delay alert
-proof-capture prompt
-end-of-day unresolved prompt
-high-risk delivery escalation
-```
-
-Notification channels:
-
-```text
-Selene app
-voice prompt
-mobile push
-warehouse kiosk
-smart terminal
-email if needed
-BCAST / Delivery Engine
-REM / Reminder Engine
-```
-
-Low-risk example:
-
-> “Office Supplies delivery expected today. Confirm quantity when it arrives.”
-
-High-risk example:
-
-> “Cold-chain delivery expected by 10 AM. Temperature proof and expiry capture are required before acceptance.”
-
-Selene does not nag equally. Selene nags intelligently. Progress for civilization.
-
----
-
-## 8. Arrival Confirmation Flow
-
-When goods arrive, the receiver confirms through Selene.
-
-Possible confirmation methods:
-
-```text
-voice: “Selene, Supplier ABC arrived.”
-scan PO barcode
-scan delivery note QR
-scan SSCC / pallet label
-photo delivery note
-camera goods proof
-supplier Selene arrival message
-carrier tracking arrival event
-```
-
-Selene then asks:
-
-```text
-Is this for PO-___?
-How many packages/cartons arrived?
-Is anything visibly damaged?
-Do you have the delivery note?
-Is batch/expiry/serial required?
-Do you need inspection?
-```
-
-Selene must keep the questions short.
-
-Bad:
-
-```text
-Please complete receiving form section 4.7.
-```
-
-Good:
-
-> “How many arrived?”
-
-Humans enjoy not being tortured by forms. Another discovery by advanced AI.
-
----
-
-## 9. Camera and Proof Capture
-
-Selene should open the camera when proof is needed.
-
-Proof capture triggers:
-
-```text
-delivery note required
-goods photo required
-damage detected
-short delivery
-wrong item
-over-delivery
-batch/serial/expiry required
-temperature required
-high-value asset
-regulated goods
-supplier on watchlist
-no-PO delivery
-```
-
-Camera workflows:
-
-```text
-photo delivery note
-photo goods/carton/pallet
-photo damaged area
-photo product label
-photo expiry date
-photo batch/lot/serial
-photo temperature display
-photo vehicle/VIN/serial plate
-photo service completion
-```
-
-Selene says:
-
-> “Take a photo of the damaged units. I’ll attach it to the supplier credit request.”
-
-The receiver should not have to decide which folder to upload into, which email to send, which invoice to mention, or which supplier dispute to open.
-
-Selene does the paperwork. Humans point the camera.
-
-Finally, a fair deal.
-
----
-
-## 10. Proof Level Automation
-
-Selene assigns proof level automatically.
-
-```text
-Proof Level 1 — simple confirmation
-Proof Level 2 — delivery note photo
-Proof Level 3 — goods photo
-Proof Level 4 — scan / barcode / batch / serial / expiry
-Proof Level 5 — high-risk proof bundle
-```
-
-Factors:
-
-```text
-supplier risk
-product risk
-value
-compliance requirement
-expiry requirement
-batch/serial requirement
-temperature requirement
-prior disputes
-AP matching strictness
-customer impact
-production impact
-```
-
-Example rules:
-
-```text
-routine office supplies = Level 1 or 2
-supplier on watchlist = Level 3
-cold-chain food = Level 5
-high-value asset = Level 5
-regulated product = Level 5
-damaged goods = photo proof required
-```
-
-Selene says:
-
-> “This supplier has recent damage issues, so photo proof is required for this delivery.”
-
-No arbitrary bureaucracy. Just risk-based evidence. The rare form of paperwork that deserves oxygen.
-
----
-
-## 11. Expected But Not Arrived Workflow
-
-If a delivery was expected and not confirmed, Selene acts.
-
-State:
-
-```text
-Expected
-DueSoon
-OverdueToday
+ExpectedToday
+ExpectedTomorrow
+Confirmed
+ReceiverReady
+ReceiverNotConfirmed
+StorageNotReady
+Delayed
+Arrived
+PartiallyReceived
 NotArrived
-SupplierStatusRequested
-SupplierDelayed
-Rescheduled
-CriticalImpact
+ExceptionOpen
 Closed
 ```
 
-Selene checks:
+The manifest is the daily truth board. No “I didn’t know the truck was coming.” The truck is literally on the board, Dave.
+
+---
+
+## 6. Receiver Task Orchestration
+
+Document 72 must create or request receiver tasks.
+
+Each receiver task must define:
 
 ```text
-carrier tracking
-supplier acknowledgement
-supplier Selene delay notice
-Inventory stockout risk
-customer order impact
-production impact
-Procurement dependency
+task_id
+PO reference
+delivery reference
+location
+assigned receiver
+backup receiver
+required skill
+authority requirement
+scheduled time
+due time
+confirmation requirement
+readiness checklist
+reminder schedule
+escalation path
+audit ref
 ```
 
-Actions:
+Receiver skill types may include:
 
 ```text
-ask receiver if arrived
-mark NotArrived
-ask supplier for status
-ask Supplier Selene for delay reason
-update expected date
-update Inventory forecast
+general receiver
+cold-chain receiver
+food safety receiver
+serial-number receiver
+high-value asset receiver
+hazardous goods receiver
+electronics receiver
+service acceptance owner
+manager inspection receiver
+```
+
+Document 72 asks:
+
+```text
+Task / Human Workload = who should do it?
+Scheduler / Rosters = are they working and available?
+Access / Authority = are they allowed?
+Broadcast / Delivery = send task/request.
+Reminder = chase confirmation.
+Audit = prove it.
+```
+
+No assigning frozen deliveries to the person on holiday. Innovative, apparently.
+
+---
+
+## 7. Receiver Availability, Authority + Backup
+
+Before final receiver assignment, Selene must check:
+
+```text
+is the person working?
+are they at the right location?
+are they available at the delivery time?
+are they overloaded?
+do they have the required skill?
+do they have authority for this value/category?
+is a backup available?
+```
+
+If no valid receiver exists:
+
+```text
+escalate to manager
+route to backup location/team
+delay/split delivery if possible
+warn Procurement
+warn supplier/courier if schedule change needed
+```
+
+Important deliveries must have backup receiver logic.
+
+Examples:
+
+```text
+Primary receiver: Tom
+Backup receiver: Sarah
+Escalation: Warehouse Manager
+```
+
+Selene should not discover the primary receiver is away after the meat has thawed. That is not scheduling. That is a food-safety comedy.
+
+---
+
+## 8. Readiness Confirmation Workflow
+
+Document 72 must require readiness confirmations before critical deliveries.
+
+Readiness types:
+
+```text
+receiver ready
+shelf space ready
+freezer space ready
+cold room ready
+dock access ready
+forklift/staff ready
+inspection equipment ready
+camera/scanner ready
+quarantine area ready
+secure storage ready
+AP hold owner aware if high-risk
+```
+
+Example prompts:
+
+```text
+“Confirm freezer space is available for Friday 9am delivery.”
+“Confirm receiver is available.”
+“Confirm dock access is clear.”
+“Confirm shelf space for 60 cases.”
+“Confirm cold-chain thermometer is ready.”
+```
+
+If not confirmed:
+
+```text
+remind
+escalate
+assign backup
+warn Procurement
+warn manager
+recommend split/delay/alternate delivery
+```
+
+Confirmation is not optional where risk says it is required.
+
+Selene must not hope. Hope is not a control.
+
+---
+
+## 9. Product-Type Readiness Templates
+
+Document 72 must apply readiness templates by delivery type.
+
+### Frozen / cold-chain goods
+
+```text
+freezer space
+temperature logging
+cold-chain trained receiver
+fast receiving path
+inspection tools
+quarantine area
+same-day reminder
+critical escalation
+```
+
+### Bulk / pallet goods
+
+```text
+dock access
+forklift
+pallet space
+warehouse aisle access
+receiver/staff availability
+```
+
+### High-value goods
+
+```text
+authorized receiver
+manager receiver
+photo proof
+serial capture
+secure storage
+insurance/asset handoff
+```
+
+### Food / perishable goods
+
+```text
+expiry check
+temperature check
+quality inspection
+batch capture
+fast putaway
+cold-chain evidence
+```
+
+### IT / electronics
+
+```text
+serial number capture
+asset tag
+condition photo
+secure storage
+warranty documents
+```
+
+### Services / contractor completion
+
+```text
+completion owner
+acceptance evidence
+defect checklist
+photo/proof where applicable
+AP hold if not accepted
+```
+
+A delivery is not just “stuff arrived.” Different stuff creates different disasters.
+
+---
+
+## 10. Storage / Freezer / Shelf / Dock Readiness
+
+Document 72 must verify receiving capacity before arrival when required.
+
+Checks:
+
+```text
+freezer capacity
+cold room capacity
+shelf space
+warehouse space
+dock availability
+forklift/staff availability
+secure storage
+hazardous goods storage
+expiry-sensitive storage
+quarantine area
+```
+
+If not ready:
+
+```text
+create readiness exception
 notify Procurement
-notify customer/production engines if impacted
-update supplier delivery score
-recommend backup supplier if critical
+route task to responsible person
+request supplier delivery delay if needed
+schedule new delivery time
+track supplier confirmation
+remind internal owner
+escalate if not resolved
 ```
 
-Selene says:
+Example:
 
-> “Fresh Dairy did not arrive. This may affect tomorrow’s production. I’m asking the supplier for status and checking backup options.”
+```text
+Receiver says freezer will not be free for 3 days.
 
-No human needs to remember to chase the supplier. Selene has the social burden now. Very brave of her.
+Selene:
+- asks supplier to delay shipment by 3 days
+- requires supplier confirmation
+- updates manifest
+- reschedules receiving task
+- reminds freezer responsible person
+- alerts Procurement
+- audits everything
+```
+
+This is the difference between Selene and buying a freezer one day after the frozen goods arrive. A classic human circus.
 
 ---
 
-## 12. Late Delivery Handling
+## 11. Broadcast + Delivery Required Action Messaging
 
-Late delivery triggers depend on urgency.
+Every action message must use the Human / External Action Orchestration Law.
 
-Late logic considers:
-
-```text
-expected delivery window
-supplier promised time
-Inventory stockout date
-production schedule
-customer delivery promise
-perishable urgency
-supplier historical reliability
-```
-
-Actions:
+Action types:
 
 ```text
-low impact = track quietly
-medium impact = notify Procurement
-high impact = notify Procurement + Inventory + affected order owner
-critical impact = recommend backup supplier / emergency purchase
+informational only
+acknowledgement required
+action required
+approval required
+correction required
+scheduled operational task
+critical exception
+external party response required
 ```
 
-Selene says:
+Messages must support action buttons where possible:
 
-> “Supplier ABC is late, but stock coverage remains 12 days. I’ll track and update supplier delivery score.”
+```text
+Confirm ready
+Need backup receiver
+No freezer space
+Delivery arrived
+Delivery not arrived
+Goods damaged
+Short quantity
+Request supplier correction
+Escalate
+Confirm corrected invoice received
+Confirm replacement shipped
+```
 
-Or:
-
-> “Supplier ABC is late and stockout risk is tomorrow. I recommend backup supplier sourcing now.”
-
-This is not just “late.” It is “late with consequences” or “late but fine.”
-
-Nuance. Software should try it.
+Humans should click the answer, not write a tragic email paragraph.
 
 ---
 
-## 13. Quantity Variance Automation
+## 12. Reminder + Escalation Rules
 
-When quantity differs from PO, Selene calculates variance automatically.
-
-Variance types:
+Document 72 must schedule reminders for:
 
 ```text
-short delivery
-partial delivery
-over-delivery
-wrong pack size
-wrong unit of measure
-missing cartons
-extra cartons
+receiver readiness
+storage readiness
+delivery expected tomorrow
+delivery expected today
+delivery overdue
+supplier correction overdue
+AP hold acknowledgement overdue
+manager review overdue
 ```
 
-For short delivery:
+Escalation ladder may include:
 
 ```text
-record received quantity
-record short quantity
-calculate disputed value
-create supplier obligation
-request replacement or credit under policy
-tell AP to hold disputed value
-update Procurement
-update Supplier score
-update Inventory forecast
+receiver
+backup receiver
+warehouse manager
+procurement owner
+operations manager
+finance/AP owner
+director/owner if critical
 ```
 
-For over-delivery:
+Escalation depends on:
 
 ```text
-record expected quantity
-hold extra quantity
-do not make extra stock sellable until accepted
-ask Procurement if extra spend is allowed
-request return/collection if rejected
+value
+criticality
+cold-chain risk
+delay length
+supplier risk
+customer impact
+cashflow impact
+storage risk
 ```
 
-Selene says:
+No response means not done. Selene chases.
 
-> “95 arrived against 100 ordered. I’ve recorded 5 short and requested credit/replacement under policy.”
-
-No approval required for routine short delivery when evidence is clear.
-
-No manager needed to confirm arithmetic. We have machines now. Some of them even count.
+Silence is not confirmation. Silence is Dave.
 
 ---
 
-## 14. Damage Automation
+## 13. Supplier / Courier Chasing
 
-Damage flow:
-
-```text
-damage detected
-→ photo required
-→ damaged quantity recorded
-→ stock marked damaged/rejected/quarantined
-→ supplier obligation created
-→ AP hold created
-→ supplier credit/replacement/refund requested
-→ Supplier score updated
-→ Procurement notified
-```
-
-Selene asks:
-
-> “How many are damaged?”
-
-Then:
-
-> “Take a photo. I’ll attach it to the supplier credit request.”
-
-Damage policy choices:
-
-```text
-request credit note
-request replacement
-request refund
-reject goods
-accept with discount
-quarantine pending inspection
-```
-
-Default policy examples:
-
-```text
-low-value damaged goods under threshold = automatic credit note request
-critical stock damaged = replacement request
-unsafe/perishable damaged = reject and request credit/refund
-high-value damage = escalate after opening hold
-```
-
-Selene does not ask for approval to photograph broken things. Broken things do not require committee recognition.
-
----
-
-## 15. Credit Note Automation
-
-When a supplier must reduce what the company owes, Selene creates a credit note request.
+Document 72 must chase suppliers and couriers when deliveries are late, missing, damaged in transit, or disputed.
 
 Triggers:
 
 ```text
-short delivery
-damaged goods
-wrong goods
-rejected goods
-expired goods
-near-expiry below policy
-temperature breach
-overcharge tied to receiving
+delivery not confirmed
+supplier missed delivery window
+carrier delayed
+carrier says delivered but receiver says not received
+damaged in transit
+lost in transit
+partial shipment
+backorder
 supplier cancellation
-service not completed
 ```
 
-Credit request includes:
+Actions:
 
 ```text
-supplier_id
+notify receiver
+notify Procurement
+contact supplier
+contact courier if integrated
+request proof of delivery
+request revised ETA
+request replacement
+recommend backup supplier if critical
+escalate management if stock risk
+```
+
+Supplier/courier messages must require response when action is needed.
+
+No “we sent an email.” Selene wants a result, not stationery.
+
+---
+
+## 14. Critical Goods Escalation
+
+Some goods require higher urgency.
+
+Critical goods may include:
+
+```text
+toilet paper
+raw material for production
+customer-order-critical stock
+frozen goods
+food ingredients
+medical/safety supplies
+event stock
+high-value customer delivery stock
+```
+
+Critical goods get:
+
+```text
+earlier reminders
+management visibility
+backup receiver
+backup supplier recommendation
+same-day escalation
+cancel/reorder option
+cashflow-aware emergency purchase
+```
+
+Example:
+
+```text
+Toilet paper delivery delayed.
+Current stock covers 2 days.
+Selene recommends urgent backup order.
+```
+
+Because civilisation has a minimum bathroom inventory standard.
+
+---
+
+## 15. Supplier Correction Workflow
+
+If Document 71 detects short, damaged, wrong, expired, rejected, or unaccepted goods, Document 72 manages supplier correction.
+
+Example:
+
+```text
+Expected: 100 units
+Accepted: 90 units
+Short: 10 units
+```
+
+Selene must:
+
+```text
+create supplier correction case
+attach receiving proof
+notify supplier through Broadcast/Delivery
+state required correction
+request corrected invoice / credit note / replacement / refund
+require supplier confirmation
+track response deadline
+remind if overdue
+escalate if ignored
+update Procurement
+protect AP
+update supplier score
+audit closure
+```
+
+Supplier message example:
+
+```text
+Supplier A, PO-123 expected 100 units. Receiving confirmed 90 accepted units. Please issue corrected invoice or credit note for the 10-unit shortage, or confirm replacement delivery.
+```
+
+Emotionally honest version not sent:
+
+```text
+You cut our balls short by 10 items. Fix invoice now.
+```
+
+Selene knows how we feel. Selene sends the version AP can file.
+
+---
+
+## 16. Corrected Invoice / Credit Note / Replacement Confirmation
+
+Supplier correction cannot close until the supplier confirms the remedy.
+
+Accepted correction types:
+
+```text
+corrected invoice sent
+credit note issued
+replacement shipment confirmed
+refund accepted
+short delivery acknowledged
+dispute raised
+revised ETA provided
+```
+
+If supplier fails to respond:
+
+```text
+send reminder
+escalate to Procurement
+keep AP hold active
+penalize supplier score
+notify management if critical
+block supplier payment where appropriate
+```
+
+Closure requires:
+
+```text
+supplier confirmation
+AP acknowledgement where applicable
+receiving/Procurement acceptance
+audit proof
+```
+
+---
+
+## 17. AP Hold Automation
+
+Receiving exceptions must automatically create AP protection.
+
+Document 72 must ensure AP receives an action record, not a vague note.
+
+AP action includes:
+
+```text
+supplier
 PO
-receiving_id
-invoice_id if known
-product_id
-quantity
-unit value
-total disputed value
-reason
-photos/evidence
-requested credit note
-deadline
-AP hold reference
-audit_ref
+invoice if known
+accepted quantity/value
+disputed quantity/value
+hold reason
+evidence links
+supplier correction case
+required AP response
+due date
+audit ref
 ```
 
-Selene sends:
+AP must acknowledge where policy requires.
 
-> “Please issue credit note for 5 damaged units from PO-771. Evidence attached.”
-
-If supplier uses Selene:
+If AP does not acknowledge:
 
 ```text
-Buyer Selene sends CreditNoteRequestPacket.
-Supplier Selene receives, validates, responds.
-```
-
-If not:
-
-```text
-Selene sends supplier email/portal request and tracks response.
-```
-
-Selene should not just “note credit required.” Selene should chase it until it exists. Otherwise the note becomes a tiny grave marker for lost money.
-
----
-
-## 16. Replacement Automation
-
-Replacement is used when the business still needs the goods.
-
-Replacement triggers:
-
-```text
-short delivery and stock still needed
-damaged goods but product needed
-wrong item received
-supplier agreed replacement
-critical production/customer dependency
-```
-
-Replacement request includes:
-
-```text
-supplier_id
-PO
-receiving_id
-product_id
-quantity
-reason
-required date
-evidence
-AP hold reference
-audit_ref
-```
-
-If replacement is the same item for the same PO/obligation:
-
-```text
-receive replacement against original supplier obligation
-no new PO required unless policy says
-close obligation after accepted replacement
-release AP hold only if invoice now matches accepted goods
-```
-
-If supplier sends different product:
-
-```text
-treat as substitution
-Procurement review required
-Product identity review required
-AP hold continues
-original obligation remains open until accepted or credited
-```
-
-Selene says:
-
-> “Supplier sent a different product as replacement. I’ll keep the original obligation open until Procurement approves substitution.”
-
-Suppliers do not get to solve damaged shampoo by sending mystery conditioner and calling it “close enough.” Nice try, carton wizard.
-
----
-
-## 17. Refund Automation
-
-Refund is used when payment already occurred or replacement/credit is not suitable.
-
-Refund triggers:
-
-```text
-supplier overpaid
-invoice already paid before damage found
-supplier unable to replace
-order cancelled after payment
-service not delivered
-credit note not practical
-supplier settlement agreed
-```
-
-Refund tracking includes:
-
-```text
-refund_amount
-supplier_id
-original_payment_ref
-invoice_ref
-PO_ref
-receiving_ref
-reason
-expected_refund_date
-bank proof required
-AP/refund receivable treatment
-audit_ref
-```
-
-Selene says:
-
-> “Supplier owes a refund because the damaged-goods invoice was already paid. I’ll track expected refund and match it to BankRec when received.”
-
-Refund is not “they said they’ll send it.” Refund is money back in the bank or a matched credit. Words are not cash. Even nice supplier words.
-
----
-
-## 18. Invoice Timing Scenarios
-
-Receiving must handle credit logic whether invoice has arrived or not.
-
-### 18.1 Invoice has not arrived
-
-Selene tells AP:
-
-```text
-expect invoice to exclude short/damaged/rejected value
-if supplier invoice includes disputed quantity, hold that portion
-```
-
-Selene tells supplier:
-
-> “Please invoice accepted quantity only or issue credit for rejected quantity.”
-
-### 18.2 Invoice already arrived but not paid
-
-Selene tells AP:
-
-```text
-match invoice to accepted quantity
-hold disputed portion
-request credit note/replacement/refund
-```
-
-### 18.3 Invoice already paid
-
-Selene creates:
-
-```text
-refund request
-credit against supplier account
-future offset if policy allows
-supplier obligation remains open
-```
-
-### 18.4 Supplier sends corrected invoice
-
-Selene checks:
-
-```text
-corrected invoice matches accepted quantity
-old invoice cancelled/reversed
-AP duplicate risk cleared
-audit linked
-```
-
-Selene says:
-
-> “Supplier corrected the invoice to match accepted quantity. I’ll close the disputed AP hold after AP validates.”
-
-Receiving knows the physical truth.
-
-AP owns invoice matching.
-
-This document tells them how to cooperate without turning into a sad email chain.
-
----
-
-## 19. AP Hold Automation
-
-AP hold must be immediate when receiving variance exists.
-
-Hold triggers:
-
-```text
-short quantity
-damaged quantity
-wrong goods
-rejected goods
-quarantine
-missing inspection
-missing certificate
-no PO
-supplier dispute
-credit note required
-replacement pending
-refund pending
-```
-
-Hold amount calculation:
-
-```text
-disputed quantity × PO unit price
-or disputed invoice amount
-or estimated value if invoice not yet received
-```
-
-AP hold status:
-
-```text
-NoHold
-HoldRecommended
-HoldApplied
-AwaitingCreditNote
-AwaitingReplacement
-AwaitingRefund
-SupplierDisputed
-Released
-Closed
-```
-
-Selene says:
-
-> “I’ve told AP to hold $420 for the damaged quantity.”
-
-No one should pay full invoice while a credit note is “coming.” Coming is not here. Businesses learn this expensively.
-
----
-
-## 20. Supplier Chasing Automation
-
-Selene must chase supplier resolution automatically.
-
-Chase triggers:
-
-```text
-credit note not received by due date
-replacement not shipped by due date
-refund not received by due date
-supplier did not respond
-supplier disputes without evidence
-supplier sends wrong credit amount
-supplier sends replacement late
-```
-
-Chase cadence:
-
-```text
-Day 0: request sent
-Day 2: reminder if no acknowledgement
-Day 5: second reminder / Supplier score warning
-Day 7+: escalate if policy threshold met
-High-value/critical: faster cadence
-```
-
-Selene message:
-
-> “Supplier ABC has not issued the credit note after seven days. I recommend escalation and holding new orders if policy allows.”
-
-Selene should not merely request. Selene should pursue. Politely. Relentlessly. Like a very well-dressed mosquito.
-
----
-
-## 21. Automatic Closure Rules
-
-Supplier obligation can close when proof is complete.
-
-Closure conditions:
-
-```text
-matching credit note received and applied
-same-item replacement received and accepted
-refund received and matched to bank/AP
-supplier collected rejected goods and credit/refund complete
-Procurement approved cancellation and AP adjusted
-authorized settlement approved
-```
-
-Selene must not close when:
-
-```text
-supplier promises credit
-supplier says replacement coming
-credit note amount does not match
-replacement not accepted
-refund not received
-evidence missing
-supplier disputes unresolved
-```
-
-Selene says:
-
-> “The supplier promised credit, but no credit note has been received. The obligation remains open.”
-
-Promises are not accounting documents. This is somehow controversial in the wild.
-
----
-
-## 22. Exception-Only Approval Model
-
-Selene auto-handles routine receiving resolutions under policy.
-
-Auto-handled examples:
-
-```text
-short delivery under threshold with clear count
-damaged goods under threshold with photo proof
-credit note request for routine damage
-same-item replacement request
-AP hold for disputed amount
-supplier reminder for overdue credit
-closure after exact credit note match
-closure after replacement accepted
-```
-
-Human review required:
-
-```text
-high-value variance
-regulated goods
-missing evidence
-supplier disputes claim
-accepting damaged goods
-accepting different substitute product
-over-delivery acceptance increasing spend
-manual override
-write-off
-fraud signal
-supplier settlement different from policy
-legal/commercial dispute
+Reminder chases AP.
+Escalation routes to finance lead.
+Hold remains active.
 ```
 
 Rule:
 
 ```text
-Selene handles the routine.
-Humans handle judgment.
-Authority handles protected decisions.
-Audit records everything.
+Receiving exception creates AP hold protection until resolved.
 ```
 
-No “approval required” confetti. We swept that up already.
+No paying full invoice for missing goods because someone ignored a message. That is how money leaks out wearing a supplier logo.
 
 ---
 
-## 23. Policy Setup
+## 18. Daily Receiving Control Board
 
-During company onboarding or module configuration, Selene asks simple policy questions.
+Document 72 must maintain a live control board.
+
+Control board shows:
+
+```text
+expected today
+confirmed ready
+receiver not confirmed
+storage not ready
+delayed
+arrived
+partially received
+not arrived
+damaged
+short
+wrong item
+quarantined
+supplier correction pending
+AP hold created
+supplier response overdue
+receiver overdue
+critical stock risk
+closed
+```
+
+This is the operational screen.
+
+No more “some deliveries are somewhere.” That phrase belongs in a haunted logistics novel.
+
+---
+
+## 19. Exception-to-Correction Lifecycle
+
+Every exception must become a correction workflow.
 
 Examples:
 
 ```text
-For damaged goods under $500, should I automatically request credit note?
-For shortages under 5%, should I request replacement or credit by default?
-If replacement is late after 7 days, should I switch to credit note request?
-Should damaged goods always require photo proof?
-Who reviews supplier disputes above threshold?
-Who approves accepting substitute products?
-Who approves accepting over-deliveries?
+short delivery → supplier credit/replacement task
+damaged goods → proof + credit/replacement task
+wrong item → supplier correction task
+expired goods → rejection + AP hold
+late delivery → supplier/courier chase
+no receiver ready → manager escalation
+no freezer space → delay/split delivery action
+AP not acknowledged → finance escalation
 ```
 
-After setup, Selene applies policy automatically.
+Rule:
 
-She does not ask every day like a nervous intern in a warehouse vest.
+```text
+Exception is not closed until correction is completed, waived by authority, disputed, or escalated.
+```
+
+Document 72 is the engine that prevents exceptions becoming folklore.
 
 ---
 
-## 24. Receiver Experience
+## 20. Learning Loop
 
-Receiver interface must be simple.
+Document 72 must feed learning signals back to other engines.
 
-Selene should ask:
+Signals:
 
 ```text
-Did it arrive?
-How many arrived?
-Any damage?
-Take photo?
-Expiry date?
-Batch number?
-Accept, reject, or quarantine?
+supplier short-delivered
+supplier often late
+supplier ignores correction requests
+supplier invoices wrong
+receiver often misses confirmations
+storage space often insufficient
+frozen deliveries often create issues
+Procurement ordered too much
+branch not prepared
+AP acknowledgement delayed
 ```
 
-Selene should not ask:
+Feeds:
 
 ```text
-Please complete receiving variance type 4B and attach AP dispute schedule.
-```
-
-Receiver speaks physical truth.
-
-Selene translates it into:
-
-```text
-Inventory update
-Supplier obligation
-AP hold
-Procurement update
 Supplier score
-Audit record
+Procurement recommendations
+Quantity optimization
+Receiver performance
+Warehouse capacity planning
+Cashflow planning
+Future reminders
 ```
 
-That is how Selene reduces human work. The human says “5 damaged.” Selene does the rest. Magical? No. Competent? Somehow rarer.
+Selene must learn from failure. Otherwise we are just digitizing stupidity.
 
 ---
 
-## 25. Selene-to-Selene Credit Automation
+## 21. Human / External Action Orchestration Handoff
 
-If supplier uses Selene, resolution becomes machine-to-machine.
+Document 72 is the primary receiving document that applies the Selene Human / External Action Orchestration Law.
 
-Buyer Selene sends:
-
-```text
-CreditNoteRequestPacket
-ReplacementRequestPacket
-RefundRequestPacket
-DamageEvidencePacket
-ShortDeliveryPacket
-ReceivingVariancePacket
-```
-
-Supplier Selene responds:
+Every action must define:
 
 ```text
-CreditNoteIssuedPacket
-ReplacementShipmentPacket
-RefundConfirmedPacket
-DisputeResponsePacket
-EvidenceRequestPacket
+action type
+owner
+recipient
+backup owner
+authority requirement
+schedule / due time
+delivery method
+required confirmation
+required evidence
+reminder rule
+escalation path
+closure condition
+audit reference
 ```
 
-Buyer Selene validates:
+Required engines:
 
 ```text
-supplier identity
-PO match
-receiving match
-credit amount
-replacement product match
-refund amount
-audit proof
+Access / Authority
+Task / Human Workload
+Scheduler / Rosters
+Broadcast / Delivery
+Reminder
+Audit
 ```
 
-Selene says:
+Document 72 may create the action requirement.
 
-> “Supplier Selene issued credit note CN-442. It matches the damaged quantity, so I’ve closed the obligation and notified AP.”
+The supporting engines execute their parts.
 
-This is how companies stop playing spreadsheet tennis with suppliers.
+No unowned work. No unconfirmed readiness. No supplier correction drifting in space. No one gets to “not see the message” and call that a process.
 
 ---
 
-## 26. Relationship to Supplier Score
+## 22. State Machines
 
-Every daily manifest / variance / credit flow updates Supplier Intelligence.
-
-Score impacts:
-
-```text
-not arrived = delivery score impact
-late = delivery score impact
-short = delivery score + obligation
-damaged = quality score + obligation
-wrong item = quality score + dispute
-slow credit = credit note reliability score
-slow replacement = replacement reliability score
-unresponsive = response score
-disputed without evidence = dispute behavior score
-```
-
-Selene says:
-
-> “Supplier ABC’s credit note reliability score dropped because two credits are overdue.”
-
-Supplier performance includes how they fix mistakes, not just whether the truck eventually arrived with boxes.
-
----
-
-## 27. Relationship to Procurement
-
-Procurement receives:
-
-```text
-delivery not arrived
-delivery delayed
-short delivery
-damaged goods
-wrong item
-over-delivery
-substitute offered
-replacement pending
-credit note requested
-supplier issue pattern
-```
-
-Procurement may:
-
-```text
-cancel remaining PO
-amend PO
-source backup supplier
-approve substitute
-reject over-delivery
-open corrective action
-restrict supplier
-```
-
-Selene says:
-
-> “Supplier ABC is late and inventory will stock out tomorrow. I recommend backup supplier order.”
-
-Receiving is not passive. Receiving feeds the next buying decision.
-
----
-
-## 28. Relationship to Inventory
-
-Inventory receives:
-
-```text
-accepted quantity
-quarantine quantity
-damaged quantity
-batch/lot/serial
-expiry
-putaway instruction
-stock hold status
-```
-
-Inventory must not receive:
-
-```text
-short quantity as stock
-damaged/rejected stock as available
-uninspected high-risk stock as sellable
-substitute stock without Product/Procurement review
-```
-
-Selene says:
-
-> “Only 90 units are accepted. Inventory will not show the damaged 10 as sellable.”
-
-This is how stock truth survives.
-
----
-
-## 29. Relationship to AP / Creditors
-
-AP receives:
-
-```text
-accepted quantity
-disputed quantity
-AP hold amount
-credit note required
-replacement pending
-refund pending
-receiving evidence
-supplier obligation status
-```
-
-AP must not pay:
-
-```text
-damaged quantity
-short quantity
-rejected quantity
-unaccepted substitute
-no-PO delivery
-uninspected high-risk goods
-```
-
-Selene says:
-
-> “AP should pay only the accepted quantity. The damaged quantity remains on hold pending credit.”
-
-Document 73 will own full AP behavior, but this document creates AP’s receiving-proof input.
-
----
-
-## 30. Relationship to Accounting
-
-Accounting receives evidence through AP/Inventory/Period Close.
-
-Receiving contributes:
-
-```text
-accepted stock evidence
-GRNI evidence
-damaged stock evidence
-credit/refund/replacement evidence
-write-off evidence
-asset receiving evidence
-service acceptance evidence
-```
-
-Accounting posts final journals.
-
-Receiving does not.
-
-No warehouse journal entries, please. The forklift has enough responsibilities.
-
----
-
-## 31. State Machines
-
-### Daily Manifest State
+### Manifest State
 
 ```text
 Created
-ReceiversNotified
-InProgress
-PartiallyCompleted
-AllExpectedResolved
-ExceptionsOpen
-Closed
-Archived
-```
-
-### Expected Delivery State
-
-```text
 Expected
-DueSoon
+ReadyPending
+ReadyConfirmed
+DeliveryDue
 Arrived
 NotArrived
 Delayed
-Rescheduled
-CriticalImpact
-Cancelled
+ExceptionOpen
 Closed
 ```
 
 ### Receiver Task State
 
 ```text
+NotAssigned
+AssignmentRequested
 Assigned
-Notified
+BackupAssigned
+NotificationSent
+AcknowledgementRequired
 Acknowledged
-InProgress
-ProofRequired
-Submitted
+ReadinessRequired
+ReadinessConfirmed
+ReminderSent
+Escalated
 Completed
-Escalated
-Reassigned
 Closed
 ```
 
-### Credit Automation State
+### Storage Readiness State
 
 ```text
 NotRequired
-CreditRequired
-CreditRequested
+Required
+PendingConfirmation
+Confirmed
+NotReady
+DelayRequested
+SplitDeliveryRequested
+Escalated
+Resolved
+Closed
+```
+
+### Supplier Correction State
+
+```text
+NotRequired
+Created
+SentToSupplier
 SupplierAcknowledged
-CreditNoteReceived
-CreditMatched
-CreditMismatch
-Escalated
-Closed
-```
-
-### Replacement Automation State
-
-```text
-NotRequired
-ReplacementRequired
+CorrectedInvoiceRequested
+CreditNoteRequested
 ReplacementRequested
-SupplierAcknowledged
-ReplacementShipped
-ReplacementReceived
-ReplacementAccepted
-ReplacementRejected
+RefundRequested
+SupplierResponded
+SupplierOverdue
 Escalated
+Resolved
+Disputed
 Closed
 ```
 
-### Refund Automation State
+### AP Hold Action State
 
 ```text
 NotRequired
-RefundRequired
-RefundRequested
-SupplierAcknowledged
-RefundExpected
-RefundReceived
-RefundMatched
-RefundMissing
+Created
+SentToAP
+AcknowledgementRequired
+Acknowledged
+ReminderSent
 Escalated
+Released
 Closed
 ```
 
-### Supplier Chase State
+### Delivery Delay State
 
 ```text
-NotStarted
-RequestSent
-FirstReminderSent
-SecondReminderSent
-Escalated
-SupplierResponded
+NoDelay
+PotentialDelay
+Delayed
+ReceiverWarned
+ProcurementWarned
+SupplierChased
+CourierChased
+CriticalEscalation
+BackupPlanRecommended
 Resolved
 Closed
 ```
 
 ---
 
-## 32. Reason Codes
+## 23. Reason Codes
 
 ```text
 DAILY_RECEIVING_MANIFEST_CREATED
-RECEIVER_NOTIFIED
+RECEIVER_TASK_REQUIRED
+RECEIVER_ASSIGNMENT_REQUESTED
+RECEIVER_ASSIGNED
 BACKUP_RECEIVER_ASSIGNED
-DELIVERY_DUE_SOON
-DELIVERY_ARRIVED
+RECEIVER_NOTIFICATION_SENT
+RECEIVER_ACKNOWLEDGEMENT_REQUIRED
+RECEIVER_ACKNOWLEDGED
+RECEIVER_REMINDER_SENT
+RECEIVER_ESCALATED
+STORAGE_READINESS_REQUIRED
+FREEZER_SPACE_CONFIRMATION_REQUIRED
+SHELF_SPACE_CONFIRMATION_REQUIRED
+DOCK_READINESS_CONFIRMATION_REQUIRED
+STORAGE_NOT_READY
+DELIVERY_DELAY_REQUESTED_TO_SUPPLIER
+SUPPLIER_DELAY_CONFIRMED
+SUPPLIER_DELAY_NOT_CONFIRMED
+DELIVERY_EXPECTED_TODAY
 DELIVERY_NOT_ARRIVED
-DELIVERY_DELAYED
-DELIVERY_CRITICAL_IMPACT
-PROOF_LEVEL_ASSIGNED
-CAMERA_PROOF_REQUESTED
-DELIVERY_NOTE_PHOTO_CAPTURED
-GOODS_PHOTO_CAPTURED
-DAMAGE_PHOTO_CAPTURED
-QUANTITY_SHORT
-QUANTITY_OVER_DELIVERED
-DAMAGE_DETECTED
-WRONG_ITEM_DETECTED
-SUBSTITUTE_ITEM_HELD
+SUPPLIER_CHASE_REQUIRED
+COURIER_CHASE_REQUIRED
+CRITICAL_GOODS_ESCALATION
+SUPPLIER_CORRECTION_CREATED
+SUPPLIER_CORRECTION_SENT
+CORRECTED_INVOICE_REQUESTED
 CREDIT_NOTE_REQUESTED
 REPLACEMENT_REQUESTED
 REFUND_REQUESTED
-AP_HOLD_CREATED
-SUPPLIER_CHASE_STARTED
-SUPPLIER_CHASE_ESCALATED
-CREDIT_NOTE_MATCHED
-REPLACEMENT_ACCEPTED
-REFUND_MATCHED
-SUPPLIER_OBLIGATION_CLOSED
-SUPPLIER_OBLIGATION_OVERDUE
-RECEIVING_POLICY_AUTO_ACTIONED
-RECEIVING_EXCEPTION_REVIEW_REQUIRED
+SUPPLIER_CONFIRMATION_REQUIRED
+SUPPLIER_CONFIRMATION_RECEIVED
+SUPPLIER_RESPONSE_OVERDUE
+AP_HOLD_ACTION_CREATED
+AP_HOLD_ACKNOWLEDGEMENT_REQUIRED
+AP_HOLD_ACKNOWLEDGED
+EXCEPTION_TO_CORRECTION_OPENED
+EXCEPTION_TO_CORRECTION_CLOSED
+RECEIVING_DAILY_CONTROL_BOARD_UPDATED
+RECEIVING_LEARNING_SIGNAL_CREATED
 ```
 
 ---
 
-## 33. Required Simulations
+## 24. Required Simulations
 
 ```text
-daily receiving manifest generated
-receiver notified of expected delivery
+daily manifest created from expected POs
+receiver assignment requested
+scheduler confirms receiver is working
+authority confirms receiver can receive cold-chain goods
+receiver notified through Broadcast/Delivery
+receiver acknowledgement required
+receiver does not acknowledge and reminder sends
+receiver still ignores and escalation triggers
 backup receiver assigned
-delivery arrived and matched
-delivery not arrived end-of-day
-supplier delay updates manifest
-camera opens for delivery note proof
-camera opens for damaged goods proof
-short delivery creates credit request
-damaged goods creates credit request
-wrong item creates replacement request
-same-item replacement received and accepted
-different substitute held for Procurement review
-refund requested after paid invoice
-invoice not yet arrived and AP expected hold created
-invoice already arrived and AP disputed portion held
-supplier Selene issues matching credit note
-supplier fails to issue credit by due date
-supplier chase escalated
-credit note mismatch detected
-supplier obligation closed after credit note matched
-Inventory receives accepted quantity only
-AP receives hold instruction
-Supplier score updated from overdue credit
+freezer space confirmation required
+receiver reports freezer not available for 3 days
+Selene asks supplier to delay delivery
+supplier confirms delayed delivery
+manifest reschedules delivery
+receiver receives new reminder
+delivery expected today
+delivery does not arrive
+supplier chase triggered
+courier chase triggered
+critical toilet paper delivery delayed
+management escalation triggered
+short delivery creates supplier correction case
+supplier receives correction request
+supplier issues corrected invoice
+supplier issues credit note
+supplier confirms replacement shipment
+supplier ignores correction and escalation triggers
+AP hold created for short goods
+AP acknowledgement required
+AP ignores hold and finance reminder sends
+daily control board shows open exceptions
+exception closes only after correction confirmed
+learning signal created for supplier short-delivery pattern
 ```
 
 ---
 
-## 34. Integration Map
+## 25. Integration Map
 
 ```text
-PH1.PROC.RECEIVE.MANIFEST / RECEIVING_AUTOMATION
-↔ PH1.PROC.RECEIVE / GOODS_INSPECTION
-↔ PH1.PROCUREMENT / PH1.PROC.ORDER
+PH1.RECEIVING_MANIFEST / DOCUMENT_72
+↔ PH1.RECEIVING / DOCUMENT_71
+↔ PH1.PROCUREMENT / DOCUMENT_70
 ↔ PH1.SUPPLIER
-↔ PH1.SUPPLIER.BANK_TRUST
+↔ PH1.SUPPLIER_BANK_TRUST
+↔ PH1.LOGISTICS / COURIER
 ↔ PH1.INVENTORY
-↔ PH1.PRODUCT
-↔ PH1.CREDITORS / AP
+↔ PH1.WAREHOUSE
+↔ PH1.AP / CREDITORS
 ↔ PH1.SUPPLIER_PAYMENT
-↔ PH1.CREDITORS.RECON
 ↔ PH1.ACCOUNTING
 ↔ PH1.CASHFLOW
-↔ PH1.BUDGET
-↔ PH1.LOGISTICS
-↔ PH1.RETURNS
-↔ PH1.ASSET
-↔ PH1.ASSET_ACCOUNTING
-↔ PH1.INSURANCE
-↔ PH1.FLEET
-↔ PH1.COMPLIANCE
-↔ PH1.ECOMMERCE
-↔ PH1.B2B
-↔ PH1.POS
-↔ PH1.MANUFACTURING / PRODUCTION
-↔ PH1.RESTAURANT / MENU
 ↔ PH1.ACCESS / AUTHORITY
-↔ PH1.AUDIT
-↔ PH1.REM
+↔ PH1.TASK / HUMAN_WORKLOAD
+↔ PH1.SCHEDULER / ROSTERS
 ↔ PH1.BCAST / DELIVERY
-↔ PH1.WRITE
+↔ PH1.REM
+↔ PH1.AUDIT
+↔ PH1.MP / MEMORY_PATTERN
 ↔ PH1.D / GPT-5.5
+↔ PH1.X / LIVE_CONTEXT
+↔ PH1.M / MEMORY
 ```
 
 ---
 
-## 35. Required Logical Packets
+## 26. Required Logical Packets
 
 ```text
 DailyReceivingManifestPacket
-ReceiverNotificationPacket
-ReceiverTaskPacket
-ExpectedDeliveryStatusPacket
-NotArrivedDeliveryPacket
-ReceivingProofRequestPacket
-CameraProofPacket
-QuantityVariancePacket
-DamageVariancePacket
-SupplierCreditAutomationPacket
-CreditNoteRequestPacket
-CreditNoteMatchPacket
-ReplacementRequestPacket
-ReplacementReceiptPacket
-RefundRequestPacket
-RefundMatchPacket
+ReceiverTaskRequirementPacket
+ReceiverAssignmentRequestPacket
+ReceiverReadinessPacket
+StorageReadinessPacket
+FreezerReadinessPacket
+ReceivingReminderPacket
+ReceivingEscalationPacket
+DeliveryNotArrivedPacket
 SupplierChasePacket
-SupplierObligationClosurePacket
-APReceivingHoldPacket
-InventoryAcceptedQuantityPacket
-ProcurementReceivingExceptionPacket
-SupplierPerformanceUpdatePacket
+CourierChasePacket
+SupplierCorrectionPacket
+CorrectedInvoiceRequestPacket
+CreditNoteRequestPacket
+ReplacementRequestPacket
+SupplierCorrectionConfirmationPacket
+APHoldActionPacket
+DailyReceivingControlBoardPacket
+ReceivingExceptionPacket
+ExceptionToCorrectionPacket
+ReceivingLearningSignalPacket
 ReceivingManifestAuditEvidencePacket
 ```
 
-Logical only. Codex maps later. No packet structs. The little schema gremlin remains unfed.
+Logical only.
+
+No runtime packet structs. The schema goblin can stop trying to join the warehouse roster.
 
 ---
 
-## 36. What Codex Must Not Do
+## 27. What Codex Must Not Do
 
 ```text
 Do not merge Document 72 into Document 71.
-Do not duplicate Document 71 receiving proof ownership.
-Do not let daily manifest create inventory stock directly.
-Do not let credit automation pay or release supplier invoices.
-Do not let supplier promise close an obligation.
-Do not require human approval for routine policy-covered shortages/damage.
-Do not let GPT-5.5 invent photos, counts, or supplier responses.
-Do not bypass AP hold for disputed receiving variance.
-Do not create runtime code from this addendum.
+Do not make Document 72 own physical receipt proof.
+Do not make Document 72 own Inventory accepted-stock truth.
+Do not make Document 72 own AP final payable creation.
+Do not make Document 72 own supplier payment.
+Do not use vague “notify” without action orchestration.
+Do not create unowned tasks.
+Do not create reminders without due time and escalation path.
+Do not close supplier correction without confirmation or authority.
+Do not release AP hold without correction/authority.
+Do not ignore receiver acknowledgement requirements.
+Do not ignore scheduler/roster/availability checks.
+Do not ignore Access / Authority for assigned receivers.
+Do not allow no-freezer/no-storage readiness to remain unresolved.
+Do not let GPT-5.5 invent supplier confirmation, receiver acknowledgement, AP acknowledgement, or delivery status.
+Do not create runtime code from this document.
 Do not create packet structs.
 Do not implement from this document alone.
 ```
 
 ---
 
-## 37. Final Architecture Sentence
+## 28. Final Architecture Sentence
 
-Selene Receiving Daily Manifest + Credit Note Automation Addendum is the autonomous operating layer that turns receiving into a daily managed workflow by generating expected-delivery manifests, assigning and notifying receivers, guiding camera/scan proof, tracking arrived and not-arrived deliveries, automatically handling short, damaged, wrong, rejected, expired, and disputed goods under policy, creating supplier credit note, replacement, and refund workflows, applying AP hold instructions, chasing suppliers until obligations are resolved, updating Supplier, Procurement, Inventory, AP, and Accounting evidence, and escalating only material exceptions while keeping humans focused on physical confirmation and judgment rather than administrative chasing.
+Selene Receiving Daily Manifest + Supplier Correction Automation Engine is the daily receiving control tower that converts expected deliveries into scheduled, owned, confirmed, reminded, escalated, and audited receiving actions; assigns and chases responsible receivers through Task, Scheduler, Access, Broadcast, Delivery, Reminder, and Audit engines; checks shelf, freezer, dock, and storage readiness before goods arrive; tracks late, missing, damaged, short, wrong, or disputed deliveries; drives supplier and courier correction workflows; requires corrected invoice, credit note, replacement, refund, or dispute confirmation; protects AP from paying wrong invoices; and keeps the daily receiving control board open until every receiving exception is completed, corrected, escalated, or properly closed.
 
 Simple version:
 
 ```text
-Selene knows what should arrive today.
-Selene tells the receiver.
-Receiver confirms arrival, count, damage, expiry, batch, or serial.
-Selene opens camera or scan when needed.
-If goods do not arrive, Selene chases supplier.
-If goods are short or damaged, Selene requests credit, replacement, or refund.
-AP holds disputed value.
-Inventory receives accepted stock only.
-Supplier score updates.
-Selene chases until closed.
-Humans handle exceptions.
-Everything is audited.
+Document 71 proves what arrived.
+Document 72 makes sure everyone does their job.
+It assigns.
+It schedules.
+It reminds.
+It escalates.
+It chases suppliers.
+It protects AP.
+It keeps proof.
+It does not close until the problem is fixed or properly escalated.
 ```
 
-That is Global Document 72. The receiving day now runs itself: Selene tells people what’s coming, watches what actually arrives, opens the camera when proof is needed, chases suppliers for credit notes, and refuses to let damaged goods become paid invoices just because someone’s PDF arrived wearing a nice logo.
+That is Selene receiving. Not warehouse hope. Not Dave’s memory. Not supplier vibes. Actual control.
