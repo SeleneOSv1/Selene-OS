@@ -2005,6 +2005,14 @@ That is 81C: customer value intelligence without becoming a creepy little wallet
 
 ---
 
+## 49. 81E Customer Benefit Funding Handoff
+
+81C feeds 81E customer value signals for B2B benefit, service, bundle, rebate, loyalty, access, and value-treatment logic.
+
+81C must not create, recommend, display, or imply unfunded B2B customer benefits. Any B2B benefit pool, discount substitute, service upgrade, recurring benefit, referral benefit, or customer-visible value treatment must be validated by 81E for funding source, margin impact, commission impact, reserve impact, bottom-line target impact, fairness, and auditability.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

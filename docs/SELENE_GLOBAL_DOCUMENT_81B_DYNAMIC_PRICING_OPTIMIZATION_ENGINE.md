@@ -1993,6 +1993,14 @@ That is 81B: not “dynamic pricing” as a shiny buzzword, but a controlled pri
 
 ---
 
+## 48. 81E Dynamic B2B Recalculation Handoff
+
+81B must request 81E recalculation whenever B2B provider cost, provider net, Channel Store commission, Selene B2B fee, delivery cost, return courier/reverse logistics cost, reserve level, provider risk score, market condition, performance result, refund/return rate, chargeback risk, brand approval outcome, bottom-line profit target, or customer benefit policy changes.
+
+Dynamic B2B pricing cannot publish until 81E confirms pricing-stack viability or routes the proposed change through the required approval path.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

@@ -333,7 +333,7 @@ These files are tracked as Pricing Pack sub-documents under Global Document 81. 
 - [81B — Dynamic Pricing Optimization Engine](SELENE_GLOBAL_DOCUMENT_81B_DYNAMIC_PRICING_OPTIMIZATION_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 - [81C — Customer Value Segmentation + Price Sensitivity Engine](SELENE_GLOBAL_DOCUMENT_81C_CUSTOMER_VALUE_SEGMENTATION_PRICE_SENSITIVITY_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 - 81D — Brand Positioning + Premium / Luxury Pricing Guardrail Engine — pending; no canonical file created yet.
-- 81E — B2B Profit Share + Commission Pricing Model Engine — pending; no canonical file created yet.
+- [81E — B2B Profit Share + Commission Pricing Model Engine](SELENE_GLOBAL_DOCUMENT_81E_B2B_PROFIT_SHARE_COMMISSION_PRICING_MODEL_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 - 81F — Promotion Experimentation + A/B Pricing Governance Engine — pending; no canonical file created yet.
 - 81G — Pricing Pack Integration, Explainability, Fairness + Audit Engine — pending; no canonical file created yet.
 - 81H — Company Capability, Service-Level, Packaging + Cost-to-Serve Pricing Engine — pending; no canonical file created yet.

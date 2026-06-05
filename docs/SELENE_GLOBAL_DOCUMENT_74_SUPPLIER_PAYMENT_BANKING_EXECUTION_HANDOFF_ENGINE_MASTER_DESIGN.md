@@ -2044,3 +2044,11 @@ That is Global Document 74 — Supplier Payment + Banking Execution Handoff Engi
 [1]: https://www.iso20022.org/iso-20022?utm_source=chatgpt.com "ISO 20022 | ISO20022"
 [2]: https://www.swift.com/standards/iso-20022/iso-20022-financial-institutions-focus-payments-instructions?utm_source=chatgpt.com "ISO 20022 for Financial Institutions - Swift"
 [3]: https://www.nacha.org/same-day-ach?utm_source=chatgpt.com "Same Day ACH"
+
+---
+
+## 43. 81E B2B Settlement Hold + Payout Handoff
+
+Supplier Payment must respect 81E settlement holds, reserves, refund exposure, reversal exposure, clawback rules, customer benefit funding, provider payout amount, Channel Store commission obligation, Selene B2B fee allocation, and return courier/reverse logistics allocation before submitting or releasing supplier/provider payments.
+
+Provider payout and Channel Store commission obligations must remain separate, auditable settlement concepts. Supplier Payment may execute only after AP readiness, bank safety, cashflow, authority, and 81E/Document 78 hold-release rules are satisfied.

@@ -3059,6 +3059,14 @@ That is Global Document 77 — Selene E-Commerce Engine v7. It is now properly s
 
 ---
 
+## 55. 81E B2B Customer-Visible Pricing Display Handoff
+
+E-Commerce must display B2B customer-visible pricing only after Document 81 and 81E validate the B2B pricing stack, benefit funding, all-in customer cost, floor/ceiling rules, refund/reversal exposure, brand approval or referral-only outcome, and audit evidence.
+
+E-Commerce must not show unfunded benefits, B2B discounts, provider-channel offers, referral-only alternatives, or customer-visible value claims that violate 81E economics, 81D brand/channel guardrails when available, or Document 81 final pricing governance.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

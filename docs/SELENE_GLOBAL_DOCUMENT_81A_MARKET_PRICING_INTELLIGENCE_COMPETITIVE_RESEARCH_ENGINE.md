@@ -2124,6 +2124,14 @@ That is 81A. Not “check competitor price.” More like “understand whether t
 
 ---
 
+## 56. 81E B2B Market Competitiveness Handoff
+
+81A feeds 81E clean B2B market competitiveness signals, including comparable provider offers, authorized channel status, all-in customer cost, service level, geography, availability, warranty/return comparability, trust/reputation, and data confidence.
+
+81A must not let grey-market, unofficial, stale, unavailable, non-comparable, or unsupported competitor prices reduce B2B economics, provider net, Channel Store commission, customer benefit funding, reserve levels, or bottom-line profit viability unless the distortion is explicitly flagged for 81E review.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

@@ -1988,3 +1988,11 @@ That is Global Document 64 — Product Intelligence Engine. Not a product form. 
 [2]: https://www.gs1us.org/industries-and-insights/by-topic/sunrise-2027?utm_source=chatgpt.com "What is GS1 Sunrise 2027?"
 [3]: https://green-forum.ec.europa.eu/implementing-ecodesign-sustainable-products-regulation_en?utm_source=chatgpt.com "Implementing the Ecodesign for Sustainable Products ..."
 [4]: https://support.google.com/merchants/answer/7052112?hl=en&utm_source=chatgpt.com "Product data specification - Google Merchant Center Help"
+
+---
+
+## 45. 81E B2B Pricing Metadata Readiness
+
+Product Intelligence must prepare the product-side metadata required by 81E before a product or service can be priced for B2B distribution: provider net, B2B opt-in pricing mode, suggested commission offer, retail price mode, delivery included/separate flag, return courier policy, reserve requirement, brand approval/direct/referral/blocked route, customer benefit eligibility, recurring/service/high-value/regulated flags, professional compliance requirements, and bottom-line contribution classification.
+
+Product may prepare B2B pricing inputs, but 81E validates the economic stack and Document 81 remains final pricing governance.

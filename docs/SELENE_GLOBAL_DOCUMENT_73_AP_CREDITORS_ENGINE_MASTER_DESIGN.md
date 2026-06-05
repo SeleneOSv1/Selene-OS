@@ -1811,3 +1811,11 @@ Everything is audited.
 ```
 
 That is Global Document 73 — AP / Creditors Engine. AP is now not an inbox full of supplier demands. It is the invoice-control brain that politely tells suppliers, “Yes, we owe this part, no, we are not paying for the broken part, and please stop sending the same invoice twice with a new filename.”
+
+---
+
+## 38. 81E B2B AP Hold, Reversal + Credit Note Handoff
+
+AP must respect B2B refund, reversal, clawback, reserve, credit-note, provider-fault, return courier, and disputed-commission effects from 81E and Document 78 when calculating payable readiness.
+
+AP holds must recognize unresolved return courier allocation, provider fault, credit notes owed, settlement holds, disputed benefit funding, reserve release conditions, and commission/payout clawbacks before sending payment readiness to Supplier Payment.

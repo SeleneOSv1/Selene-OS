@@ -3643,6 +3643,14 @@ That is Global Document 78 — Selene B2B Platform + Trade Ecosystem Engine v4. 
 
 ---
 
+## 67. 81E B2B Pricing Stack + Brand Approval Pricing Handoff
+
+Document 78 must request 81E for B2B pricing stack viability, provider net, Channel Store commission, Selene B2B fee, customer benefit pool, warranty/performance reserve, delivery cost, return courier/reverse logistics cost, payment cost, refund/reversal/clawback exposure, settlement hold, provider risk score pricing effect, contribution classification, bottom-line profit target alignment, B2B price floor, B2B price ceiling, and profit-share waterfall.
+
+Document 78 must enforce brand approval or referral-only outcomes before listing or channel adoption. Brand approval outcomes from 81D, when available, must feed 81E before final B2B listing, adoption, commission, customer benefit, or dynamic pricing decisions are allowed.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

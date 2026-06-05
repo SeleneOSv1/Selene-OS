@@ -2246,6 +2246,16 @@ That is Global Document 81 — the pricing monster, now house-trained. It is not
 
 ---
 
+## 50. 81E B2B Profit-Share Pricing Handoff
+
+Document 81 must request 81E review before publishing, auto-adding, approving, or dynamically changing any B2B listing, channel adoption, provider net price, Channel Store commission, Selene B2B fee, customer benefit pool, reserve, return/refund policy, brand approval outcome, subscription/recurring B2B offer, service B2B offer, high-value B2B offer, regulated/professional B2B offer, or B2B offer that affects company bottom-line profit targets.
+
+81E owns B2B pricing stack viability, provider net price, Channel Store commission, Selene B2B platform fee, customer benefit funding, warranty/performance reserves, delivery cost, return courier/reverse logistics cost, payment cost, refund/chargeback/damage risk, provider risk score pricing impact, brand approval pricing workflow, B2B price floor, B2B price ceiling, profit-share waterfall, refund/reversal/clawback rules, recurring/service/high-value/regulated/professional B2B pricing, bottom-line profit target alignment, and contribution type classification.
+
+Document 81 remains final pricing governance, but it must not publish a B2B price or offer until 81E returns a viable or approval-routed B2B pricing result.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

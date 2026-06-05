@@ -2059,6 +2059,14 @@ That is Global Document 79 — Selene POS + Commerce Execution Engine. It is not
 
 ---
 
+## 39. 81E POS B2B Pricing, Refund + Clawback Handoff
+
+POS must request Document 81 and 81E validation before applying any B2B discount, commission-bearing sale, customer benefit, staff override, refund, partial refund, return, exchange, or correction that affects provider net, Channel Store commission, Selene B2B fee, benefit pool, reserve, return courier/reverse logistics allocation, settlement hold, floor/ceiling, or clawback.
+
+POS must preserve provider, Channel Store, commission model, benefit funding, settlement hold, and reversal/clawback context on B2B lines. Staff discounts or corrections must not break 81E floors, brand/channel rules, provider obligations, or bottom-line profit targets.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

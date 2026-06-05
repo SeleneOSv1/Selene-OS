@@ -2090,6 +2090,14 @@ That is Global Document 80 — Selene Order Management + Order Orchestration Eng
 
 ---
 
+## 48. 81E B2B Order-Line Pricing Context Handoff
+
+B2B order lines must carry 81E pricing context, including Original Provider, Channel Store, provider net, commission model, Selene B2B fee, customer benefit pool, reserve, delivery allocation, return courier/reverse logistics allocation, payment/settlement hold, brand approval or referral-only route, viability score, floor/ceiling result, profit-share waterfall, and reversal/clawback rules.
+
+Order Management must not confirm a B2B line where 81E viability is failed, pending, blocked, or routed for unresolved approval. Partial returns, partial refunds, substitutions, recurring charges, service milestones, and referral-only handling must remain line-level so 81E reversal/clawback and benefit logic can be applied accurately.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

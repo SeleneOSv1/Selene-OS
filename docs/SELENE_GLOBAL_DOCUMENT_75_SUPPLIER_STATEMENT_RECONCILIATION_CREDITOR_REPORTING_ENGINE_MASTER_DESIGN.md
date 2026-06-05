@@ -1824,3 +1824,11 @@ That is Global Document 75 — Supplier Statement Reconciliation + Creditor Repo
 [1]: https://cips-download.cips.org/short-reads/from-requisition-to-payment-how-the-procure-to-pay-process-streamlines-procurement?utm_source=chatgpt.com "From requisition to payment: how the procure-to-pay ..."
 [2]: https://www.swift.com/standards/iso-20022/iso-20022-faqs/corporates?utm_source=chatgpt.com "ISO 20022: Corporates - Swift"
 [3]: https://aurum.solutions/resources/how-to-improve-supplier-statement-reconciliation?utm_source=chatgpt.com "How to improve supplier statement reconciliation"
+
+---
+
+## 44. 81E B2B Statement Reconciliation + Clawback Handoff
+
+Supplier Statement Reconciliation must account for B2B credit notes, provider payout reversals, Channel Store commission reversals, reserves, settlement holds, benefit funding adjustments, clawbacks, return courier allocations, refund adjustments, disputed commissions, and unresolved provider-fault claims created or required by 81E and Document 78.
+
+Statements that ignore B2B holds, reversals, credit notes, clawbacks, or return courier allocations must be treated as supplier claims requiring reconciliation evidence, not AP truth.

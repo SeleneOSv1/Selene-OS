@@ -655,3 +655,11 @@ Channel Stores can sell it.
 Selene controls settlement.
 Everything is audited.
 ```
+
+---
+
+## 21. 81E Product-to-B2B Pricing Readiness
+
+This addendum must hand 81E the B2B-readiness facts needed for pricing viability: Original Provider of Record, provider net price, provider B2B opt-in, commission offer, delivery model, delivery cost inclusion, return courier/reverse logistics policy, warranty/guarantee obligations, reserve classification, international duty/tax exposure, brand approval/direct/referral/blocked route, customer benefit eligibility, recurring/service/high-value/regulated/professional flags, and contribution type.
+
+No product or service may move from Product/E-Commerce readiness into B2B publication unless 81E can calculate or route the pricing stack.
