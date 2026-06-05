@@ -2256,6 +2256,20 @@ Document 81 remains final pricing governance, but it must not publish a B2B pric
 
 ---
 
+## 51. 81F-81J Pricing Pack Completion Handoff
+
+Document 81 must request 81F before scaling, stopping, or approving promotion experiments. 81F owns promotion experimentation, A/B and multivariate pricing tests, objective declaration, primary and guardrail metrics, incremental lift, pull-forward/time-compression detection, fast failure detection, promotion fatigue, coupon leakage/abuse, promotion ROI, customer acquisition quality, refund/reversal impact, and promotion learning.
+
+Document 81 must request 81G for every final pricing decision explanation, audit trace, fairness check, compliance handoff, approval trace, versioning record, evidence-locker record, decision replay, rollback audit, pricing governance dashboard update, pricing governance change-control event, and audit/evidence report pack.
+
+Document 81 must request 81H before using service capability, packaging, delivery promise, installation, customization, B2B service capability, third-party capability, insurance/liability, compliance service capability, or cost-to-serve in price or offer selection.
+
+Document 81 must request 81I before applying location, delivery-zone, territory, local market, duty, tax, local fee, currency, venue, geo-fencing, captive-location, reverse-logistics, or geography fairness logic.
+
+Document 81 must request 81J before premium, luxury, B2B, launch, product-page, official-channel, claim-sensitive, accessibility-sensitive, localization-sensitive, return/warranty display, or presentation-sensitive pricing and offers.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

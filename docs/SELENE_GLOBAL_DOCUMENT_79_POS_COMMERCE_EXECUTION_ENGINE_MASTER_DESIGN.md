@@ -2067,6 +2067,18 @@ POS must preserve provider, Channel Store, commission model, benefit funding, se
 
 ---
 
+## 40. 81F-81J POS Pricing Pack Handoff
+
+POS customer-facing offer prompts must respect 81F test eligibility, exposure limits, offer-stacking, expiry, refund/reversal, and stop-loss status.
+
+POS price claims, local surcharges, service fees, discount explanations, promotion claims, and B2B benefit/refund prompts must use 81G claim evidence and audit references.
+
+POS service add-ons must respect 81H capability and capacity. POS local/location surcharges, service areas, venue/captive-location prices, delivery-zone fees, and geography-sensitive offers must respect 81I and 81G transparency. POS customer-facing prompts and product displays must respect 81J presentation clarity where presentation, brand, B2B, launch, claim, accessibility, or return/warranty display rules apply.
+
+POS must not apply presentation-sensitive, brand-sensitive, B2B-sensitive, or promotion-test-sensitive discounts without Document 81 Core, 81D when available, 81E, 81F, 81G, and 81J approval/evidence where required.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

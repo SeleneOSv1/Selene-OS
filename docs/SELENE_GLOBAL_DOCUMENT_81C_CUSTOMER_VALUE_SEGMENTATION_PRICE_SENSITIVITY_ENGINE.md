@@ -2013,6 +2013,16 @@ That is 81C: customer value intelligence without becoming a creepy little wallet
 
 ---
 
+## 50. 81F-81J Customer Value Handoff
+
+81C customer value segments feed 81F promotion test design, offer variant selection, customer-quality analysis, repeat-purchase learning, and promotion fatigue checks.
+
+81C customer-facing value logic must be explainable and auditable through 81G. Service/value preference must coordinate with 81H; location, recipient, and customer context must coordinate with 81I; and product presentation emphasis, perceived value, trust signals, accessibility, localization, and offer framing must coordinate with 81J.
+
+81C must not create personalized benefits, value treatments, or offer recommendations that 81F cannot test, 81E cannot fund where B2B applies, or Document 81 Core cannot approve.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

@@ -1832,3 +1832,11 @@ That is Global Document 75 — Supplier Statement Reconciliation + Creditor Repo
 Supplier Statement Reconciliation must account for B2B credit notes, provider payout reversals, Channel Store commission reversals, reserves, settlement holds, benefit funding adjustments, clawbacks, return courier allocations, refund adjustments, disputed commissions, and unresolved provider-fault claims created or required by 81E and Document 78.
 
 Statements that ignore B2B holds, reversals, credit notes, clawbacks, or return courier allocations must be treated as supplier claims requiring reconciliation evidence, not AP truth.
+
+---
+
+## 45. 81F-81G Pricing, Promotion + B2B Statement Handoff
+
+Supplier Statement Reconciliation must reconcile pricing, promotion, and B2B-related credits, reversals, clawbacks, benefit liabilities, return courier allocations, settlement holds, refund adjustments, provider payout disputes, Channel Store commission disputes, and unresolved promotion/customer-benefit obligations.
+
+Statement reconciliation must use 81G audit/evidence references where pricing, promotion, B2B benefit, or presentation/claim disputes affect supplier or provider balances.

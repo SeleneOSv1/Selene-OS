@@ -1819,3 +1819,11 @@ That is Global Document 73 — AP / Creditors Engine. AP is now not an inbox ful
 AP must respect B2B refund, reversal, clawback, reserve, credit-note, provider-fault, return courier, and disputed-commission effects from 81E and Document 78 when calculating payable readiness.
 
 AP holds must recognize unresolved return courier allocation, provider fault, credit notes owed, settlement holds, disputed benefit funding, reserve release conditions, and commission/payout clawbacks before sending payment readiness to Supplier Payment.
+
+---
+
+## 39. 81F-81G Promotion Liability + Reversal Handoff
+
+Promotion liabilities, future credits, loyalty credits, cashback, provider-funded benefits, B2B benefit reversals, and pricing/promotion refund reversals must be visible to AP and Accounting where supplier or provider obligations are impacted.
+
+AP must not treat pricing/promotion/B2B clawbacks, credits, disputed reversals, or benefit obligations from 81E, 81F, or 81G as clean payables without reconciliation evidence.

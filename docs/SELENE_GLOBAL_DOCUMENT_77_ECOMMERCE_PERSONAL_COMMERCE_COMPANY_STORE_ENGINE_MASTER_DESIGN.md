@@ -3067,6 +3067,18 @@ E-Commerce must not show unfunded benefits, B2B discounts, provider-channel offe
 
 ---
 
+## 56. 81F-81J Customer-Facing Pricing Pack Handoff
+
+E-Commerce promotion display must respect 81F eligibility, test exposure, objective, expiry, offer-stacking, refund/reversal, and stop-loss status.
+
+E-Commerce customer-facing prices, discounts, delivery fees, tax/duty estimates, local fees, all-in price where required, offer expiry, return/warranty summaries, claims, and pricing explanations must use 81G evidence and audit references.
+
+E-Commerce must respect 81H service capability and delivery promise truth before offering premium service, packaging, installation, customization, or service upgrades; must respect 81I service availability, delivery-zone, territory, official-region, local fee, currency, and reverse-logistics signals; and must request 81J presentation readiness before displaying premium, luxury, B2B, launch-sensitive, official-channel, or claim-sensitive products.
+
+E-Commerce must not show unsupported claims, unfunded B2B benefits, or presentation-sensitive offers that 81J/81G/81E/Document 81 cannot prove, fund, or approve.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

@@ -2132,6 +2132,16 @@ That is 81A. Not “check competitor price.” More like “understand whether t
 
 ---
 
+## 57. 81F-81J Market Evidence Handoff
+
+81A market and competitor signals may feed 81F promotion test planning, including market response hypotheses, comparable promotion context, competitor offer timing, and expected lift risks.
+
+81A market price bands, competitor claims, comparable package differences, and market-confidence results must be explainable through 81G.
+
+81A local market signals must coordinate with 81I, and competitor package, service, delivery, trust, presentation, and claim differences must coordinate with 81H and 81J before they affect pricing comparison or customer-facing price claims.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

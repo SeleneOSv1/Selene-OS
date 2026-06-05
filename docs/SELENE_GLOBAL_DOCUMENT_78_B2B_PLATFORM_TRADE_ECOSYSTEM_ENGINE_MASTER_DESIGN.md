@@ -3651,6 +3651,18 @@ Document 78 must enforce brand approval or referral-only outcomes before listing
 
 ---
 
+## 68. 81F-81J B2B Qualification Handoff
+
+B2B customer benefit and promotion experiments must coordinate with 81F and 81E before publication, scaling, payout, reversal, or repeat use.
+
+B2B provider, channel, pricing, brand, approval, service, territory, presentation, and claim evidence must flow to 81G. Product adoption and display must require 81J B2B presentation readiness, official-channel display validity, claim proof, return/warranty clarity, and customer-facing price transparency.
+
+B2B channel qualification must include 81H service capability, capacity, training, certification, insurance/liability, and brand capability checks, and must coordinate territory, authorized-region, official distributor, cross-border, delivery, return, and geo-fencing rules with 81I.
+
+B2B must not allow direct listing if official-channel, territory, service capability, brand, presentation, certification, training-required, provider-direct, referral-only, or customer-benefit funding rules fail. If a referral-only, provider-direct, training-required, certification-required, or official-channel-only route applies, B2B must preserve that route for Order and E-Commerce.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

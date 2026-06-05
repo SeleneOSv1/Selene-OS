@@ -2001,6 +2001,16 @@ Dynamic B2B pricing cannot publish until 81E confirms pricing-stack viability or
 
 ---
 
+## 49. 81F-81J Dynamic Pricing Handoff
+
+81B should use 81F promotion results before scaling, repeating, ending, or modifying dynamic promotions, and every dynamic pricing change must be explainable, fair, versioned, and auditable through 81G.
+
+81B capacity, event, service, operational, location, geography, and reverse-logistics triggers must coordinate with 81H and 81I before publication. Dynamic launch, event, promotion, channel, or customer-facing display changes must check 81J presentation readiness where display, claim, perceived value, or product-page framing changes.
+
+Rollback, emergency stop, failed experiment, or dynamic price incident events must create 81G rollback and incident audit evidence.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

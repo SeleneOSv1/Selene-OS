@@ -663,3 +663,11 @@ Everything is audited.
 This addendum must hand 81E the B2B-readiness facts needed for pricing viability: Original Provider of Record, provider net price, provider B2B opt-in, commission offer, delivery model, delivery cost inclusion, return courier/reverse logistics policy, warranty/guarantee obligations, reserve classification, international duty/tax exposure, brand approval/direct/referral/blocked route, customer benefit eligibility, recurring/service/high-value/regulated/professional flags, and contribution type.
 
 No product or service may move from Product/E-Commerce readiness into B2B publication unless 81E can calculate or route the pricing stack.
+
+---
+
+## 22. 81F-81J Product-to-B2B Readiness Handoff
+
+Product-to-B2B readiness must include promotion eligibility metadata for 81F, pricing/source evidence for 81G, service capability and capacity requirements for 81H, delivery-zone/geography/territory eligibility for 81I, and B2B display, official-channel display, product media, claim evidence, AI media truthfulness, accessibility, localization, return/warranty display, and service-promise display readiness for 81J.
+
+Product owns B2B-ready product/service truth and metadata. 81J validates presentation/perceived value, 81H validates service capability, 81I validates geography and territory signals, 81G proves the decision, and Document 81 Core approves the final price or offer.

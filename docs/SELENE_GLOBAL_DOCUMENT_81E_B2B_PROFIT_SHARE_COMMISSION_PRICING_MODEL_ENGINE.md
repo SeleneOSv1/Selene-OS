@@ -2311,3 +2311,15 @@ That is 81E. The engine that stops B2B from becoming “profit-share for everyon
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.
 
 Natural-language interpretation may assist drafting, explanation, and context repair, but deterministic Selene engines retain execution authority, evidence verification, permission checks, protected-action gating, and audit responsibility.
+
+---
+
+## 55. 81F-81J B2B Pricing Pack Handoff
+
+81E B2B customer benefit tests and promotion experiments must use 81F before scaling, repeating, or publishing benefit logic as proven.
+
+81E B2B waterfalls, provider net, Channel Store commission, Selene fee, reserves, return courier, clawbacks, settlement holds, customer benefit pools, and bottom-line contribution must be audited and explainable through 81G.
+
+81E provider/channel service capability must coordinate with 81H; delivery, return, territory, authorized region, international, duty, and cross-border cost must coordinate with 81I; and B2B customer-facing display, benefit display, official-channel display, claim proof, and presentation readiness must coordinate with 81J.
+
+81E customer benefit pools must not be displayed by 81J or E-Commerce unless funded, approved, and auditable.

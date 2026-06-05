@@ -2098,6 +2098,18 @@ Order Management must not confirm a B2B line where 81E viability is failed, pend
 
 ---
 
+## 49. 81F-81J Order-Line Pricing Pack Handoff
+
+Order Management must preserve promotion/test variant context from 81F, including eligibility, exposure, objective, variant, attribution window, offer-stacking, expiry, refund/reversal, liability, and learning context.
+
+Order Management must preserve pricing audit, explanation, approval, version, claim, evidence, rollback, and dispute references from 81G.
+
+Order lines must preserve service/package/capability context from 81H, delivery-zone, territory, recipient, reverse-logistics, duty/local-fee, and geography pricing context from 81I, and presentation, variant, configurable-product, official-channel, claim, accessibility, localization, return/warranty, and service-promise display context from 81J.
+
+Order must not confirm service, delivery, B2B, official-channel, or presentation-sensitive promises if 81H, 81I, 81D, 81E, or 81J indicates unavailable, blocked, low-confidence, referral-only, approval-required, or not presentation-ready.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

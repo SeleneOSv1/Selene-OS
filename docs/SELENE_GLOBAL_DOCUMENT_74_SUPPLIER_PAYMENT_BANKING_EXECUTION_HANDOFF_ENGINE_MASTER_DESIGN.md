@@ -2052,3 +2052,11 @@ That is Global Document 74 — Supplier Payment + Banking Execution Handoff Engi
 Supplier Payment must respect 81E settlement holds, reserves, refund exposure, reversal exposure, clawback rules, customer benefit funding, provider payout amount, Channel Store commission obligation, Selene B2B fee allocation, and return courier/reverse logistics allocation before submitting or releasing supplier/provider payments.
 
 Provider payout and Channel Store commission obligations must remain separate, auditable settlement concepts. Supplier Payment may execute only after AP readiness, bank safety, cashflow, authority, and 81E/Document 78 hold-release rules are satisfied.
+
+---
+
+## 44. 81F-81G Pricing Evidence + Settlement Handoff
+
+Supplier Payment must respect 81G audit, approval, version, dispute, and evidence references for pricing-related payouts, reversals, provider settlements, Channel Store commissions, customer benefit funding, cashback/credit liabilities, and promotion-related settlement changes.
+
+B2B settlement holds, promotion reversals, provider payouts, customer benefit funding, and commission clawbacks must not release without required 81E and 81G evidence, AP readiness, authority, bank safety, and cashflow clearance.

@@ -327,18 +327,18 @@ This document is pending Grand Architecture Reconciliation before implementation
 
 ## Pricing Pack Sub-Documents - Parent Document 81 Exists / Partial Pack
 
-These files are tracked as Pricing Pack sub-documents under Global Document 81. They do not create global document numbers and do not advance the highest global master document number. The Pricing Pack remains partial until JD provides and approves the remaining sub-documents.
+These files are tracked as Pricing Pack sub-documents under Global Document 81. They do not create global document numbers and do not advance the highest global master document number. The Pricing Pack remains partial until JD provides and approves the missing 81D sub-document.
 
 - [81A — Market Pricing Intelligence + Competitive Research Engine](SELENE_GLOBAL_DOCUMENT_81A_MARKET_PRICING_INTELLIGENCE_COMPETITIVE_RESEARCH_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 - [81B — Dynamic Pricing Optimization Engine](SELENE_GLOBAL_DOCUMENT_81B_DYNAMIC_PRICING_OPTIMIZATION_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 - [81C — Customer Value Segmentation + Price Sensitivity Engine](SELENE_GLOBAL_DOCUMENT_81C_CUSTOMER_VALUE_SEGMENTATION_PRICE_SENSITIVITY_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 - 81D — Brand Positioning + Premium / Luxury Pricing Guardrail Engine — pending; no canonical file created yet.
 - [81E — B2B Profit Share + Commission Pricing Model Engine](SELENE_GLOBAL_DOCUMENT_81E_B2B_PROFIT_SHARE_COMMISSION_PRICING_MODEL_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
-- 81F — Promotion Experimentation + A/B Pricing Governance Engine — pending; no canonical file created yet.
-- 81G — Pricing Pack Integration, Explainability, Fairness + Audit Engine — pending; no canonical file created yet.
-- 81H — Company Capability, Service-Level, Packaging + Cost-to-Serve Pricing Engine — pending; no canonical file created yet.
-- 81I — Geography, Delivery Zone, Local Market + Cost-to-Serve Pricing Engine — pending; no canonical file created yet.
-- 81J — Product Presentation, Merchandising, Perceived Value + Offer Packaging Engine — pending; no canonical file created yet.
+- [81F — Promotion Experimentation + A/B Pricing Governance Engine](SELENE_GLOBAL_DOCUMENT_81F_PROMOTION_EXPERIMENTATION_AB_PRICING_GOVERNANCE_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
+- [81G — Pricing Pack Integration, Explainability, Fairness + Audit Engine](SELENE_GLOBAL_DOCUMENT_81G_PRICING_PACK_INTEGRATION_EXPLAINABILITY_FAIRNESS_AUDIT_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
+- [81H — Company Capability, Service-Level, Packaging + Cost-to-Serve Pricing Engine](SELENE_GLOBAL_DOCUMENT_81H_COMPANY_CAPABILITY_SERVICE_LEVEL_PACKAGING_COST_TO_SERVE_PRICING_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
+- [81I — Geography, Delivery Zone, Local Market + Cost-to-Serve Pricing Engine](SELENE_GLOBAL_DOCUMENT_81I_GEOGRAPHY_DELIVERY_ZONE_LOCAL_MARKET_COST_TO_SERVE_PRICING_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
+- [81J — Product Presentation, Merchandising, Perceived Value + Offer Packaging Engine](SELENE_GLOBAL_DOCUMENT_81J_PRODUCT_PRESENTATION_MERCHANDISING_PERCEIVED_VALUE_OFFER_PACKAGING_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 
 Pending Commerce documents:
 

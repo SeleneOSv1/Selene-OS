@@ -1996,3 +1996,13 @@ That is Global Document 64 — Product Intelligence Engine. Not a product form. 
 Product Intelligence must prepare the product-side metadata required by 81E before a product or service can be priced for B2B distribution: provider net, B2B opt-in pricing mode, suggested commission offer, retail price mode, delivery included/separate flag, return courier policy, reserve requirement, brand approval/direct/referral/blocked route, customer benefit eligibility, recurring/service/high-value/regulated flags, professional compliance requirements, and bottom-line contribution classification.
 
 Product may prepare B2B pricing inputs, but 81E validates the economic stack and Document 81 remains final pricing governance.
+
+---
+
+## 46. 81F-81J Product Pricing Pack Metadata Handoff
+
+Product Intelligence must prepare product-side metadata and evidence links for 81F promotion eligibility, promotion exclusions, offer-stacking limits, launch/clearance status, customer-facing claim readiness, and variant eligibility.
+
+Product must provide source evidence links for 81G, service capability requirements for 81H, delivery-zone, geography, territory, official-channel, return/warranty, and local-availability eligibility for 81I, and presentation/media/content/variant/configurable-product readiness for 81J.
+
+Product owns product and service truth. 81J owns presentation/perceived-value readiness; 81H owns capability/cost-to-serve; 81I owns geography/location signals; 81G owns audit/explainability proof; Document 81 Core owns final price and offer approval.
