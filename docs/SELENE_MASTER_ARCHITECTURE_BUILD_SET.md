@@ -86,6 +86,7 @@ These documents are one architecture set. They must be read together. None overr
 78. [Selene B2B Platform + Trade Ecosystem Engine](SELENE_GLOBAL_DOCUMENT_78_B2B_PLATFORM_TRADE_ECOSYSTEM_ENGINE_MASTER_DESIGN.md)
 79. [Selene POS + Commerce Execution Engine](SELENE_GLOBAL_DOCUMENT_79_POS_COMMERCE_EXECUTION_ENGINE_MASTER_DESIGN.md)
 80. [Selene Order Management + Order Orchestration Engine](SELENE_GLOBAL_DOCUMENT_80_ORDER_MANAGEMENT_ORDER_ORCHESTRATION_ENGINE_MASTER_DESIGN.md)
+81. [Selene Core Pricing, Margin, Discount + Offer Governance Engine](SELENE_GLOBAL_DOCUMENT_81_CORE_PRICING_MARGIN_DISCOUNT_OFFER_GOVERNANCE_ENGINE_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -322,14 +323,28 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene B2B Platform + Trade Ecosystem Engine = future master design for B2B offer qualification, trade marketplace distribution, provider/company/customer roles, profit share, commission, settlement boundaries, deposits/reserves, B2B evidence, and protected action boundaries.
 - Selene POS + Commerce Execution Engine = future master design for physical commerce execution, customer-carried POS, scan-as-you-shop, private bill, store checkout, restaurant split bill, barcode/QR/RFID/NFC/scale interfaces, tender optimization, returns intake, B2B-aware sales, and audit handoffs.
 - Selene Order Management + Order Orchestration Engine = future master design for customer order groups, seller orders, order lines, source resolution, reservation, substitution, payment requirement, delivery promise, cancellation, change, return, warranty, service milestones, exception recovery, and order truth.
+- Selene Core Pricing, Margin, Discount + Offer Governance Engine = future master design for final pricing decisions, margin guardrails, discount governance, offer selection, account price locks, contract pricing, clearance, true cost-to-serve, capital/carrying/finance costs, dynamic pricing handoff, B2B pricing handoff, brand guardrail handoff, customer value handoff, market pricing handoff, simulation, rollback, explanations, fairness, and pricing audit.
 
-## Pending Pricing Pack Sub-Documents - Parent Document 81 Pending
+## Pricing Pack Sub-Documents - Parent Document 81 Exists / Partial Pack
 
-These files are tracked in the master architecture system for future attachment under Global Document 81. They do not create global document numbers, do not advance the highest global master document number, and are not a substitute for the missing Global Document 81 core pricing governance document.
+These files are tracked as Pricing Pack sub-documents under Global Document 81. They do not create global document numbers and do not advance the highest global master document number. The Pricing Pack remains partial until JD provides and approves the remaining sub-documents.
 
-- [81A — Market Pricing Intelligence + Competitive Research Engine](SELENE_GLOBAL_DOCUMENT_81A_MARKET_PRICING_INTELLIGENCE_COMPETITIVE_RESEARCH_ENGINE.md) — Pending pricing-pack sub-document; parent Global Document 81 not yet provided.
-- [81B — Dynamic Pricing Optimization Engine](SELENE_GLOBAL_DOCUMENT_81B_DYNAMIC_PRICING_OPTIMIZATION_ENGINE.md) — Pending pricing-pack sub-document; parent Global Document 81 not yet provided.
-- [81C — Customer Value Segmentation + Price Sensitivity Engine](SELENE_GLOBAL_DOCUMENT_81C_CUSTOMER_VALUE_SEGMENTATION_PRICE_SENSITIVITY_ENGINE.md) — Pending pricing-pack sub-document; parent Global Document 81 not yet provided.
+- [81A — Market Pricing Intelligence + Competitive Research Engine](SELENE_GLOBAL_DOCUMENT_81A_MARKET_PRICING_INTELLIGENCE_COMPETITIVE_RESEARCH_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
+- [81B — Dynamic Pricing Optimization Engine](SELENE_GLOBAL_DOCUMENT_81B_DYNAMIC_PRICING_OPTIMIZATION_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
+- [81C — Customer Value Segmentation + Price Sensitivity Engine](SELENE_GLOBAL_DOCUMENT_81C_CUSTOMER_VALUE_SEGMENTATION_PRICE_SENSITIVITY_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
+- 81D — Brand Positioning + Premium / Luxury Pricing Guardrail Engine — pending; no canonical file created yet.
+- 81E — B2B Profit Share + Commission Pricing Model Engine — pending; no canonical file created yet.
+- 81F — Promotion Experimentation + A/B Pricing Governance Engine — pending; no canonical file created yet.
+- 81G — Pricing Pack Integration, Explainability, Fairness + Audit Engine — pending; no canonical file created yet.
+- 81H — Company Capability, Service-Level, Packaging + Cost-to-Serve Pricing Engine — pending; no canonical file created yet.
+- 81I — Geography, Delivery Zone, Local Market + Cost-to-Serve Pricing Engine — pending; no canonical file created yet.
+- 81J — Product Presentation, Merchandising, Perceived Value + Offer Packaging Engine — pending; no canonical file created yet.
+
+Pending Commerce documents:
+
+- 82 — Dispatch, Packing, Courier Booking + Delivery Network Handoff Engine — pending; no canonical file created yet.
+- 83 — Returns, Refunds + Reverse Logistics Engine — pending; no canonical file created yet.
+- 84 — Commerce Integration Overview — pending; no canonical file created yet.
 
 ## Legacy / Review Candidates — Non-Canonical
 
