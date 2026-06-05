@@ -82,6 +82,10 @@ These documents are one architecture set. They must be read together. None overr
 74. [Selene Supplier Payment + Banking Execution Handoff Engine](SELENE_GLOBAL_DOCUMENT_74_SUPPLIER_PAYMENT_BANKING_EXECUTION_HANDOFF_ENGINE_MASTER_DESIGN.md)
 75. [Selene Supplier Statement Reconciliation + Creditor Reporting Engine](SELENE_GLOBAL_DOCUMENT_75_SUPPLIER_STATEMENT_RECONCILIATION_CREDITOR_REPORTING_ENGINE_MASTER_DESIGN.md)
 76. [Supplier / Procurement / Receiving / AP Mini-Batch Overview](SELENE_GLOBAL_DOCUMENT_76_SUPPLIER_PROCUREMENT_RECEIVING_AP_MINI_BATCH_OVERVIEW.md)
+77. [Selene E-Commerce Engine](SELENE_GLOBAL_DOCUMENT_77_ECOMMERCE_PERSONAL_COMMERCE_COMPANY_STORE_ENGINE_MASTER_DESIGN.md)
+78. [Selene B2B Platform + Trade Ecosystem Engine](SELENE_GLOBAL_DOCUMENT_78_B2B_PLATFORM_TRADE_ECOSYSTEM_ENGINE_MASTER_DESIGN.md)
+79. [Selene POS + Commerce Execution Engine](SELENE_GLOBAL_DOCUMENT_79_POS_COMMERCE_EXECUTION_ENGINE_MASTER_DESIGN.md)
+80. [Selene Order Management + Order Orchestration Engine](SELENE_GLOBAL_DOCUMENT_80_ORDER_MANAGEMENT_ORDER_ORCHESTRATION_ENGINE_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -314,6 +318,18 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Supplier Payment + Banking Execution Handoff Engine = future master design for supplier payment queues, payment scheduling, bank safety, cashflow timing, rail/provider selection, batching, remittance, settlement tracking, and payment proof handoff.
 - Selene Supplier Statement Reconciliation + Creditor Reporting Engine = future master design for supplier statement claims, creditor balance matching, missing credits/payments, aged creditors, AP close support, supplier balance confirmation, and reconciliation reporting.
 - Supplier / Procurement / Receiving / AP Mini-Batch Overview = batch control document for Global Documents 68–76, following Product/Inventory Documents 64–67 and preserving Finance / Accounting mappings and PH1.X legacy/review status while preparing supplier-side repo-truth activation.
+- Selene E-Commerce Engine = future master design for customer-facing personal and company-store commerce, shopping intent, cart, checkout readiness, product/personalization handoffs, payment/fulfillment handoffs, return/warranty visibility, and protected action boundaries.
+- Selene B2B Platform + Trade Ecosystem Engine = future master design for B2B offer qualification, trade marketplace distribution, provider/company/customer roles, profit share, commission, settlement boundaries, deposits/reserves, B2B evidence, and protected action boundaries.
+- Selene POS + Commerce Execution Engine = future master design for physical commerce execution, customer-carried POS, scan-as-you-shop, private bill, store checkout, restaurant split bill, barcode/QR/RFID/NFC/scale interfaces, tender optimization, returns intake, B2B-aware sales, and audit handoffs.
+- Selene Order Management + Order Orchestration Engine = future master design for customer order groups, seller orders, order lines, source resolution, reservation, substitution, payment requirement, delivery promise, cancellation, change, return, warranty, service milestones, exception recovery, and order truth.
+
+## Pending Pricing Pack Sub-Documents - Parent Document 81 Pending
+
+These files are tracked in the master architecture system for future attachment under Global Document 81. They do not create global document numbers, do not advance the highest global master document number, and are not a substitute for the missing Global Document 81 core pricing governance document.
+
+- [81A — Market Pricing Intelligence + Competitive Research Engine](SELENE_GLOBAL_DOCUMENT_81A_MARKET_PRICING_INTELLIGENCE_COMPETITIVE_RESEARCH_ENGINE.md) — Pending pricing-pack sub-document; parent Global Document 81 not yet provided.
+- [81B — Dynamic Pricing Optimization Engine](SELENE_GLOBAL_DOCUMENT_81B_DYNAMIC_PRICING_OPTIMIZATION_ENGINE.md) — Pending pricing-pack sub-document; parent Global Document 81 not yet provided.
+- [81C — Customer Value Segmentation + Price Sensitivity Engine](SELENE_GLOBAL_DOCUMENT_81C_CUSTOMER_VALUE_SEGMENTATION_PRICE_SENSITIVITY_ENGINE.md) — Pending pricing-pack sub-document; parent Global Document 81 not yet provided.
 
 ## Legacy / Review Candidates — Non-Canonical
 
