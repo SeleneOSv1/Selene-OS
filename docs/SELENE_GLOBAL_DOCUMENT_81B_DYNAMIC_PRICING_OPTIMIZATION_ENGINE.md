@@ -2011,6 +2011,16 @@ Rollback, emergency stop, failed experiment, or dynamic price incident events mu
 
 ---
 
+## 50. Commerce Stack 82-84 Dynamic Cost + Reversal Handoff
+
+81B dynamic pricing must use actual dispatch costs, courier/SLA performance, delivery-zone variance, and capability/geography learning from Document 82 where relevant.
+
+81B must use return rates, refund reasons, exchange/replacement cost, return courier cost, abuse signals, and warranty/reverse-logistics patterns from Document 83. Event, holiday, weather, location, and service-capacity triggers must coordinate with 81I and Document 82, and dynamic offers affected by returns/refunds must coordinate with Document 83 and 81F.
+
+Dynamic rollbacks, emergency stops, failed promotions, delivery-cost incidents, and return-rate shocks must create 81G audit evidence.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

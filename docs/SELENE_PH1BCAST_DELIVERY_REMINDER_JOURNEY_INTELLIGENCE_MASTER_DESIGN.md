@@ -729,3 +729,9 @@ This reconciliation must preserve current repo-truth ownership and must not crea
 ## 23. Final Architecture Sentence
 
 PH1.BCAST, PH1.DELIVERY, and PH1.REM provide Selene's outbound communication mechanics; Broadcast Journey Intelligence turns messy human communication requests into confirmed, permissioned, simulation-backed, PH1.WRITE-approved, provider-governed delivery journeys with status, troubleshooting, reminders, and audit.
+
+## 24. Commerce Stack 77-84 Communication Handoff
+
+Broadcast/Delivery must handle customer, recipient, courier, local agent, seller, supplier, provider, brand approver, inspector, compliance/legal reviewer, and internal staff communications created by Documents 77-84.
+
+Commerce communications must include owner, recipient, delivery method, confirmation requirement, evidence, retry/reminder path, escalation path, closure status, and audit. Broadcast/Delivery transports messages; it does not own commerce truth.

@@ -476,3 +476,7 @@ approval token invalid if scope no longer matches original request.
 ## 16. Final Architecture Sentence
 
 "Selene Master Access does not treat every authority failure as a blunt refusal: where company policy allows, Access/Governance quietly creates a governed supervisor/approver escalation, PH1.BCAST/DELIVERY delivers the request, PH1.WRITE controls the wording, the approver may grant one-time, temporary, or permanent-scoped authority, and the original action may resume only when the approved authority token, simulation, confirmation, and audit gates all pass."
+
+## Commerce Stack 77-84 Authority Escalation Handoff
+
+Commerce authority failures for pricing override, POS override, brand approval, B2B approval, dispatch hold release, address change after dispatch, high-value dispatch release, refund approval, outside-policy exception, seller/supplier enforcement, customer enforcement, provider payout release, or provider payout reversal must create scoped approval requests with owner, recipient, deadline, delivery method, confirmation, evidence, reminder, escalation, closure, and audit.

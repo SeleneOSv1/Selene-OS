@@ -2483,6 +2483,14 @@ g problem. Because they are not. Geography, annoyingly, matters.
 
 ---
 
+## 74. Commerce Stack 82-84 Geography Handoff
+
+81I delivery zone, geography cost, local courier availability, service area, territory, official-region/distributor rights, reverse logistics geography, customs/duties, weather/event risk, address confidence, access difficulty, and local fee signals must feed Document 82 and Document 83.
+
+81I must support return pickup, reverse logistics, return-to-sender, failed delivery, in-transit reroute, local agent delivery, cross-border return, and geography-linked cost signals for Document 83 and 81E.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

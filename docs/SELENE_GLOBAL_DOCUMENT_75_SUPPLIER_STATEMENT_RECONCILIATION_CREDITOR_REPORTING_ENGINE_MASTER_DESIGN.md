@@ -1840,3 +1840,11 @@ Statements that ignore B2B holds, reversals, credit notes, clawbacks, or return 
 Supplier Statement Reconciliation must reconcile pricing, promotion, and B2B-related credits, reversals, clawbacks, benefit liabilities, return courier allocations, settlement holds, refund adjustments, provider payout disputes, Channel Store commission disputes, and unresolved promotion/customer-benefit obligations.
 
 Statement reconciliation must use 81G audit/evidence references where pricing, promotion, B2B benefit, or presentation/claim disputes affect supplier or provider balances.
+
+---
+
+## 46. Commerce Stack 83 Statement Reconciliation Handoff
+
+Supplier Statement Reconciliation must include B2B clawbacks, customer benefit reversals, credit notes, return courier allocations, disputed balances, provider payout holds, reserve releases, warranty/provider failure effects, refund adjustments, return/refund disputes, and settlement holds created by Document 83.
+
+Supplier/provider statement claims that conflict with Document 83, 81E, AP, payment, or 81G evidence must remain disputed until reconciled.

@@ -2235,6 +2235,14 @@ That is 81H: the engine that stops companies from charging premium prices for im
 
 ---
 
+## 60. Commerce Stack 82-84 Capability Handoff
+
+81H service capability, packaging capability, delivery promise truth, staff skill, SLA, third-party capability, local agent capability, installation/setup capability, capacity, and service recovery capability must feed Document 82 dispatch and Document 84 commerce integration.
+
+81H service failure cost, dispatch capability learning, courier/local-agent performance, failed delivery reasons, return causes, service recovery results, and capability gaps must receive signals from Document 82 and Document 83.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

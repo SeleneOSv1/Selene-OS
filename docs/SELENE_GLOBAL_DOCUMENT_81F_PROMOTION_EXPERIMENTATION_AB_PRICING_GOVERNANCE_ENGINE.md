@@ -1841,6 +1841,14 @@ That is 81F: the engine that stops businesses from throwing discounts into the m
 
 ---
 
+## 55. Commerce Stack 82-84 Promotion Reversal Handoff
+
+Promotions must account for refund rates, return reasons, exchange/replacement patterns, benefit reversals, post-promotion return abuse, delayed return effects, and customer/seller enforcement signals from Document 83.
+
+Promotion liability, cashback, future credit, customer benefit reversal, refund reversal, offer-stack reversal, and B2B promotion clawback logic must link to Document 83 and 81G before promotion results are classified as successful.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

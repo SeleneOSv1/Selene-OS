@@ -3129,6 +3129,14 @@ That is 81J: the engine that stops Selene from trying to sell premium goods with
 
 ---
 
+## 91. Commerce Stack 82-84 Terms + Presentation Evidence Handoff
+
+81J must ensure customer-facing product terms, return/refund/warranty clarity, delivery promise display, service promise display, official-channel badges, claims, accessibility/localization, price transparency, presentation evidence, and terms display requirements are captured and auditable before purchase.
+
+Presentation-caused return signals from Document 83, including size/fit confusion, misleading media, unclear terms, unsupported claims, poor comparison framing, weak service promise display, and return/warranty misunderstanding, must feed back into Product, E-Commerce, Pricing, and 81J presentation readiness.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

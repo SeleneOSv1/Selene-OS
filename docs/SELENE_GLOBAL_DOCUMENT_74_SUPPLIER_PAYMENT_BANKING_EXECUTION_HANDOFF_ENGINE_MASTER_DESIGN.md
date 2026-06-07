@@ -2060,3 +2060,11 @@ Provider payout and Channel Store commission obligations must remain separate, a
 Supplier Payment must respect 81G audit, approval, version, dispute, and evidence references for pricing-related payouts, reversals, provider settlements, Channel Store commissions, customer benefit funding, cashback/credit liabilities, and promotion-related settlement changes.
 
 B2B settlement holds, promotion reversals, provider payouts, customer benefit funding, and commission clawbacks must not release without required 81E and 81G evidence, AP readiness, authority, bank safety, and cashflow clearance.
+
+---
+
+## 45. Commerce Stack 83 Settlement Hold + Reversal Handoff
+
+Supplier Payment must not release provider payout, Channel Store commission, supplier payment, customer benefit funding, reserve release, or settlement hold where Document 83, 81E, 81G, AP, or authority state indicates refund, return, warranty, dispute, credit note, clawback, abuse, or provider responsibility is unresolved.
+
+Payment release, reversal, recall, or provider payout adjustment must preserve the Document 83 dispute/return evidence and the 81G audit reference.

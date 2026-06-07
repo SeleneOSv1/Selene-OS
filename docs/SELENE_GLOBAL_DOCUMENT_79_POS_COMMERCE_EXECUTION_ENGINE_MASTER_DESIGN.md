@@ -2079,6 +2079,16 @@ POS must not apply presentation-sensitive, brand-sensitive, B2B-sensitive, or pr
 
 ---
 
+## 41. Commerce Stack 82-84 POS Terms, Dispatch + Returns Handoff
+
+POS must display or make available product/service after-sale terms before checkout where applicable, and must preserve the terms version and evidence for Order and Document 83.
+
+POS returns, refunds, exchanges, replacements, repairs, warranty claims, and after-sale disputes must flow to Document 83. POS pickup, store handover, local delivery, and dispatch work must flow to Document 82 through Order where order-line tracking is required.
+
+POS must not override pricing, brand, B2B, terms, refund, or dispatch rules without Access/Authority approval and Human / External Action Orchestration. POS promotions must be validated by 81F; POS B2B item benefits/refunds must respect 81E and Document 83; POS audit and explanation must use 81G.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

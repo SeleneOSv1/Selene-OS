@@ -2142,6 +2142,14 @@ That is 81A. Not “check competitor price.” More like “understand whether t
 
 ---
 
+## 58. Commerce Stack 82-84 Market Promise Handoff
+
+81A market comparisons must not ignore delivery, return, warranty, service, dispatch, reverse logistics, all-in price, and after-sale promise differences. Competitor return, warranty, delivery, and customer promise differences may feed 81J presentation clarity and Document 83 terms/return comparison logic.
+
+Local market delivery expectations, service expectations, courier availability, venue/captive-location patterns, and geography-linked service promises must coordinate with 81I and Document 82 before they influence market positioning or customer-facing claims.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

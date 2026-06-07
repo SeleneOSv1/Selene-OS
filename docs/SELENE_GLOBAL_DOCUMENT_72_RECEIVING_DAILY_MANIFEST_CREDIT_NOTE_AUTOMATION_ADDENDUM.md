@@ -1245,3 +1245,11 @@ It does not close until the problem is fixed or properly escalated.
 ```
 
 That is Selene receiving. Not warehouse hope. Not Dave’s memory. Not supplier vibes. Actual control.
+
+---
+
+## 29. Commerce Stack 82 Daily Manifest + Location Readiness Handoff
+
+The daily receiving manifest must surface stock-location readiness, dock/shelf/freezer/secure-cage readiness, receiver assignment, exception closure, and location-proof gaps that could block Document 82 dispatch.
+
+Receiving/warehouse location corrections, missing stock-location investigations, cold-chain location failures, and secure/high-value location issues must become owned tasks with deadline, recipient, evidence, reminder, escalation, closure, and audit.

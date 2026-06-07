@@ -2270,6 +2270,16 @@ Document 81 must request 81J before premium, luxury, B2B, launch, product-page, 
 
 ---
 
+## 52. Commerce Stack 82-84 Cost, Reversal + Audit Handoff
+
+Pricing must receive dispatch actual cost, courier variance, SLA performance, service capability, geography, delivery-zone, packaging, local delivery, high-value proof, and dispatch learning signals from Document 82.
+
+Pricing must receive return, refund, cancellation, exchange, replacement, repair, warranty, reversal, abuse, inspection, restocking, return courier, settlement hold, and reason signals from Document 83. 81E must support commission, customer benefit, provider payout, reserve, return courier, reverse logistics, and orphan warranty/provider failure effects from Document 83.
+
+81F must support promotion refund/reversal, pull-forward, return-rate, and post-promotion return learning from Document 83. 81G must audit pricing, terms, dispatch, return, refund, provider responsibility, settlement, reversal, dispute, and enforcement evidence across Documents 77-84. Pricing must not show delivery, return, benefit, offer, or claim language that the commerce stack cannot support.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

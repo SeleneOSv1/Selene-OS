@@ -2023,6 +2023,14 @@ That is 81C: customer value intelligence without becoming a creepy little wallet
 
 ---
 
+## 51. Commerce Stack 82-84 Customer Preference Boundary
+
+81C customer value signals may influence delivery preference, return preference, warranty preference, service promise, packaging/gift preference, offer display, and customer-facing presentation.
+
+Customer preference must not override product terms, terms shown before purchase, compliance/legal handoff, B2B provider responsibility, dispatch safety, brand/official-channel restrictions, return fraud controls, refund authority, or Document 83 eligibility decisions.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

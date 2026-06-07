@@ -1892,6 +1892,14 @@ That is 81G: the pricing pack’s receipt, witness, referee, librarian, and anno
 
 ---
 
+## 54. Commerce Stack 77-83 Audit + Replay Handoff
+
+81G must audit the terms shown before purchase, pricing decision, order creation, B2B provider responsibility, dispatch proof, delivery proof, return request, inspection result, refund decision, commission/customer benefit reversal, provider payout hold, dispute fact pack, enforcement signal, and customer-safe explanation across Documents 77-83.
+
+81G must support decision replay across Documents 77-83, enforce data walls and privacy boundaries, and produce customer-safe, business-safe, provider-safe, and audit-safe explanations without exposing protected internal economics.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

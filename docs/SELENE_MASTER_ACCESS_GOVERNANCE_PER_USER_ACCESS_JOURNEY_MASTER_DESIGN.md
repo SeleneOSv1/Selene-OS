@@ -1663,3 +1663,9 @@ Grand Architecture Reconciliation must preserve the current repo-truth split: PH
 ## Final Architecture Sentence Update
 
 Master Access templates define the company's role, permission, field, spend, approval, and scope rules; Per-User Access compiles those rules into an individual user's live access instance; template changes require explicit propagation choices; overrides may be one-shot, temporary, permanent, revoked, or suspended; employment lifecycle events retire or reactivate company access while preserving personal Selene access where allowed; Position defines the job, Onboarding prepares the person, Access gives the keys, Finance/Budget owns money truth, and every access change may be understood through Selene's probabilistic intelligence but must be applied only through deterministic Access/Governance validation, simulation, confirmation, and audit.
+
+## Commerce Stack 77-84 Authority Handoff
+
+Access/Governance must provide authority checks for commerce pricing override, POS override, brand approval, B2B approval, dispatch hold release, address change after dispatch, high-value dispatch release, refund approval, outside-policy exception, seller/supplier enforcement, customer enforcement, provider payout release, and provider payout reversal.
+
+GPT-5.5 may explain or draft the request, but deterministic Access/Governance owns permission truth, step-up requirements, approval route, token scope, expiry, and audit.

@@ -1827,3 +1827,11 @@ AP holds must recognize unresolved return courier allocation, provider fault, cr
 Promotion liabilities, future credits, loyalty credits, cashback, provider-funded benefits, B2B benefit reversals, and pricing/promotion refund reversals must be visible to AP and Accounting where supplier or provider obligations are impacted.
 
 AP must not treat pricing/promotion/B2B clawbacks, credits, disputed reversals, or benefit obligations from 81E, 81F, or 81G as clean payables without reconciliation evidence.
+
+---
+
+## 40. Commerce Stack 83 AP Credit Note + Provider Hold Handoff
+
+AP/Creditors must respect supplier/provider credit notes, return/refund adjustments, reserve usage, provider payout holds, return courier allocations, refund reversals, customer benefit reversals, settlement holds, and supplier/provider obligation changes created by Document 83.
+
+AP must not clear supplier/provider balances where Document 83, 81E, or 81G indicates unresolved dispute evidence, inspection outcome, credit-note requirement, clawback, settlement hold, or reversal.

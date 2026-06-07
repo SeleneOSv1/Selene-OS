@@ -544,3 +544,9 @@ Selene must not confuse the two.
 - no reminder timing owned by PH1.TASK,
 - no delivery owned by PH1.TASK,
 - no implementation from this document alone.
+
+## 16. Commerce Stack 77-84 Human Task Handoff
+
+Every human or external action in Documents 77-84 must become a task-backed workflow where required, including picker tasks, packer tasks, courier pickup confirmations, local agent delivery acceptance, seller/supplier exception approvals, brand approvals, provider warranty responses, customer evidence requests, inspection tasks, Selene Services dispute review, and compliance/legal review.
+
+Required task fields include owner, recipient, deadline, delivery method, confirmation, evidence, reminder, escalation, closure, and audit.

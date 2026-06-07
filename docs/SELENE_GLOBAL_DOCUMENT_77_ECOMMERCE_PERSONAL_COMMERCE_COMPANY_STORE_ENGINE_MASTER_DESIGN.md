@@ -3079,6 +3079,16 @@ E-Commerce must not show unsupported claims, unfunded B2B benefits, or presentat
 
 ---
 
+## 57. Commerce Stack 82-84 Terms, Dispatch + Returns Handoff
+
+E-Commerce must display or clearly make accessible product/service cancellation, return, refund, exchange, replacement, repair, warranty, return courier, and restocking terms before purchase where applicable. E-Commerce must preserve the exact terms version shown to the customer and pass it to Order and Document 83.
+
+E-Commerce must not show a product, price, offer, B2B benefit, delivery promise, brand/official badge, or return term unless validated by the correct owner: Product for product truth, Document 81 for price/offer, 81J for presentation readiness, 81I for delivery/geography availability, 81H for service capability, 81D when available for brand/official-channel rules, 81E for B2B customer benefits/pricing, Document 83/Product for terms, Document 80 for order creation, and Document 78 for B2B display/adoption.
+
+E-Commerce must route return, refund, warranty, exchange, replacement, repair, and cancellation requests to Document 83. E-Commerce must not create dispatch directly; dispatch must flow through Order and Document 82. Document 84 governs the relationship map across 77-83.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

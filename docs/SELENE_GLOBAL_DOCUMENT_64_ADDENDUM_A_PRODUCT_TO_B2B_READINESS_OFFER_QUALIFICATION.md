@@ -671,3 +671,11 @@ No product or service may move from Product/E-Commerce readiness into B2B public
 Product-to-B2B readiness must include promotion eligibility metadata for 81F, pricing/source evidence for 81G, service capability and capacity requirements for 81H, delivery-zone/geography/territory eligibility for 81I, and B2B display, official-channel display, product media, claim evidence, AI media truthfulness, accessibility, localization, return/warranty display, and service-promise display readiness for 81J.
 
 Product owns B2B-ready product/service truth and metadata. 81J validates presentation/perceived value, 81H validates service capability, 81I validates geography and territory signals, 81G proves the decision, and Document 81 Core approves the final price or offer.
+
+---
+
+## 23. Commerce Stack 82-84 Product-to-B2B Responsibility Handoff
+
+Product-to-B2B readiness must preserve Original Provider responsibility, official-channel/brand route, product terms version, return/warranty route, dispatch handling, packaging, cold-chain/high-value proof needs, return destination, and provider approval requirements for Document 80, Document 82, Document 83, and Document 84.
+
+B2B readiness must not allow a product/service into B2B where after-sale terms, provider responsibility, dispatch proof requirements, or return/warranty ownership are missing.

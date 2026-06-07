@@ -2323,3 +2323,13 @@ Natural-language interpretation may assist drafting, explanation, and context re
 81E provider/channel service capability must coordinate with 81H; delivery, return, territory, authorized region, international, duty, and cross-border cost must coordinate with 81I; and B2B customer-facing display, benefit display, official-channel display, claim proof, and presentation readiness must coordinate with 81J.
 
 81E customer benefit pools must not be displayed by 81J or E-Commerce unless funded, approved, and auditable.
+
+---
+
+## 56. Commerce Stack 82-84 B2B Dispatch + Return Reversal Handoff
+
+Return courier costs, commission clawbacks, customer benefit reversals, provider payout holds, reserve usage, orphan warranty, provider failure, refund reversal, and reverse-logistics economics must be triggered by Document 83 and audited through 81G.
+
+B2B dispatch and provider-direct dispatch proof must flow from Document 82 to support settlement release, provider payout readiness, commission release, customer benefit treatment, and dispute resolution.
+
+B2B customer benefits must not be shown by E-Commerce, POS, or 81J unless funded by 81E and reversible where Document 83 requires reversal.

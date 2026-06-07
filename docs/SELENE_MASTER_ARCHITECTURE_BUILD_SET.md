@@ -87,6 +87,9 @@ These documents are one architecture set. They must be read together. None overr
 79. [Selene POS + Commerce Execution Engine](SELENE_GLOBAL_DOCUMENT_79_POS_COMMERCE_EXECUTION_ENGINE_MASTER_DESIGN.md)
 80. [Selene Order Management + Order Orchestration Engine](SELENE_GLOBAL_DOCUMENT_80_ORDER_MANAGEMENT_ORDER_ORCHESTRATION_ENGINE_MASTER_DESIGN.md)
 81. [Selene Core Pricing, Margin, Discount + Offer Governance Engine](SELENE_GLOBAL_DOCUMENT_81_CORE_PRICING_MARGIN_DISCOUNT_OFFER_GOVERNANCE_ENGINE_MASTER_DESIGN.md)
+82. [Selene Dispatch, Packing, Courier Booking + Delivery Network Handoff Engine](SELENE_GLOBAL_DOCUMENT_82_DISPATCH_PACKING_COURIER_BOOKING_DELIVERY_NETWORK_HANDOFF_ENGINE_MASTER_DESIGN.md)
+83. [Selene Returns, Refunds + Reverse Logistics Engine](SELENE_GLOBAL_DOCUMENT_83_RETURNS_REFUNDS_REVERSE_LOGISTICS_ENGINE_MASTER_DESIGN.md)
+84. [Selene Commerce Integration Overview + Relationship Master Map](SELENE_GLOBAL_DOCUMENT_84_COMMERCE_INTEGRATION_OVERVIEW_RELATIONSHIP_MASTER_MAP.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -340,11 +343,9 @@ These files are tracked as Pricing Pack sub-documents under Global Document 81. 
 - [81I — Geography, Delivery Zone, Local Market + Cost-to-Serve Pricing Engine](SELENE_GLOBAL_DOCUMENT_81I_GEOGRAPHY_DELIVERY_ZONE_LOCAL_MARKET_COST_TO_SERVE_PRICING_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 - [81J — Product Presentation, Merchandising, Perceived Value + Offer Packaging Engine](SELENE_GLOBAL_DOCUMENT_81J_PRODUCT_PRESENTATION_MERCHANDISING_PERCEIVED_VALUE_OFFER_PACKAGING_ENGINE.md) — Existing pricing-pack sub-document under Global Document 81; not a global document number.
 
-Pending Commerce documents:
+## Commerce Stack 77-84 - Structurally Complete
 
-- 82 — Dispatch, Packing, Courier Booking + Delivery Network Handoff Engine — pending; no canonical file created yet.
-- 83 — Returns, Refunds + Reverse Logistics Engine — pending; no canonical file created yet.
-- 84 — Commerce Integration Overview — pending; no canonical file created yet.
+Documents 77-84 are registered as the current Selene Commerce Stack: E-Commerce, B2B Platform, POS, Order Management, Pricing, Dispatch, Returns, and Commerce Integration Overview. Document 84 explains relationships across 77-83 and does not replace the source documents.
 
 ## Legacy / Review Candidates — Non-Canonical
 

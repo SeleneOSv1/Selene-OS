@@ -1054,3 +1054,11 @@ AP only pays what matches PO + receiving + invoice.
 Document 72 chases the humans and suppliers until exceptions are fixed.
 Everything important is audited.
 ```
+
+---
+
+## 27. Commerce Stack 82 Warehouse Location Handoff
+
+Receiving must ensure accepted stock is placed into a known warehouse, store, branch, bin, shelf, pallet, cold-room, secure-cage, or other governed stock location before it can be made dispatch-ready.
+
+Inventory/Warehouse owns stock location truth. Document 82 consumes location truth for picking and dispatch. If location, batch, serial, expiry, cold-chain, or secure-storage proof is missing, dispatch must block and create a stock-location investigation task. Receiving and warehouse location changes must be auditable.

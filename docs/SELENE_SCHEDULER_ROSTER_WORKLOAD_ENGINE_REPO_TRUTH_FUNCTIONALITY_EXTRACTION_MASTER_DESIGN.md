@@ -1147,3 +1147,9 @@ Based on repo truth, future slices should be derived only after Grand Architectu
 ## 29. Final Extracted Architecture Sentence
 
 Selene Scheduler / Roster / Workload is the governed work-time and work-allocation truth boundary: it may own schedules, rosters, shifts, availability, leave, attendance, timesheets, contractor hours, and workload facts where repo truth supports it, while the current `PH1.SCHED` remains an operational WorkOrder retry/wait/fail scheduler, Position owns job requirements, Access owns permissions, Onboarding owns setup, REM owns reminder timing, Broadcast/Delivery owns notifications, Payroll/HR/Finance own pay and money truth, and PH1.D/PH1.N/PH1.WRITE may only assist with understanding and presentation.
+
+## 30. Commerce Stack 77-84 Roster + Capacity Handoff
+
+Scheduler/Roster/Workload must provide availability and workload signals for roster-aware picker assignment, packer assignment, inspection task assignment, local agent/internal delivery assignment, service-capability scheduling, and deadline-aware exception review where Documents 82 and 83 require a human owner.
+
+Commerce task scheduling must not mutate roster truth without scheduler authority, and unavailable/off-work users must not be assigned protected commerce tasks without policy and Access approval.

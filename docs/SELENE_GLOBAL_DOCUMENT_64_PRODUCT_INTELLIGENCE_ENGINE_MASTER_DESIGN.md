@@ -2006,3 +2006,11 @@ Product Intelligence must prepare product-side metadata and evidence links for 8
 Product must provide source evidence links for 81G, service capability requirements for 81H, delivery-zone, geography, territory, official-channel, return/warranty, and local-availability eligibility for 81I, and presentation/media/content/variant/configurable-product readiness for 81J.
 
 Product owns product and service truth. 81J owns presentation/perceived-value readiness; 81H owns capability/cost-to-serve; 81I owns geography/location signals; 81G owns audit/explainability proof; Document 81 Core owns final price and offer approval.
+
+---
+
+## 47. Commerce Stack 82-84 Product Terms + Dispatch Metadata Handoff
+
+Product Intelligence must own or reference product/service cancellation terms, return terms, refund terms, exchange terms, replacement terms, repair terms, warranty terms, opened-item rules, custom-made rules, perishable rules, hygiene rules, digital/service terms, return courier payer, restocking fee, inspection requirement, provider approval requirement, product terms versioning, terms display requirements, return destination rules, and warranty provider/manufacturer route.
+
+Product must also provide dispatch handling rules, packaging rules, contamination compatibility, serial/batch/expiry requirements, cold-chain requirements, high-value proof requirements, B2B provider responsibility, and official-channel/brand rules to Document 82, Document 83, E-Commerce, POS, Order, and Document 84.

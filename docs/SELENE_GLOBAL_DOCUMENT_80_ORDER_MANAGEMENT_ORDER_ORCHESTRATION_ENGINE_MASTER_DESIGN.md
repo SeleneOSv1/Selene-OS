@@ -2110,6 +2110,16 @@ Order must not confirm service, delivery, B2B, official-channel, or presentation
 
 ---
 
+## 50. Commerce Stack 82-84 Dispatch + Returns Context Handoff
+
+Order lines must preserve product/service ID, variant/configuration, pricing decision ID, product terms version shown at purchase, B2B Original Provider and Channel Store attribution, delivery promise, dispatch requirement, package/tracking/proof references from Document 82, and return/refund/warranty context for Document 83.
+
+Order Management creates dispatch requirements for Document 82 and receives dispatch, delivery, tracking, proof, exception, intercept, return-to-sender, and delivery-closure statuses from Document 82. Order receives cancellation, return, refund, exchange, replacement, repair, warranty, dispute, inspection, and closure statuses from Document 83.
+
+Order must support partial dispatch, split deliveries, multi-address delivery, line-level returns/refunds, and in-transit cancellation handoff to Document 82 and Document 83. Order must not confirm unsupported delivery promises or B2B/brand-restricted routes unless approved.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.

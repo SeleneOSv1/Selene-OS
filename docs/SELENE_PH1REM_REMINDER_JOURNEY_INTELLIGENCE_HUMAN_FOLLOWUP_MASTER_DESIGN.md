@@ -792,3 +792,9 @@ This document must later be reconciled into:
 ## 25. Final Architecture Sentence
 
 PH1.REM is Selene's reminder timing truth engine; Reminder Journey Intelligence lets Selene understand human reminder requests, clarify fuzzy time, separate one-shot reminders from follow-up journeys, support birthdays, anniversaries, holidays, appointments, onboarding, links, tasks, and reminders for other people, phrase reminders naturally through PH1.WRITE and GPT-5.5, and route delivery/status/troubleshooting through the correct owners without letting reminders mutate tasks, onboarding, access, schedules, rosters, contacts, holidays, or protected business state.
+
+## 26. Commerce Stack 77-84 Reminder + Escalation Handoff
+
+Reminder must schedule due, pre-due, retry, escalation, and no-response follow-ups for commerce tasks such as picker/packer deadlines, courier pickup confirmations, local agent delivery acceptance, seller/supplier exception approvals, brand approvals, provider warranty responses, customer evidence requests, inspection tasks, Selene Services dispute review, and compliance/legal review.
+
+Reminder owns timing and follow-up cadence only. Task, Access, Dispatch, Returns, B2B, Order, Broadcast/Delivery, and Audit retain their respective truth and execution boundaries.

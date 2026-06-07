@@ -3663,6 +3663,16 @@ B2B must not allow direct listing if official-channel, territory, service capabi
 
 ---
 
+## 69. Commerce Stack 82-84 B2B Responsibility Handoff
+
+B2B provider responsibility must remain traceable from display to order, dispatch, return, warranty, refund, settlement, dispute, and audit. Original Provider and Channel Store attribution must remain line-level context through Document 80, Document 82, Document 83, and Document 84.
+
+B2B must preserve brand approval request, direct-sale allowed, referral-only, provider-direct, training-required, certification-required, official-channel-only, restricted, and blocked outcomes. Customer fit does not override official brand authorization.
+
+B2B return, refund, warranty, exchange, replacement, repair, commission clawback, customer benefit reversal, provider payout hold, reserve, and dispute consequences must flow to Document 83 and 81E. B2B dispatch must flow through Document 82, including provider-direct dispatch proof used for settlement release and dispute resolution.
+
+---
+
 ## AGENTS.md Guardrail References
 
 This document explicitly references and remains governed by the Selene Conversation-to-Action Guardrail and the Selene Human / External Action Orchestration Law in AGENTS.md.
