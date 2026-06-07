@@ -1117,8 +1117,7 @@ Fail condition: payment approval, state mutation, or provider/tool execution wit
 
 ## 8. Current Repo-Truth Context
 
-- Current master architecture documents exist through global Document 84.
-- Document 85 is the next North-Star insertion.
+- Before this file, global documents existed through 84. This file is registered as global Document 85.
 - Current repo has probabilistic surfaces for PH1.D, PH1.N, PH1.X, PH1.WRITE, PH1.M, voice, search/provider, and clients.
 - Current audit did not prove live runtime reachability.
 - Current repo has no exact canonical PH1.PROBABILISTIC_CORE_PLATFORM master document before this file.
@@ -1152,6 +1151,38 @@ Future Codex audits and builds must compare existing code and documents against 
 8. Provider boundary: whether provider output is normalized into Selene packets.
 9. Memory boundary: whether retrieval is permission-filtered and bounded.
 10. JD acceptance: whether the real app behavior is accepted by JD.
+
+## SECTION — NEXT-DOCUMENT SELECTION LAW
+
+Document 85 controls all next probabilistic-platform architecture work.
+
+No later design document may be selected from memory, old backlog order, old chat history, or Codex preference.
+
+The next document must be selected by comparing:
+
+1. Document 85 first executable build sequence.
+2. Current repo truth.
+3. Existing documents 1-84.
+4. Existing runtime code.
+5. Real JD testing requirement.
+
+The next document must support the first real accepted runtime slice unless JD explicitly overrides.
+
+Default next design priority after Document 85:
+
+1. Build slice plan and acceptance gates.
+2. Local-cloud SaaS runtime / API / Gateway / Sync.
+3. Desktop thin-client real-test shell.
+4. Text conversation through local-cloud.
+5. Streaming response protocol and rendering.
+6. OpenAI realtime / STT / TTS voice.
+7. Barge-in / cancel output / state recovery.
+8. Memory / session continuity.
+9. Search / source-backed answers.
+10. Files / docs / data analysis.
+11. Tools / connectors / jobs.
+12. Protected boundary.
+13. iPhone thin client.
 
 ## 11. Explicit Non-Authorization
 
