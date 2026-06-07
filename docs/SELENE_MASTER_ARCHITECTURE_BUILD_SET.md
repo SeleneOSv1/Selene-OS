@@ -91,6 +91,7 @@ These documents are one architecture set. They must be read together. None overr
 83. [Selene Returns, Refunds + Reverse Logistics Engine](SELENE_GLOBAL_DOCUMENT_83_RETURNS_REFUNDS_REVERSE_LOGISTICS_ENGINE_MASTER_DESIGN.md)
 84. [Selene Commerce Integration Overview + Relationship Master Map](SELENE_GLOBAL_DOCUMENT_84_COMMERCE_INTEGRATION_OVERVIEW_RELATIONSHIP_MASTER_MAP.md)
 85. [DOC 85 — SELENE_PROBABILISTIC_CORE_PLATFORM_NORTH_STAR_MASTER_DESIGN](SELENE_PROBABILISTIC_CORE_PLATFORM_NORTH_STAR_MASTER_DESIGN.md)
+86. [DOC 86 — SELENE_PROBABILISTIC_CORE_BUILD_SLICE_PLAN_AND_ACCEPTANCE_GATES](SELENE_PROBABILISTIC_CORE_BUILD_SLICE_PLAN_AND_ACCEPTANCE_GATES.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -329,6 +330,7 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene Order Management + Order Orchestration Engine = future master design for customer order groups, seller orders, order lines, source resolution, reservation, substitution, payment requirement, delivery promise, cancellation, change, return, warranty, service milestones, exception recovery, and order truth.
 - Selene Core Pricing, Margin, Discount + Offer Governance Engine = future master design for final pricing decisions, margin guardrails, discount governance, offer selection, account price locks, contract pricing, clearance, true cost-to-serve, capital/carrying/finance costs, dynamic pricing handoff, B2B pricing handoff, brand guardrail handoff, customer value handoff, market pricing handoff, simulation, rollback, explanations, fairness, and pricing audit.
 - DOC 85 — SELENE_PROBABILISTIC_CORE_PLATFORM_NORTH_STAR_MASTER_DESIGN = North-Star master design for Selene's probabilistic core platform, ChatGPT-equivalence target, local-cloud SaaS model, thin Desktop/iPhone client law, provider independence, full engine universe, first executable build slices, real JD testing law, and future code keep/refactor/rebuild/delete comparison standard; status MASTER_DESIGN / NORTH_STAR / NOT_RUNTIME_IMPLEMENTATION; implementation authorized: no.
+- DOC 86 — SELENE_PROBABILISTIC_CORE_BUILD_SLICE_PLAN_AND_ACCEPTANCE_GATES = acceptance-plan master design that converts DOC 85 into ordered real-build slices, engine ownership maps, forbidden-owner boundaries, proof packs, local-cloud/runtime/Desktop/JD acceptance gates, cleanup classification rules, and next implementation-slice controls; status MASTER_DESIGN / ACCEPTANCE_PLAN / NOT_RUNTIME_IMPLEMENTATION; implementation authorized: no; depends on DOC 85; next action: audit DOC 86 acceptance before DOC 87.
 
 ## Pricing Pack Sub-Documents - Parent Document 81 Exists / Partial Pack
 
