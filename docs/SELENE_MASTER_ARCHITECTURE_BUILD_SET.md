@@ -90,6 +90,7 @@ These documents are one architecture set. They must be read together. None overr
 82. [Selene Dispatch, Packing, Courier Booking + Delivery Network Handoff Engine](SELENE_GLOBAL_DOCUMENT_82_DISPATCH_PACKING_COURIER_BOOKING_DELIVERY_NETWORK_HANDOFF_ENGINE_MASTER_DESIGN.md)
 83. [Selene Returns, Refunds + Reverse Logistics Engine](SELENE_GLOBAL_DOCUMENT_83_RETURNS_REFUNDS_REVERSE_LOGISTICS_ENGINE_MASTER_DESIGN.md)
 84. [Selene Commerce Integration Overview + Relationship Master Map](SELENE_GLOBAL_DOCUMENT_84_COMMERCE_INTEGRATION_OVERVIEW_RELATIONSHIP_MASTER_MAP.md)
+85. [DOC 85 — SELENE_PROBABILISTIC_CORE_PLATFORM_NORTH_STAR_MASTER_DESIGN](SELENE_PROBABILISTIC_CORE_PLATFORM_NORTH_STAR_MASTER_DESIGN.md)
 
 The Expansion Register captures active or likely Selene function stacks discovered by repo-truth audit that are missing, underdefined, or not yet fully connected in the first six master architecture documents. It must be reviewed before final overall build planning.
 
@@ -327,6 +328,7 @@ This document is pending Grand Architecture Reconciliation before implementation
 - Selene POS + Commerce Execution Engine = future master design for physical commerce execution, customer-carried POS, scan-as-you-shop, private bill, store checkout, restaurant split bill, barcode/QR/RFID/NFC/scale interfaces, tender optimization, returns intake, B2B-aware sales, and audit handoffs.
 - Selene Order Management + Order Orchestration Engine = future master design for customer order groups, seller orders, order lines, source resolution, reservation, substitution, payment requirement, delivery promise, cancellation, change, return, warranty, service milestones, exception recovery, and order truth.
 - Selene Core Pricing, Margin, Discount + Offer Governance Engine = future master design for final pricing decisions, margin guardrails, discount governance, offer selection, account price locks, contract pricing, clearance, true cost-to-serve, capital/carrying/finance costs, dynamic pricing handoff, B2B pricing handoff, brand guardrail handoff, customer value handoff, market pricing handoff, simulation, rollback, explanations, fairness, and pricing audit.
+- DOC 85 — SELENE_PROBABILISTIC_CORE_PLATFORM_NORTH_STAR_MASTER_DESIGN = North-Star master design for Selene's probabilistic core platform, ChatGPT-equivalence target, local-cloud SaaS model, thin Desktop/iPhone client law, provider independence, full engine universe, first executable build slices, real JD testing law, and future code keep/refactor/rebuild/delete comparison standard; status MASTER_DESIGN / NORTH_STAR / NOT_RUNTIME_IMPLEMENTATION; implementation authorized: no.
 
 ## Pricing Pack Sub-Documents - Parent Document 81 Exists / Partial Pack
 
