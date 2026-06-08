@@ -543,9 +543,274 @@ Every future runtime implementation or live acceptance Codex instruction must re
 
 If a future instruction omits these phrases, DOC 86 still controls and Codex must apply all three protocols.
 
+## Universal World-Class Architecture + No Patchwork Implementation Protocol
+
+This protocol applies to every future Selene design, runtime implementation, Desktop/iPhone/client slice, PH1 engine slice, provider slice, memory/context slice, search/docs/tools slice, and protected/business slice.
+
+This protocol does not weaken AGENTS.md. It reinforces AGENTS.md and DOC 85.
+
+### Master Law
+
+Selene must be built as a world-class architecture, not as patchwork.
+
+Codex must not implement behavior by making only the observed JD example pass.
+
+Codex must not use prompt-specific phrase patches, fixed-word branches, brittle string contains logic, client-side semantic rewrites, fake tests, or wrong-owner shortcuts as production behavior.
+
+Examples from JD are evidence of required behavior.
+
+Examples are not the production algorithm.
+
+### Examples Are Tests, Not Logic
+
+JD example prompts may be used for:
+
+- tests
+- live acceptance
+- proof reports
+- documentation
+- scenario explanations
+
+JD example prompts must not be used as:
+
+- production branch triggers
+- hardcoded phrase logic
+- exact input matching
+- hidden prompt hacks
+- Desktop rewrites
+- provider bypasses
+
+Forbidden production examples include:
+
+- if text contains "shorter"
+- if text contains "continue"
+- if text contains "last part"
+- if text contains "more detail"
+- if text contains "Selene"
+- if text equals the live test prompt
+- hardcoded exact JD phrases
+- hardcoded exact real company/person/customer/supplier/product names
+
+Allowed:
+
+- generalized intent categories
+- semantic role classification
+- bounded active context frames
+- follow-up intent packets
+- topic frames
+- reference target resolution
+- output policy frames
+- provider-context contracts
+- PH1.WRITE finalization guards
+- deterministic safety/authority gates
+
+### Correct Owner Law
+
+Every slice must identify the correct owner before editing.
+
+Codex must produce a Correct Owner Map before implementation.
+
+Required map:
+
+- observed behavior
+- expected behavior
+- owner engine
+- owner file/path
+- rejected wrong owners
+- input packet/frame
+- output packet/frame
+- downstream engine
+- trace proof
+- tests
+- live acceptance path
+
+Codex must not fix behavior in Desktop/iPhone/client, adapter, provider wrapper, or helper code unless that layer is proven to be the correct owner.
+
+### Algorithmic Generality Law
+
+Every runtime behavior must be implemented as a reusable mechanism.
+
+For language/context behavior, acceptable mechanisms include:
+
+- bounded active context
+- topic frames
+- follow-up intent categories
+- reference target frames
+- response style frames
+- clarification decision frames
+- provider-context contracts
+- PH1.WRITE output review
+- trace packets
+
+For render behavior, acceptable mechanisms include:
+
+- design tokens
+- typography tokens
+- spacing tokens
+- semantic render blocks
+- markdown render rules
+- source chip styles
+- code block styles
+- device-neutral token maps
+
+For protected execution, acceptable mechanisms include:
+
+- PH1.X route/risk classification
+- access decision packets
+- authority decision packets
+- simulation requirement packets
+- audit proof packets
+- deterministic owner execution
+
+Production behavior must work beyond the exact prompts JD used.
+
+### Positive / Paraphrase / Negative Test Law
+
+Every slice touching language, context, writing, memory, search, tools, render, Desktop/iPhone behavior, or protected routing must include:
+
+- original JD example test
+- unseen paraphrase tests
+- substituted-topic tests
+- negative tests proving unrelated inputs are not hijacked
+- live JD test where user-visible
+- backend trace proof
+
+For Slice 1C, this means:
+
+- "give me more detail"
+- "can you expand that"
+- "say more about the previous answer"
+- "make that shorter"
+- "condense your last answer"
+- "continue"
+- "go on"
+- "explain the last bit"
+- a new unrelated topic must start a new topic, not wrongly reuse old context
+
+### No Client Semantic Authority Law
+
+Desktop/iPhone/web clients must not:
+
+- infer topic
+- resolve follow-up meaning
+- replace ChatGPT with Selene
+- rewrite answers to sound human
+- decide answer length
+- decide emotional tone
+- call providers directly
+- create memory truth
+- create search/source truth
+- approve protected actions
+
+Clients may only:
+
+- capture
+- render
+- play audio
+- upload files
+- display status
+- queue offline actions
+- show evidence/provenance
+- apply visual style tokens
+
+### No Fake Acceptance Law
+
+A slice is not accepted because:
+
+- compile passed
+- unit tests passed
+- a mocked test passed
+- one exact prompt passed
+- Codex says it looks right
+- backend succeeded but Desktop did not show the right result
+- Desktop showed something but backend trace is missing
+
+Acceptance requires:
+
+- real path proof
+- latest app provenance when client-visible
+- backend trace
+- forbidden path checks
+- JD visible confirmation
+- JD_LIVE_ACCEPTANCE_PASSED where user-visible
+
+### Scope Discipline Law
+
+Codex must not turn a small slice into a hidden mega-build.
+
+If a slice exposes a larger missing system, Codex must:
+
+- solve only the accepted slice boundary
+- record the future slice
+- stop for approval if larger scope is required
+
+For Slice 1C:
+
+- current active session context is allowed
+- recent recall is not allowed
+- full session archive is not allowed
+- permanent governed memory is not allowed
+- full ConversationBundle system is not allowed
+- full PH1.M is not allowed
+
+Future:
+
+- Slice 1E handles Conversation Bundle + Memory/Context Foundation
+- DOC 86 Slice 7 handles full memory + long-history recall
+
+### Failure Classification Law
+
+Codex must classify failures precisely before fixing.
+
+Generic "works/doesn't work" is not enough.
+
+For language/context slices, failures must include categories such as:
+
+- ACTIVE_CONTEXT_NOT_USED
+- FOLLOWUP_REFERENCE_LOST
+- PHRASE_PATCH_DETECTED
+- DESKTOP_CONTEXT_INFERENCE_DETECTED
+- PH1WRITE_BYPASSED
+- PROVIDER_CONTEXT_MISSING
+- TRACE_MISSING
+- TRACE_DOES_NOT_MATCH_VISIBLE_OUTPUT
+- OUT_OF_SCOPE_FIX_REQUIRED
+
+### Final Report Law
+
+Every future slice final report must include:
+
+- whether generalized architecture was used
+- whether exact phrase patching was avoided
+- whether wrong-owner/client semantic logic was avoided
+- whether original JD examples passed
+- whether unseen paraphrases passed
+- whether negative tests passed
+- whether backend trace proves the owner path
+- whether JD confirmed live behavior
+- whether future larger-scope work was deferred
+
+### Standing Codex Instruction Law
+
+Every future Codex runtime/design instruction must reference:
+
+```text
+DOC 86 Universal World-Class Architecture + No Patchwork Implementation Protocol
+```
+
+If a future instruction omits this phrase, DOC 86 still controls and Codex must apply it.
+
 ## 4. First Executable Build Sequence
 
 DOC 86 defines these slices in this order unless JD explicitly overrides later.
+
+### Slice 1D Future-Compatibility Rule for Render Foundations
+
+Slice 1D must create shared render/design tokens and semantic render block conventions compatible with future Slice 9A-9G artifacts, reports, documents, exports, workspace/canvas, source-backed reports, and approval-ready documents.
+
+Slice 1D must not implement Slice 9A-9G systems.
+
+Slice 1D future foundations must be reusable by later artifact/document/report work without making Desktop, iPhone, web clients, or provider adapters the owner of document intelligence, evidence truth, export authority, approval readiness, or workspace state.
 
 ### Slice 1 — Local-Cloud Text Conversation Path
 
@@ -1151,6 +1416,244 @@ Fail condition: Desktop parses authoritative document truth, file is not stored 
 Cleanup required: classify local parser shortcuts, stale upload code, duplicate artifact paths, and untraced export helpers.
 
 Accepted status labels: same label ladder; ACCEPTED requires JD_LIVE_ACCEPTANCE_PASSED plus backend evidence.
+
+#### Future Slice 9 Decomposition — Artifact / Document / Report / Export / Workspace Stack
+
+Future Slice 9 must be decomposed into explicit sub-slices 9A-9G before implementation. The sub-slices below are planning and design targets only. They do not authorize implementation, Desktop rendering work, document engine implementation, DOC 87 creation, packet structs, APIs, migrations, tests, or runtime changes by themselves.
+
+Slice 1D render/design tokens and semantic render block conventions are required future dependencies for Slice 9A-9G. Slice 1D must prepare shared visual foundations that later Slice 9 artifact/document/report systems can reuse, but Slice 1D must not implement Slice 9A-9G.
+
+##### Slice 9A — Artifact / Document Presentation System Master Design
+
+Purpose: define durable artifact and document presentation architecture using Slice 1D render tokens and semantic render blocks.
+
+Must cover:
+
+- document/artifact render model
+- semantic document blocks
+- report/document layout standards
+- artifact preview cards
+- evidence-linked artifact sections
+- Desktop/iPhone/web compatibility
+- print/export readiness rules
+
+Main owner engines:
+
+- PH1.ARTIFACTS
+- PH1.WORKSPACE
+- PH1.DOCS
+- PH1.WRITE
+- PH1.CLIENT.RENDER
+- PH1.DEVICE.RENDER
+
+Depends on:
+
+- Slice 1D render/design tokens
+- Slice 8 search/evidence/source chips where relevant
+- Slice 9 file/docs/data path
+
+Implementation authorized now: no.
+
+##### Slice 9B — Document Template + Report Theme Engine
+
+Purpose: define reusable document templates and report themes.
+
+Must cover:
+
+- report themes
+- cover pages
+- section hierarchy
+- headers/footers
+- title pages
+- executive summaries
+- approval-ready templates
+- company branding later
+- template governance
+
+Main owner engines:
+
+- PH1.ARTIFACTS
+- PH1.WORKSPACE
+- PH1.WRITE
+- PH1.REPORTING
+- PH1.CLIENT.RENDER
+- PH1.EXPORT later
+
+Depends on:
+
+- Slice 1D render/design tokens
+- Slice 9A artifact/document presentation model
+
+Implementation authorized now: no.
+
+##### Slice 9C — Tables / Charts / Data Report Rendering
+
+Purpose: define professional table/chart rendering for data analysis and reports.
+
+Must cover:
+
+- table styling
+- financial table layout
+- charts
+- key-number cards
+- variance highlights
+- subtotal/total rows
+- responsive table behavior
+- print-safe table rules
+- chart captions and evidence links
+
+Main owner engines:
+
+- PH1.DATA_ANALYSIS
+- PH1.ARTIFACTS
+- PH1.REPORTING
+- PH1.CLIENT.RENDER
+- PH1.EXPORT later
+
+Depends on:
+
+- Slice 1D design tokens
+- Slice 9A document presentation
+- data analysis/file processing readiness
+
+Implementation authorized now: no.
+
+##### Slice 9D — Source-Backed Reports + Evidence Binding
+
+Purpose: bind claims, sources, files, and evidence into reports/documents.
+
+Must cover:
+
+- source-backed report sections
+- citations
+- source chips
+- evidence packets
+- claim-to-source mapping
+- file evidence references
+- audit/evidence trace
+- rejected-source suppression
+- official-source priority display
+
+Main owner engines:
+
+- PH1.SEARCH
+- PH1.RESEARCH
+- PH1.QUALITY
+- PH1.DOCS
+- PH1.ARTIFACTS
+- PH1.AUDIT / PH1.EVIDENCE
+- PH1.WRITE
+- PH1.CLIENT.RENDER
+
+Depends on:
+
+- Slice 1D source chip styling
+- Slice 8 source-backed answer capability
+- Slice 9A document/artifact model
+
+Implementation authorized now: no.
+
+##### Slice 9E — Export Engine: PDF / DOCX / Print / Share
+
+Purpose: define export outputs for rendered artifacts.
+
+Must cover:
+
+- PDF export
+- DOCX export
+- print layout
+- page breaks
+- margins
+- footnotes
+- headers/footers
+- export metadata
+- audit/provenance in exports
+- share/download handoff
+
+Main owner engines:
+
+- PH1.EXPORT
+- PH1.ARTIFACTS
+- PH1.WORKSPACE
+- PH1.DOCS
+- PH1.CLIENT.RENDER
+- PH1.AUDIT
+
+Depends on:
+
+- Slice 1D print/export-ready token foundation
+- Slice 9A document presentation
+- Slice 9B templates/themes
+- Slice 9D evidence binding where relevant
+
+Implementation authorized now: no.
+
+##### Slice 9F — Workspace / Canvas Editing + Version History
+
+Purpose: define editable workspace/canvas behavior.
+
+Must cover:
+
+- canvas-style editing
+- artifact version history
+- draft vs final state
+- comments
+- revision tracking
+- restore previous version
+- collaborative editing later
+- approval workflow handoff
+
+Main owner engines:
+
+- PH1.WORKSPACE
+- PH1.ARTIFACTS
+- PH1.M / PH1.CONTEXT where allowed
+- PH1.AUDIT
+- PH1.CLIENT.RENDER
+
+Depends on:
+
+- Slice 9A document/artifact model
+- Slice 1D render tokens
+- future memory/context foundation
+
+Implementation authorized now: no.
+
+##### Slice 9G — Approval-Ready Documents + Governance
+
+Purpose: define documents that can move into authority, approval, simulation, and audit workflows.
+
+Must cover:
+
+- board packs
+- financial reports
+- contracts
+- governance documents
+- approval-ready artifacts
+- sign-off packets
+- authority routing
+- audit proof
+- immutable final versions
+
+Main owner engines:
+
+- PH1.AUTHORITY
+- PH1.SIMULATION
+- PH1.AUDIT
+- PH1.BOARD
+- PH1.LEGAL
+- PH1.FIN_REPORTING
+- PH1.ARTIFACTS
+- PH1.WORKSPACE
+- PH1.WRITE
+
+Depends on:
+
+- Slice 9A-9F
+- protected boundary slice
+- authority/simulation/audit readiness
+
+Implementation authorized now: no.
 
 ### Slice 10 — Tool Broker / Connectors / Jobs
 
