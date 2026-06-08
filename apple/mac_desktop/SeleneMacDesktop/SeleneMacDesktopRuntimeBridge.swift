@@ -7445,7 +7445,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let body = try encoder.encode(payload)
-        let endpointURL = adapterBaseURL.appendingPathComponent("v1/voice/turn")
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/probabilistic/slice1/text")
         var urlRequest = URLRequest(url: endpointURL)
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = body
