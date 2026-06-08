@@ -5158,7 +5158,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         } catch {
             return .failedTyped(
                 preparedRequestID: preparedRequest.id,
-                endpoint: voiceTurnEndpoint,
+                endpoint: slice1TextConversationEndpoint,
                 requestID: "unavailable",
                 summary: "The canonical runtime bridge could not deliver the bounded typed-turn request.",
                 detail: error.localizedDescription,
@@ -5971,6 +5971,20 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
                     endpoint: ingressContext.endpoint,
                     requestID: ingressContext.requestID,
                     response: payload
+                )
+            }
+
+            if let payload = try? Self.decodeVoiceTurnAdapterResponsePayload(data) {
+                return .failedTyped(
+                    preparedRequestID: ingressContext.preparedRequestID,
+                    endpoint: ingressContext.endpoint,
+                    requestID: ingressContext.requestID,
+                    summary: "The Slice 1 local-cloud text path failed closed before Desktop rendering was allowed.",
+                    detail: payload.reason ?? "Slice 1 returned a bounded fail-closed response.",
+                    reasonCode: payload.reasonCode,
+                    failureClass: payload.failureClass,
+                    sessionID: payload.sessionID,
+                    turnID: payload.turnID.map(String.init)
                 )
             }
 
@@ -7347,7 +7361,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let body = try encoder.encode(payload)
-        let endpointURL = adapterBaseURL.appendingPathComponent("v1/voice/turn")
+        let endpointURL = adapterBaseURL.appendingPathComponent("v1/probabilistic/slice1/text")
         var urlRequest = URLRequest(url: endpointURL)
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = body
@@ -9621,6 +9635,12 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
 
     var voiceTurnEndpoint: String {
         adapterBaseURL.appendingPathComponent("v1/voice/turn").absoluteString
+    }
+
+    var slice1TextConversationEndpoint: String {
+        adapterBaseURL
+            .appendingPathComponent("v1/probabilistic/slice1/text")
+            .absoluteString
     }
 
     var desktopRealtimeTranscriptionSessionEndpoint: String {

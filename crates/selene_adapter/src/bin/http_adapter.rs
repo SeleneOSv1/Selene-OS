@@ -36,6 +36,10 @@ use selene_adapter::{
 };
 use selene_engines::device_vault;
 use selene_engines::ph1e::startup_outbound_self_check_logs;
+use selene_os::prob_slice1::{
+    run_slice1_text_conversation_from_env, slice1_error_response, Slice1Error, Slice1ErrorClass,
+    Slice1TextConversationRequest, Slice1TextConversationResponse,
+};
 use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::runtime_execution::{FailureClass, RuntimeExecutionEnvelope};
 use sha2::{Digest, Sha256};
@@ -333,6 +337,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .route("/v1/ui/public-brain/trace", get(ui_public_brain_trace))
         .route("/v1/voice/turn", post(run_voice_turn))
+        .route(
+            "/v1/probabilistic/slice1/text",
+            post(run_slice1_text_conversation),
+        )
         .route(
             "/v1/desktop/realtime-transcription/session",
             post(run_desktop_realtime_transcription_session),
@@ -700,6 +708,81 @@ async fn ui_health_report_query(
         StatusCode::BAD_REQUEST
     };
     (status, Json(response))
+}
+
+async fn run_slice1_text_conversation(
+    State(state): State<HttpAdapterState>,
+    headers: HeaderMap,
+    Json(request): Json<Slice1TextConversationRequest>,
+) -> Response {
+    let request_id = match required_header_token(&headers, "x-request-id", "missing_request_id") {
+        Ok(v) => v,
+        Err(reject) => return slice1_security_reject_response(reject, "unavailable".to_string()),
+    };
+    let idempotency_key =
+        match required_header_token(&headers, "idempotency-key", "missing_idempotency_key") {
+            Ok(v) => v,
+            Err(reject) => return slice1_security_reject_response(reject, request_id),
+        };
+    let timestamp_ms = match required_header_u64(
+        &headers,
+        "x-selene-timestamp-ms",
+        "missing_timestamp_ms",
+        "invalid_timestamp_ms",
+    ) {
+        Ok(v) => v,
+        Err(reject) => return slice1_security_reject_response(reject, request_id),
+    };
+    let nonce = match required_header_token(&headers, "x-selene-nonce", "missing_nonce") {
+        Ok(v) => v,
+        Err(reject) => return slice1_security_reject_response(reject, request_id),
+    };
+
+    let device_id = match request
+        .device_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => value.to_string(),
+        None => {
+            return slice1_error_http_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Slice1Error {
+                    class: Slice1ErrorClass::InvalidPayload,
+                    reason_code: "SLICE1_MISSING_DEVICE",
+                    safe_reason: "device_id is required for Slice 1 Desktop ingress".to_string(),
+                    trace: None,
+                },
+                request_id,
+            )
+        }
+    };
+    let security_input = EndpointSecurityInput {
+        endpoint: "/v1/probabilistic/slice1/text",
+        expected_subject: request.actor_user_id.clone(),
+        expected_device: device_id,
+        request_id: request_id.clone(),
+        idempotency_key,
+        timestamp_ms,
+        nonce,
+    };
+    if let Err(reject) = enforce_ingress_security(
+        &headers,
+        &state.ingress_security,
+        state.ingress_security_config,
+        security_input,
+    ) {
+        return slice1_security_reject_response(reject, request_id);
+    }
+
+    match run_slice1_text_conversation_from_env(request, request_id.clone()) {
+        Ok(response) => (StatusCode::OK, Json(response)).into_response(),
+        Err(error) => {
+            let status = status_for_slice1_error(&error);
+            slice1_error_http_response(status, error, request_id)
+        }
+    }
 }
 
 async fn run_voice_turn(
@@ -2569,6 +2652,39 @@ fn voice_turn_security_reject_response(reject: SecurityReject, turn_id: Option<u
         session_lifecycle_action: None,
     };
     json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
+fn slice1_security_reject_response(reject: SecurityReject, request_id: String) -> Response {
+    let status = status_for_security_reject(reject.kind);
+    let reason = reject.reason;
+    let response = slice1_error_response(
+        Slice1Error {
+            class: Slice1ErrorClass::InvalidPayload,
+            reason_code: "SLICE1_INGRESS_SECURITY_REJECTED",
+            safe_reason: reason,
+            trace: None,
+        },
+        request_id,
+    );
+    json_response_with_optional_retry_after(status, response, reject.retry_after_secs)
+}
+
+fn slice1_error_http_response(
+    status: StatusCode,
+    error: Slice1Error,
+    request_id: String,
+) -> Response {
+    let response: Slice1TextConversationResponse = slice1_error_response(error, request_id);
+    (status, Json(response)).into_response()
+}
+
+fn status_for_slice1_error(error: &Slice1Error) -> StatusCode {
+    match error.class {
+        Slice1ErrorClass::InvalidPayload => StatusCode::UNPROCESSABLE_ENTITY,
+        Slice1ErrorClass::PolicyViolation => StatusCode::FORBIDDEN,
+        Slice1ErrorClass::ProviderFailure => StatusCode::BAD_GATEWAY,
+        Slice1ErrorClass::WriteFailure => StatusCode::INTERNAL_SERVER_ERROR,
+    }
 }
 
 fn desktop_realtime_transcription_security_reject_response(reject: SecurityReject) -> Response {

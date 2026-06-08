@@ -64,6 +64,7 @@ pub mod ph1wake_training;
 pub mod ph1work;
 pub mod ph1write;
 pub mod ph1x;
+pub mod prob_slice1;
 pub mod runtime_bootstrap;
 pub mod runtime_governance;
 pub mod runtime_ingress_turn_foundation;
