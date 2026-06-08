@@ -91,6 +91,163 @@ Automated tests alone may never mark a user-visible slice as ACCEPTED.
 
 Terminal-only proof may never mark a user-visible slice as ACCEPTED.
 
+## Universal Runtime Slice Live Acceptance Operator Protocol
+
+This protocol applies to every future runtime implementation slice, including but not limited to:
+
+- Desktop text path
+- streaming text
+- voice
+- realtime
+- duplex
+- barge-in
+- memory/session continuity
+- search
+- files/docs
+- tools
+- iPhone
+- protected actions
+- business-engine runtime slices
+
+This protocol does not apply to docs-only tasks.
+
+### Master Law
+
+Every runtime implementation slice must include live acceptance operation after build.
+
+Codex must not stop at code completion, compile success, automated tests, commit, or push.
+
+Codex must guide JD through live use of the latest app/runtime path, observe or request backend evidence, classify failures, perform narrow in-scope fixes where authorized, rerun tests, and continue until JD confirms the slice works according to the accepted design or Codex reports an out-of-scope blocker.
+
+### Runtime Slice Acceptance States
+
+Required runtime slice acceptance states:
+
+- BUILD_NOT_STARTED
+- BUILD_IN_PROGRESS
+- BUILD_COMPLETE
+- AUTOMATED_PROOF_PASSED
+- LIVE_TEST_READY
+- JD_LIVE_ACCEPTANCE_PENDING
+- JD_LIVE_ACCEPTANCE_PASSED
+- JD_LIVE_ACCEPTANCE_FAILED
+- BLOCKED_OUT_OF_SCOPE
+- ACCEPTED
+
+Rules:
+
+- BUILD_COMPLETE does not mean accepted.
+- AUTOMATED_PROOF_PASSED does not mean accepted.
+- A runtime slice cannot reach ACCEPTED unless JD_LIVE_ACCEPTANCE_PASSED is true.
+- If Codex cannot perform GUI actions directly, Codex must tell JD exactly what to click/type and what evidence to report.
+- If JD has not confirmed live success, final status must remain JD_LIVE_ACCEPTANCE_PENDING.
+
+### Codex Live Acceptance Operator Duties
+
+After every runtime build, Codex must:
+
+- start or instruct JD to start the required backend/local-cloud runtime
+- confirm required environment variables are present without revealing secrets
+- build/open the latest Desktop/iPhone app if applicable
+- identify the exact app/version/path being tested
+- tell JD exactly what to click/type/say/upload
+- provide the exact test prompt or action
+- explain expected visible result
+- explain expected backend trace/proof
+- watch logs/traces where possible
+- identify whether the correct runtime path was used
+- identify whether forbidden legacy paths were avoided
+- classify any failure
+- make only narrow in-scope fixes if allowed
+- rerun tests after fixes
+- update JD with simple step-by-step instructions
+- stop only when JD confirms success or an out-of-scope blocker exists
+
+### Required Live Test Script Section
+
+Every future runtime implementation instruction must include:
+
+- exact backend command or discovery requirement
+- exact app launch/open steps
+- exact user action for JD
+- exact expected result
+- exact backend trace fields
+- exact acceptance gates
+- exact failure categories
+- exact narrow-fix scope
+- exact out-of-scope stop conditions
+
+### Evidence Requirements
+
+Every runtime slice final report must include:
+
+- backend command used
+- app/client build status
+- app/client launch status if applicable
+- exact JD test action
+- visible user result
+- backend trace/proof
+- endpoint/path used
+- owner engine sequence used
+- forbidden legacy path checks
+- provider/tool/execution boundary proof where applicable
+- PH1.WRITE final-output proof where applicable
+- PH1.X validation proof where applicable
+- Access/Authority/Simulation proof where applicable
+- tests run
+- test results
+- manual JD acceptance status
+- final acceptance state
+
+### Narrow Fix Loop
+
+If a live test fails inside the approved slice scope, Codex may perform narrow fixes only within the approved file scope, then rerun required tests and live acceptance.
+
+Codex must not broaden scope, rewrite unrelated systems, delete legacy code, or implement future slices to make the current slice pass.
+
+### Stop Conditions
+
+Codex must stop and report a blocker if:
+
+- live acceptance requires files outside approved scope
+- runtime secrets would be exposed
+- a forbidden legacy path is required
+- the slice cannot be tested through the actual app/runtime path
+- JD cannot perform required live step and no alternative proof exists
+- fixing requires implementing a future slice
+- fixing requires broad architecture rewrite
+- acceptance trace/proof cannot be produced
+
+### Future Instruction Law
+
+Every future runtime implementation Codex instruction must reference this DOC 86 Universal Runtime Slice Live Acceptance Operator Protocol instead of rewriting the full protocol manually.
+
+If a future instruction omits live acceptance language, DOC 86 still controls and Codex must apply this protocol.
+
+### Codex Final Report Law
+
+Every runtime slice final report must clearly state one of:
+
+- JD_LIVE_ACCEPTANCE_PASSED
+- JD_LIVE_ACCEPTANCE_PENDING
+- JD_LIVE_ACCEPTANCE_FAILED
+- BLOCKED_OUT_OF_SCOPE
+
+Codex must not use vague phrases like:
+
+- "should work"
+- "ready for testing"
+- "implemented"
+- "looks good"
+
+as acceptance status.
+
+### Slice 1 Retrospective Note
+
+Slice 1 established the need for this protocol because implementation and automated proof were completed before JD live acceptance.
+
+Future slices must include live acceptance operation as part of the build workflow.
+
 ## 4. First Executable Build Sequence
 
 DOC 86 defines these slices in this order unless JD explicitly overrides later.
