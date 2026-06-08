@@ -3,14 +3,14 @@
 use std::env;
 use std::time::{Duration, Instant};
 
+use selene_engines::device_vault;
 use selene_engines::ph1write::{Ph1WriteConfig, Ph1WriteRuntime};
 use selene_kernel_contracts::ph1_voice_id::UserId;
 use selene_kernel_contracts::ph1j::{CorrelationId, DeviceId, TurnId};
 use selene_kernel_contracts::ph1l::SessionId;
 use selene_kernel_contracts::ph1position::TenantId;
-use selene_kernel_contracts::ph1write::{
-    Ph1WriteRequest, Ph1WriteResponse, WriteRenderStyle,
-};
+use selene_kernel_contracts::ph1write::{Ph1WriteRequest, Ph1WriteResponse, WriteRenderStyle};
+use selene_kernel_contracts::provider_secrets::ProviderSecretId;
 use selene_kernel_contracts::{MonotonicTimeNs, Validate};
 
 const SLICE1_PATH: [&str; 8] = [
@@ -135,7 +135,11 @@ impl Slice1Error {
         }
     }
 
-    fn policy(reason_code: &'static str, safe_reason: impl Into<String>, trace: Slice1Trace) -> Self {
+    fn policy(
+        reason_code: &'static str,
+        safe_reason: impl Into<String>,
+        trace: Slice1Trace,
+    ) -> Self {
         Self {
             class: Slice1ErrorClass::PolicyViolation,
             reason_code,
@@ -144,7 +148,11 @@ impl Slice1Error {
         }
     }
 
-    fn provider(reason_code: &'static str, safe_reason: impl Into<String>, trace: Slice1Trace) -> Self {
+    fn provider(
+        reason_code: &'static str,
+        safe_reason: impl Into<String>,
+        trace: Slice1Trace,
+    ) -> Self {
         Self {
             class: Slice1ErrorClass::ProviderFailure,
             reason_code,
@@ -153,7 +161,11 @@ impl Slice1Error {
         }
     }
 
-    fn write(reason_code: &'static str, safe_reason: impl Into<String>, trace: Slice1Trace) -> Self {
+    fn write(
+        reason_code: &'static str,
+        safe_reason: impl Into<String>,
+        trace: Slice1Trace,
+    ) -> Self {
         Self {
             class: Slice1ErrorClass::WriteFailure,
             reason_code,
@@ -172,7 +184,10 @@ pub struct Slice1ProviderResult {
 }
 
 pub trait Slice1Provider {
-    fn complete_text(&self, request: &Slice1ProviderRequest) -> Result<Slice1ProviderResult, String>;
+    fn complete_text(
+        &self,
+        request: &Slice1ProviderRequest,
+    ) -> Result<Slice1ProviderResult, String>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -187,16 +202,28 @@ pub struct OpenAiSlice1Provider {
     endpoint: String,
     model: String,
     api_key: String,
+    api_key_source: Slice1ProviderKeySource,
     timeout: Duration,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slice1ProviderKeySource {
+    Env,
+    DeviceVault,
+}
+
+impl Slice1ProviderKeySource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Env => "env",
+            Self::DeviceVault => "device_vault",
+        }
+    }
 }
 
 impl OpenAiSlice1Provider {
     pub fn from_env() -> Result<Self, String> {
-        let api_key = env::var("OPENAI_API_KEY")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "missing_openai_api_key".to_string())?;
+        let (api_key, api_key_source) = resolve_openai_api_key()?;
         let endpoint = env::var("SELENE_SLICE1_OPENAI_RESPONSES_URL")
             .ok()
             .map(|value| value.trim().to_string())
@@ -228,13 +255,33 @@ impl OpenAiSlice1Provider {
             endpoint,
             model,
             api_key,
+            api_key_source,
             timeout: Duration::from_secs(timeout_secs),
         })
     }
 }
 
+fn resolve_openai_api_key() -> Result<(String, Slice1ProviderKeySource), String> {
+    if let Some(api_key) = env::var("OPENAI_API_KEY")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Ok((api_key, Slice1ProviderKeySource::Env));
+    }
+
+    match device_vault::resolve_secret(ProviderSecretId::OpenAIApiKey.as_str()) {
+        Ok(Some(api_key)) => Ok((api_key, Slice1ProviderKeySource::DeviceVault)),
+        Ok(None) => Err("missing_openai_api_key".to_string()),
+        Err(_) => Err("openai_api_key_vault_read_failed".to_string()),
+    }
+}
+
 impl Slice1Provider for OpenAiSlice1Provider {
-    fn complete_text(&self, request: &Slice1ProviderRequest) -> Result<Slice1ProviderResult, String> {
+    fn complete_text(
+        &self,
+        request: &Slice1ProviderRequest,
+    ) -> Result<Slice1ProviderResult, String> {
         let body = serde_json::json!({
             "model": self.model,
             "input": [
@@ -269,8 +316,15 @@ impl Slice1Provider for OpenAiSlice1Provider {
             model_id: self.model.clone(),
             response_text,
             safe_metadata: vec![
-                ("provider_boundary".to_string(), "PH1.PROVIDERS/PH1.OAI".to_string()),
+                (
+                    "provider_boundary".to_string(),
+                    "PH1.PROVIDERS/PH1.OAI".to_string(),
+                ),
                 ("endpoint_kind".to_string(), "responses".to_string()),
+                (
+                    "provider_key_source".to_string(),
+                    self.api_key_source.as_str().to_string(),
+                ),
             ],
         })
     }
@@ -283,11 +337,28 @@ pub fn run_slice1_text_conversation_from_env(
     let provider = OpenAiSlice1Provider::from_env().map_err(|reason| {
         Slice1Error::provider(
             "SLICE1_PROVIDER_CONFIG_FAIL",
-            reason,
-            initial_trace(&request, &request_id, 0),
+            reason.clone(),
+            provider_config_error_trace(&request, &request_id, &reason),
         )
     })?;
     run_slice1_text_conversation(request, request_id, &provider)
+}
+
+fn provider_config_error_trace(
+    request: &Slice1TextConversationRequest,
+    request_id: &str,
+    reason: &str,
+) -> Slice1Trace {
+    let mut trace = initial_trace(request, request_id, 0);
+    trace.safe_provider_metadata.push(Slice1TraceField {
+        key: "provider_key_source".to_string(),
+        value: "missing".to_string(),
+    });
+    trace.safe_provider_metadata.push(Slice1TraceField {
+        key: "provider_config_error".to_string(),
+        value: reason.to_string(),
+    });
+    trace
 }
 
 pub fn run_slice1_text_conversation<P: Slice1Provider>(
@@ -316,10 +387,12 @@ pub fn run_slice1_text_conversation<P: Slice1Provider>(
         trace_id: trace.trace_id.clone(),
         user_text: conv.user_text.clone(),
     };
-    let provider_result = provider.complete_text(&provider_request).map_err(|reason| {
-        trace.latency_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
-        Slice1Error::provider("SLICE1_PROVIDER_FAIL_CLOSED", reason, trace.clone())
-    })?;
+    let provider_result = provider
+        .complete_text(&provider_request)
+        .map_err(|reason| {
+            trace.latency_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+            Slice1Error::provider("SLICE1_PROVIDER_FAIL_CLOSED", reason, trace.clone())
+        })?;
 
     trace.provider_id = Some(provider_result.provider_id.clone());
     trace.model_id = Some(provider_result.model_id.clone());
@@ -332,8 +405,8 @@ pub fn run_slice1_text_conversation<P: Slice1Provider>(
         })
         .collect();
 
-    let write_text = ph1write_finalize(&request, now_ns, &provider_result.response_text)
-        .map_err(|reason| {
+    let write_text =
+        ph1write_finalize(&request, now_ns, &provider_result.response_text).map_err(|reason| {
             trace.latency_ms = started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
             Slice1Error::write("SLICE1_PH1WRITE_FAIL_CLOSED", reason, trace.clone())
         })?;
@@ -504,10 +577,17 @@ fn ph1write_finalize(
     }
 }
 
-fn initial_trace(request: &Slice1TextConversationRequest, request_id: &str, now_ns: u64) -> Slice1Trace {
+fn initial_trace(
+    request: &Slice1TextConversationRequest,
+    request_id: &str,
+    now_ns: u64,
+) -> Slice1Trace {
     let session_id = format!("slice1-session-{}", session_id_u128(request));
     Slice1Trace {
-        trace_id: format!("slice1-trace-{}-{}", request.correlation_id, request.turn_id),
+        trace_id: format!(
+            "slice1-trace-{}-{}",
+            request.correlation_id, request.turn_id
+        ),
         request_id: request_id.to_string(),
         correlation_id: request.correlation_id,
         session_id,
@@ -591,7 +671,10 @@ fn extract_openai_output_text(value: &serde_json::Value) -> Option<String> {
     }
 }
 
-pub fn slice1_error_response(error: Slice1Error, fallback_request_id: String) -> Slice1TextConversationResponse {
+pub fn slice1_error_response(
+    error: Slice1Error,
+    fallback_request_id: String,
+) -> Slice1TextConversationResponse {
     let trace = error.trace.unwrap_or_else(|| Slice1Trace {
         trace_id: format!("slice1-trace-error-{fallback_request_id}"),
         request_id: fallback_request_id,
@@ -613,7 +696,11 @@ pub fn slice1_error_response(error: Slice1Error, fallback_request_id: String) ->
         status: "error".to_string(),
         outcome: "SLICE1_TEXT_CONVERSATION_FAILED_CLOSED".to_string(),
         session_id: Some(trace.session_id.clone()),
-        turn_id: if trace.turn_id == 0 { None } else { Some(trace.turn_id) },
+        turn_id: if trace.turn_id == 0 {
+            None
+        } else {
+            Some(trace.turn_id)
+        },
         session_state: Some("Active".to_string()),
         session_attach_outcome: None,
         failure_class: Some(error.class.as_str().to_string()),
@@ -635,6 +722,10 @@ pub fn slice1_error_response(error: Slice1Error, fallback_request_id: String) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+    use selene_engines::device_vault::DeviceVault;
+    use std::fs;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[derive(Debug)]
     struct MockProvider {
@@ -651,9 +742,56 @@ mod tests {
                 provider_id: "mock_openai".to_string(),
                 model_id: "mock-model".to_string(),
                 response_text: self.response_text.clone(),
-                safe_metadata: vec![("provider_boundary".to_string(), "PH1.PROVIDERS/PH1.OAI".to_string())],
+                safe_metadata: vec![(
+                    "provider_boundary".to_string(),
+                    "PH1.PROVIDERS/PH1.OAI".to_string(),
+                )],
             })
         }
+    }
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = env::var(key).ok();
+            env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let previous = env::var(key).ok();
+            env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(value) = self.previous.as_deref() {
+                env::set_var(self.key, value);
+            } else {
+                env::remove_var(self.key);
+            }
+        }
+    }
+
+    fn temp_vault_path(label: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+        let suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(1);
+        let base = env::temp_dir().join(format!("selene-slice1-vault-{label}-{suffix}"));
+        fs::create_dir_all(&base).expect("temp vault directory should be created");
+        (base.clone(), base.join("device_vault.json"))
     }
 
     fn request(text: &str) -> Slice1TextConversationRequest {
@@ -687,7 +825,10 @@ mod tests {
         assert!(!response.slice1_trace.desktop_direct_provider_call);
         assert!(!response.slice1_trace.adapter_monolith_provider_execution);
         assert!(!response.slice1_trace.old_ph1os_turn_orchestration);
-        assert_eq!(response.slice1_trace.provider_id.as_deref(), Some("mock_openai"));
+        assert_eq!(
+            response.slice1_trace.provider_id.as_deref(),
+            Some("mock_openai")
+        );
     }
 
     #[test]
@@ -723,5 +864,89 @@ mod tests {
             extract_openai_output_text(&value).as_deref(),
             Some("first\nsecond")
         );
+    }
+
+    #[test]
+    fn slice1_openai_key_env_wins_over_vault() {
+        let _guard = env_lock().lock().expect("env lock should be available");
+        let (base, vault_path) = temp_vault_path("env-wins");
+        let vault_path_text = vault_path.to_string_lossy().to_string();
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _env_scope = ScopedEnvVar::set("OPENAI_API_KEY", "env-test-key");
+        DeviceVault::default_local()
+            .set_secret("openai_api_key", "vault-test-key")
+            .expect("vault secret should store");
+
+        let provider = OpenAiSlice1Provider::from_env().expect("env key should configure provider");
+
+        assert_eq!(provider.api_key, "env-test-key");
+        assert_eq!(provider.api_key_source, Slice1ProviderKeySource::Env);
+        fs::remove_dir_all(base).expect("temp vault directory should be removed");
+    }
+
+    #[test]
+    fn slice1_openai_key_uses_vault_when_env_missing() {
+        let _guard = env_lock().lock().expect("env lock should be available");
+        let (base, vault_path) = temp_vault_path("vault-fallback");
+        let vault_path_text = vault_path.to_string_lossy().to_string();
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _env_scope = ScopedEnvVar::unset("OPENAI_API_KEY");
+        DeviceVault::default_local()
+            .set_secret("openai_api_key", "vault-test-key")
+            .expect("vault secret should store");
+
+        let provider =
+            OpenAiSlice1Provider::from_env().expect("vault key should configure provider");
+
+        assert_eq!(provider.api_key, "vault-test-key");
+        assert_eq!(
+            provider.api_key_source,
+            Slice1ProviderKeySource::DeviceVault
+        );
+        fs::remove_dir_all(base).expect("temp vault directory should be removed");
+    }
+
+    #[test]
+    fn slice1_openai_key_missing_fails_closed_safely() {
+        let _guard = env_lock().lock().expect("env lock should be available");
+        let (base, vault_path) = temp_vault_path("missing");
+        let vault_path_text = vault_path.to_string_lossy().to_string();
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _env_scope = ScopedEnvVar::unset("OPENAI_API_KEY");
+
+        let error = OpenAiSlice1Provider::from_env().expect_err("missing key should fail closed");
+
+        assert_eq!(error, "missing_openai_api_key");
+        assert!(!error.contains("sk-"));
+        assert!(!error.contains("vault-test-key"));
+        fs::remove_dir_all(base).expect("temp vault directory should be removed");
+    }
+
+    #[test]
+    fn slice1_missing_provider_key_response_marks_safe_key_source_missing() {
+        let _guard = env_lock().lock().expect("env lock should be available");
+        let (base, vault_path) = temp_vault_path("missing-trace");
+        let vault_path_text = vault_path.to_string_lossy().to_string();
+        let _vault_scope = ScopedEnvVar::set("SELENE_DEVICE_VAULT_PATH", &vault_path_text);
+        let _env_scope = ScopedEnvVar::unset("OPENAI_API_KEY");
+
+        let error =
+            run_slice1_text_conversation_from_env(request("say hello"), "req_slice1".to_string())
+                .expect_err("missing key should fail closed with trace");
+
+        assert_eq!(error.class, Slice1ErrorClass::ProviderFailure);
+        assert_eq!(error.reason_code, "SLICE1_PROVIDER_CONFIG_FAIL");
+        assert_eq!(error.safe_reason, "missing_openai_api_key");
+        let trace = error.trace.expect("trace should be present");
+        assert!(trace
+            .safe_provider_metadata
+            .iter()
+            .any(|field| { field.key == "provider_key_source" && field.value == "missing" }));
+        for field in trace.safe_provider_metadata {
+            assert!(!field.value.contains("sk-"));
+            assert!(!field.value.contains("vault-test-key"));
+            assert!(!field.value.contains("env-test-key"));
+        }
+        fs::remove_dir_all(base).expect("temp vault directory should be removed");
     }
 }
