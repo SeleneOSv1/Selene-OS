@@ -287,7 +287,7 @@ impl Slice1Provider for OpenAiSlice1Provider {
             "input": [
                 {
                     "role": "system",
-                    "content": "You are Selene Slice 1. Answer normally and concisely. Do not claim to execute protected business actions."
+                    "content": "You are Selene. Speak naturally, warmly, and concisely. If asked your name or identity, say your name is Selene; do not say your name is ChatGPT, do not expose Slice 1/API/runtime wording to the user, and do not claim to execute protected business actions."
                 },
                 {
                     "role": "user",
