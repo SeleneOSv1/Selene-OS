@@ -124,6 +124,10 @@ private enum DesktopRealtimeTranscriptionFeatureFlag {
     static let name = "SELENE_DESKTOP_OPENAI_REALTIME_TRANSCRIPTION_ENABLED"
 
     static var isEnabled: Bool {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            return false
+        }
+
         let rawValue = ProcessInfo.processInfo.environment[name]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -146,6 +150,10 @@ private enum DesktopOpenAITtsFeatureFlag {
     static let name = "SELENE_DESKTOP_OPENAI_TTS_ENABLED"
 
     static var isEnabled: Bool {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            return false
+        }
+
         let rawValue = ProcessInfo.processInfo.environment[name]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
@@ -10093,6 +10101,45 @@ struct DesktopSessionShellView: View {
         return mergedTimelineEntries
     }
 
+    private func desktopTimelineEntriesIncludingCurrentSubmittedInput(
+        _ timelineEntries: [DesktopConversationTimelineEntryState],
+        isShowingCurrentDominantSurface: Bool
+    ) -> [DesktopConversationTimelineEntryState] {
+        var mergedTimelineEntries = timelineEntries
+
+        guard isShowingCurrentDominantSurface else {
+            return mergedTimelineEntries
+        }
+
+        if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest,
+           !desktopConversationTimelineContainsSubmittedUserText(
+               mergedTimelineEntries,
+               candidateText: pendingTypedTurnRequest.boundedPreview
+           ) {
+            mergedTimelineEntries.append(
+                DesktopConversationTimelineEntryState(
+                    speaker: "You",
+                    posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
+                    body: pendingTypedTurnRequest.boundedPreview,
+                    detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
+                    sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
+                )
+            )
+        }
+
+        if let submittedUserContinuityEntry = desktopSubmittedUserContinuityTimelineEntry(
+            isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
+        ),
+            !desktopConversationTimelineContainsSubmittedUserText(
+                mergedTimelineEntries,
+                candidateText: submittedUserContinuityEntry.body
+            ) {
+            mergedTimelineEntries.append(submittedUserContinuityEntry)
+        }
+
+        return mergedTimelineEntries
+    }
+
     private func desktopPersistSubmittedUserContinuityIfNeeded(
         requestID: String,
         inputMode: DesktopSubmittedUserContinuityPreviewState.InputMode,
@@ -10352,6 +10399,15 @@ struct DesktopSessionShellView: View {
     }
 
     private func desktopActivateComposerVoiceMode() {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_voice_gate_disabled")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop composer voice activation blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
+        }
+
         desktopComposerVoiceModeEnabled = true
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         startDesktopComposerVoiceTurn()
@@ -10555,6 +10611,15 @@ struct DesktopSessionShellView: View {
     ) {
         if let stage6IdleCloseReason {
             scheduleDesktopStage6IdleCloseCheckAfterValidEngagement(reason: stage6IdleCloseReason)
+        }
+
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_voice_resume_gate_disabled")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop composer voice resume blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
         }
 
         guard desktopComposerVoiceModeEnabled,
@@ -10778,12 +10843,30 @@ struct DesktopSessionShellView: View {
     }
 
     private func startDesktopManualWakeActivationFromWaveButton() {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_manual_wake_gate_disabled")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop manual wake activation blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
+        }
+
         desktopComposerVoiceModeEnabled = false
         desktopComposerVoiceModeAwaitingReplyPlaybackCompletion = false
         startDesktopComposerVoiceTurn()
     }
 
     private func startPostWakeInstructionListeningAfterGreeting() {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_post_wake_instruction_gate_disabled")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop post-wake instruction listening blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
+        }
+
         desktopPostWakeInstructionListeningAuthorized = true
         desktopComposerVoiceModeEnabled = true
         requestDesktopTypedTurnComposerFocus(reason: "post_wake_instruction_listening")
@@ -10862,6 +10945,16 @@ struct DesktopSessionShellView: View {
         requestID: String,
         source: String
     ) async {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopScreenLifecycleVoiceRearmTransitionInFlight = false
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_screen_lifecycle_voice_rearm_gate_disabled")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop lifecycle post-action voice rearm blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) id=\(requestID) source=\(boundedFailureLogToken(source)) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
+        }
+
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) desktop lifecycle post-action rearm mode=active_instruction_listening id=\(requestID) source=\(boundedFailureLogToken(source)) canonical_intent=\(boundedFailureLogToken(lifecycleAction.canonicalIntent))"
         )
@@ -10966,6 +11059,15 @@ struct DesktopSessionShellView: View {
     }
 
     private func startDesktopComposerVoiceTurn() {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_composer_voice_gate_disabled")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop composer voice turn blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
+        }
+
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
         desktopWakeListenerController.haltCaptureSession()
         if !wakeDispatchInFlight {
@@ -10992,6 +11094,15 @@ struct DesktopSessionShellView: View {
     }
 
     private func startDesktopExplicitVoiceTurn() {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_explicit_voice_gate_disabled")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop explicit voice start blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
+        }
+
         let featureFlagEnabled = DesktopRealtimeTranscriptionFeatureFlag.isEnabled
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) desktop realtime transcription flag name=\(DesktopRealtimeTranscriptionFeatureFlag.name) enabled=\(featureFlagEnabled)"
@@ -11329,10 +11440,22 @@ struct DesktopSessionShellView: View {
                             .clipShape(Circle())
                     }
                     .buttonStyle(.plain)
+                    .disabled(
+                        !DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+                            && !desktopExplicitVoiceCaptureControlActive
+                    )
+                    .opacity(
+                        !DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+                            && !desktopExplicitVoiceCaptureControlActive
+                            ? 0.45
+                            : 1
+                    )
                     .help(
-                        desktopExplicitVoiceCaptureControlActive
-                            ? "Stop and send voice turn"
-                            : "Manual wake / explicit activation"
+                        !DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+                            ? "Voice and wake are gated while Slice 1 typed foundation is under live acceptance"
+                            : desktopExplicitVoiceCaptureControlActive
+                                ? "Stop and send voice turn"
+                                : "Manual wake / explicit activation"
                     )
 
                     if desktopComposerShouldShowSendButton {
@@ -12407,26 +12530,11 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        timelineEntries = desktopTimelineEntriesIncludingCurrentSubmittedInput(
+            timelineEntries,
+            isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
+        )
         timelineEntries = desktopTimelineEntriesIncludingPersistedHistory(timelineEntries)
-
-        if isShowingCurrentDominantSurface {
-            if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
-                if !desktopConversationTimelineContainsSubmittedUserText(
-                    timelineEntries,
-                    candidateText: pendingTypedTurnRequest.boundedPreview
-                ) {
-                    timelineEntries.append(
-                        DesktopConversationTimelineEntryState(
-                            speaker: "You",
-                            posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
-                            body: pendingTypedTurnRequest.boundedPreview,
-                            detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
-                            sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
-                        )
-                    )
-                }
-            }
-        }
 
         let authoritativeResponseText = isShowingCurrentDominantSurface
             ? desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
@@ -12565,26 +12673,11 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        timelineEntries = desktopTimelineEntriesIncludingCurrentSubmittedInput(
+            timelineEntries,
+            isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
+        )
         timelineEntries = desktopTimelineEntriesIncludingPersistedHistory(timelineEntries)
-
-        if isShowingCurrentDominantSurface {
-            if let pendingTypedTurnRequest = desktopTypedTurnPendingRequest {
-                if !desktopConversationTimelineContainsSubmittedUserText(
-                    timelineEntries,
-                    candidateText: pendingTypedTurnRequest.boundedPreview
-                ) {
-                    timelineEntries.append(
-                        DesktopConversationTimelineEntryState(
-                            speaker: "You",
-                            posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
-                            body: pendingTypedTurnRequest.boundedPreview,
-                            detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
-                            sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
-                        )
-                    )
-                }
-            }
-        }
 
         let authoritativeResponseText = isShowingCurrentDominantSurface
             ? desktopAuthoritativeReplyRenderState?.authoritativeResponseText?
@@ -23215,6 +23308,16 @@ struct DesktopSessionShellView: View {
         guard let pendingRequest = explicitVoiceController.pendingRequest else {
             return
         }
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) explicit voice dispatch blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) id=\(pendingRequest.id) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            clearComposerDraftIfItOnlyMirrorsVoiceTranscript(pendingRequest.transcript)
+            explicitVoiceController.clearPendingPreparedVoiceTurn()
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_explicit_voice_dispatch_gate_disabled")
+            return
+        }
 
         let conversationKey = desktopForegroundConversationHistoryKey
         var shouldAwaitVoiceModeReplyPlaybackCompletion = false
@@ -23447,6 +23550,16 @@ struct DesktopSessionShellView: View {
         guard let pendingRequest = desktopWakeListenerController.pendingRequest else {
             return
         }
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) wake dispatch blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) id=\(pendingRequest.id) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            desktopWakeListenerController.clearPendingPreparedWakeTurn()
+            lastStagedWakeTriggeredVoiceTurnRequestState = nil
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_wake_dispatch_gate_disabled")
+            return
+        }
         guard desktopWakeTriggeredDispatchInFlightRequestID != pendingRequest.id else {
             return
         }
@@ -23665,6 +23778,17 @@ struct DesktopSessionShellView: View {
         requestID: String,
         transcript: String
     ) async {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) explicit voice bare wake blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) id=\(requestID) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            clearComposerDraftIfItOnlyMirrorsVoiceTranscript(transcript)
+            explicitVoiceController.clearPendingPreparedVoiceTurn()
+            desktopDeactivateComposerVoiceMode(preserveTranscriptPreview: false)
+            requestDesktopTypedTurnComposerFocus(reason: "slice1_bare_wake_gate_disabled")
+            return
+        }
+
         desktopAppendRuntimeBridgeDebugLog(
             "\(desktopTraceClockFields()) explicit voice bare wake consumed_as=lifecycle_only id=\(requestID)"
         )

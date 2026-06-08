@@ -72,11 +72,12 @@ final class SeleneMacDesktopAppDelegate: NSObject, NSApplicationDelegate {
         if let sameExecutableApplication = existingApplications.first(where: { application in
             canonicalPath(application.executableURL) == currentExecutablePath
         }) {
+            // Prefer the newly launched binary so live acceptance cannot keep a stale rebuilt app alive.
+            sameExecutableApplication.terminate()
             existingApplications
                 .filter { canonicalPath($0.executableURL) != currentExecutablePath }
                 .forEach { $0.terminate() }
-            sameExecutableApplication.activate(options: [.activateAllWindows])
-            return true
+            return false
         }
 
         let currentExecutableModifiedAt = executableModifiedAt(Bundle.main.executableURL)
