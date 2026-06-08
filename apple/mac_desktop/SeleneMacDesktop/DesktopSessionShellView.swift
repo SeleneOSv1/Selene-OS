@@ -160,6 +160,23 @@ private enum DesktopOpenAITtsFeatureFlag {
     }
 }
 
+private enum DesktopLegacyWakeLifecycleFeatureGate {
+    static let name = "SELENE_DESKTOP_LEGACY_WAKE_LIFECYCLE_ENABLED"
+    static let disabledReason = "slice1_typed_foundation_gate"
+
+    static var isEnabled: Bool {
+        let rawValue = ProcessInfo.processInfo.environment[name]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        switch rawValue {
+        case "1", "true", "yes", "on", "enabled":
+            return true
+        default:
+            return false
+        }
+    }
+}
+
 private enum DesktopVoiceProviderLane {
     static let sttProviderID = "openai_realtime_primary"
     static let ttsProviderID = "openai_tts_primary"
@@ -9087,7 +9104,11 @@ struct DesktopSessionShellView: View {
                             Text("Wake for \"Selene\"")
                                 .font(.headline)
 
-                            Text("When enabled, Desktop may keep the foreground wake listener available according to app lifecycle and runtime policy. Desktop remains capture/render only.")
+                            Text(
+                                DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+                                    ? "When enabled, Desktop may keep the foreground wake listener available according to app lifecycle and runtime policy. Desktop remains capture/render only."
+                                    : "Future voice and lifecycle wake behavior is gated off during Slice 1 typed foundation testing. Desktop remains on the typed Slice 1 path."
+                            )
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -9098,7 +9119,10 @@ struct DesktopSessionShellView: View {
                         Toggle(
                             "",
                             isOn: Binding(
-                                get: { desktopControlledWakeEnabled },
+                                get: {
+                                    DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+                                        && desktopControlledWakeEnabled
+                                },
                                 set: { newValue in
                                     desktopSetControlledWakeEnabled(newValue)
                                 }
@@ -9106,13 +9130,20 @@ struct DesktopSessionShellView: View {
                         )
                         .labelsHidden()
                         .accessibilityLabel("Wake for Selene")
+                        .disabled(!DesktopLegacyWakeLifecycleFeatureGate.isEnabled)
                     }
 
                     Divider()
 
                     metadataRow(
+                        label: "legacy_wake_lifecycle_gate",
+                        value: DesktopLegacyWakeLifecycleFeatureGate.isEnabled ? "ON" : "FUTURE_SLICE_GATED"
+                    )
+                    metadataRow(
                         label: "controlled_wake",
-                        value: desktopControlledWakeEnabled ? "ON" : "OFF"
+                        value: DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+                            ? (desktopControlledWakeEnabled ? "ON" : "OFF")
+                            : "OFF"
                     )
                     metadataRow(
                         label: "listener_state",
@@ -9120,10 +9151,12 @@ struct DesktopSessionShellView: View {
                     )
                     metadataRow(
                         label: "wake_surface",
-                        value: desktopWakeListenerPromptState == nil ? "waiting_for_runtime" : "ready"
+                        value: DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+                            ? (desktopWakeListenerPromptState == nil ? "waiting_for_runtime" : "ready")
+                            : "future_slice_gated"
                     )
 
-                    Text("The waveform button remains manual wake / explicit activation. The microphone button remains meeting recording. No Apple STT/TTS fallback, provider call, protected execution, memory write, or authority grant is introduced by this setting.")
+                    Text("The waveform button remains manual explicit activation. The microphone button remains meeting recording. No Apple STT/TTS fallback, provider call, protected execution, memory write, or authority grant is introduced by this setting.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -10358,6 +10391,14 @@ struct DesktopSessionShellView: View {
 
     private func scheduleDesktopStage6IdleCloseCheckAfterValidEngagement(reason: String) {
         clearDesktopSessionSleepModeIfNeeded(reason: "valid_engagement_\(reason)")
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            cancelDesktopStage6IdleCloseCheck(reason: "\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason)_\(reason)")
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop stage6 idle close check suppressed reason=\(boundedFailureLogToken(reason)) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false slice1_typed_path_preserved=true"
+            )
+            return
+        }
+
         let deadlineNS = DispatchTime.now().uptimeNanoseconds &+ desktopStage6IdleCloseDelayNS
         scheduleDesktopStage6IdleCloseCheck(deadlineNS: deadlineNS, reason: reason)
     }
@@ -11903,6 +11944,10 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopWakeProfileAvailabilityPromptState: DesktopWakeProfileAvailabilityPromptState? {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            return nil
+        }
+
         guard desktopReadyTimeHandoffIsActive,
               let wakewordProofContext = desktopWakewordConfiguredProofContext else {
             return nil
@@ -11917,6 +11962,10 @@ struct DesktopSessionShellView: View {
     }
 
     private var desktopWakeListenerPromptState: DesktopWakeListenerPromptState? {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            return nil
+        }
+
         if desktopReadyTimeHandoffIsActive,
            let wakewordProofContext = desktopWakewordConfiguredProofContext,
            let desktopWakeProfileAvailabilityRuntimeOutcomeState,
@@ -11956,7 +12005,8 @@ struct DesktopSessionShellView: View {
 
     private var desktopWakeListenerMayRunForCurrentAppLifecycle: Bool {
         // A hidden or minimized window is still the same live Desktop session.
-        scenePhase == .active || NSApplication.shared.isRunning
+        DesktopLegacyWakeLifecycleFeatureGate.isEnabled
+            && (scenePhase == .active || NSApplication.shared.isRunning)
     }
 
     private var desktopAvailabilityWindowHiddenOrMinimized: Bool {
@@ -12198,6 +12248,13 @@ struct DesktopSessionShellView: View {
             return snapshot(
                 .wakeListening,
                 detail: "Wake listener active."
+            )
+        }
+
+        if !DesktopLegacyWakeLifecycleFeatureGate.isEnabled {
+            return snapshot(
+                .mutedNotListening,
+                detail: "Slice 1 typed foundation mode is active; legacy wake, listening, and session sleep lifecycle surfaces are future-slice gated."
             )
         }
 
@@ -22652,6 +22709,25 @@ struct DesktopSessionShellView: View {
             || explicitVoiceController.pendingRequest != nil
         let wakeDispatchInFlight = desktopWakeListenerController.listenerState == .dispatching
 
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            if desktopControlledWakeEnabled {
+                desktopControlledWakeEnabled = false
+                desktopAppendRuntimeBridgeDebugLog(
+                    "\(desktopTraceClockFields()) desktop controlled wake disabled reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name)"
+                )
+            }
+            if desktopWakeListenerController.listenerState.isActiveForMicrophone
+                || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight)
+                || (lastStagedWakeTriggeredVoiceTurnRequestState != nil && !wakeDispatchInFlight) {
+                desktopWakeListenerController.haltCaptureSession()
+                if !wakeDispatchInFlight {
+                    desktopWakeListenerController.clearPendingPreparedWakeTurn()
+                    lastStagedWakeTriggeredVoiceTurnRequestState = nil
+                }
+            }
+            return
+        }
+
         guard desktopControlledWakeEnabled else {
             if desktopWakeListenerController.listenerState.isActiveForMicrophone
                 || (desktopWakeListenerController.pendingRequest != nil && !wakeDispatchInFlight)
@@ -22719,7 +22795,8 @@ struct DesktopSessionShellView: View {
 
     @MainActor
     private func synchronizeDesktopWakeAutoStartState() {
-        guard desktopControlledWakeEnabled,
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled,
+              desktopControlledWakeEnabled,
               desktopWakeListenerMayRunForCurrentAppLifecycle,
               let promptState = desktopWakeListenerPromptState else {
             desktopWakeAutoStartAttemptedPromptID = nil
@@ -22762,6 +22839,7 @@ struct DesktopSessionShellView: View {
         guard desktopWakeListenerController.listenerState == .failed,
               let failureID = desktopWakeListenerController.failedRequest?.id,
               desktopWakeListenerFailureIsRecoverableForAutoRestart(failureID),
+              DesktopLegacyWakeLifecycleFeatureGate.isEnabled,
               desktopControlledWakeEnabled,
               desktopWakeListenerMayRunForCurrentAppLifecycle,
               desktopWakeListenerController.pendingRequest == nil,
@@ -23851,6 +23929,14 @@ struct DesktopSessionShellView: View {
     }
 
     private func startDesktopWakeListener(promptState: DesktopWakeListenerPromptState) {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop local wake start blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            stopDesktopWakeListenerAndSuppressAutoStart(promptState: promptState)
+            return
+        }
+
         desktopCanonicalRuntimeOutcomeState = nil
         desktopAuthoritativeReplyRenderState = nil
         desktopAuthoritativeReplyProvenanceRenderState = nil
@@ -23884,6 +23970,15 @@ struct DesktopSessionShellView: View {
     }
 
     private func desktopSetControlledWakeEnabled(_ isEnabled: Bool) {
+        guard DesktopLegacyWakeLifecycleFeatureGate.isEnabled else {
+            desktopControlledWakeEnabled = false
+            stopDesktopWakeListenerAndSuppressAutoStart(promptState: desktopWakeListenerPromptState)
+            desktopAppendRuntimeBridgeDebugLog(
+                "\(desktopTraceClockFields()) desktop controlled wake toggle blocked reason=\(DesktopLegacyWakeLifecycleFeatureGate.disabledReason) requested_enabled=\(isEnabled) gate=\(DesktopLegacyWakeLifecycleFeatureGate.name) gate_enabled=false"
+            )
+            return
+        }
+
         desktopControlledWakeEnabled = isEnabled
         if isEnabled {
             desktopWakeAutoStartSuppressedPromptID = nil
