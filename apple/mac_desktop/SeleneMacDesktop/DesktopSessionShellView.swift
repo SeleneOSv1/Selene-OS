@@ -7842,6 +7842,7 @@ struct DesktopSessionShellView: View {
     @State private var desktopTypedTurnDispatchInFlightRequestID: String?
     @State private var desktopTypedTurnFailedRequest: InterruptContinuityResponseFailureState?
     @State private var desktopSubmittedUserContinuityPreviewState: DesktopSubmittedUserContinuityPreviewState?
+    @State private var desktopLiveConversationTimelineEntries: [DesktopConversationTimelineEntryState] = []
     @State private var desktopPersistedConversationTimelineHistory: [DesktopPersistedConversationTimelineHistoryEntry] = []
     @State private var desktopSidebarConversationMetadata: [String: DesktopSidebarConversationMetadata] = [:]
     @State private var desktopSidebarSearchQuery: String = ""
@@ -8387,6 +8388,7 @@ struct DesktopSessionShellView: View {
         desktopTypedTurnDispatchInFlightRequestID = nil
         desktopTypedTurnFailedRequest = nil
         desktopSubmittedUserContinuityPreviewState = nil
+        desktopLiveConversationTimelineEntries = []
         desktopCanonicalRuntimeOutcomeState = nil
         desktopAuthoritativeReplyRenderState = nil
         desktopAuthoritativeReplyProvenanceRenderState = nil
@@ -10072,6 +10074,56 @@ struct DesktopSessionShellView: View {
                 desktopPersistedConversationTimelineHistory.count - 200
             )
         }
+    }
+
+    private func desktopAppendLiveConversationTimelineEntry(
+        _ entry: DesktopConversationTimelineEntryState
+    ) {
+        let normalizedBody = entry.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalizedBody.isEmpty else {
+            return
+        }
+
+        if let existingIndex = desktopLiveConversationTimelineEntries.firstIndex(where: {
+            $0.id == entry.id
+        }) {
+            desktopLiveConversationTimelineEntries[existingIndex] = entry
+        } else {
+            desktopLiveConversationTimelineEntries.append(entry)
+        }
+
+        if desktopLiveConversationTimelineEntries.count > 80 {
+            desktopLiveConversationTimelineEntries.removeFirst(
+                desktopLiveConversationTimelineEntries.count - 80
+            )
+        }
+    }
+
+    private func desktopTimelineEntriesIncludingLiveConversation(
+        _ timelineEntries: [DesktopConversationTimelineEntryState],
+        isShowingCurrentDominantSurface: Bool
+    ) -> [DesktopConversationTimelineEntryState] {
+        var mergedTimelineEntries = timelineEntries
+
+        guard isShowingCurrentDominantSurface else {
+            return mergedTimelineEntries
+        }
+
+        for liveEntry in desktopLiveConversationTimelineEntries {
+            let alreadyVisible = mergedTimelineEntries.contains { entry in
+                entry.id == liveEntry.id
+                    || desktopConversationTimelineEntriesRenderSameTurn(
+                        entry,
+                        liveEntry
+                    )
+            }
+
+            if !alreadyVisible {
+                mergedTimelineEntries.append(liveEntry)
+            }
+        }
+
+        return mergedTimelineEntries
     }
 
     private func desktopTimelineEntriesIncludingPersistedHistory(
@@ -12530,6 +12582,10 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        timelineEntries = desktopTimelineEntriesIncludingLiveConversation(
+            timelineEntries,
+            isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
+        )
         timelineEntries = desktopTimelineEntriesIncludingCurrentSubmittedInput(
             timelineEntries,
             isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
@@ -12673,6 +12729,10 @@ struct DesktopSessionShellView: View {
             )
         }
 
+        timelineEntries = desktopTimelineEntriesIncludingLiveConversation(
+            timelineEntries,
+            isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
+        )
         timelineEntries = desktopTimelineEntriesIncludingCurrentSubmittedInput(
             timelineEntries,
             isShowingCurrentDominantSurface: isShowingCurrentDominantSurface
@@ -12985,6 +13045,21 @@ struct DesktopSessionShellView: View {
             text: outcomeState.authoritativeResponseText,
             conversationKey: conversationKey
         )
+
+        let normalizedReplyText = outcomeState.authoritativeResponseText?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !normalizedReplyText.isEmpty {
+            desktopAppendLiveConversationTimelineEntry(
+                DesktopConversationTimelineEntryState(
+                    stableID: "selene::\(requestID)",
+                    speaker: "Selene",
+                    posture: "authoritative_reply_text",
+                    body: normalizedReplyText,
+                    detail: "Cloud-authored authoritative reply text only. This shell does not fabricate local answer content.",
+                    sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
+                )
+            )
+        }
     }
 
     private var desktopConversationRuntimeDispatchFailureAttachmentState: DesktopConversationRuntimeDispatchFailureAttachmentState? {
@@ -24041,13 +24116,27 @@ struct DesktopSessionShellView: View {
         desktopAuthoritativeReplyProvenanceRenderState = nil
         desktopAuthoritativeReplyPlaybackController.reset()
         desktopAuthoritativeReplyPlaybackState = .idle
-        desktopTypedTurnPendingRequest = DesktopTypedTurnRequestState(
+        let pendingRequest = DesktopTypedTurnRequestState(
             id: "\(origin.requestIDPrefix)_\(deviceTurnSequence)",
             origin: origin,
             deviceTurnSequence: deviceTurnSequence,
             text: trimmedDraft,
             byteCount: trimmedDraft.utf8.count
         )
+        desktopTypedTurnPendingRequest = pendingRequest
+
+        if origin == .keyboardComposer {
+            desktopAppendLiveConversationTimelineEntry(
+                DesktopConversationTimelineEntryState(
+                    stableID: "user::\(pendingRequest.id)",
+                    speaker: "You",
+                    posture: DesktopSubmittedUserContinuityPreviewState.InputMode.typed.posture,
+                    body: trimmedDraft,
+                    detail: DesktopSubmittedUserContinuityPreviewState.InputMode.typed.detail,
+                    sourceSurface: DesktopSubmittedUserContinuityPreviewState.InputMode.typed.sourceSurface
+                )
+            )
+        }
 
         return nil
     }
