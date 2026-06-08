@@ -248,6 +248,301 @@ Slice 1 established the need for this protocol because implementation and automa
 
 Future slices must include live acceptance operation as part of the build workflow.
 
+## Universal Interactive Live Test Observation + Repair Protocol
+
+This protocol applies to every future runtime implementation slice involving:
+
+- Desktop
+- iPhone
+- mobile client
+- web client
+- voice UI
+- text UI
+- rendering
+- audio capture/playback
+- uploads
+- local-cloud runtime testing
+- provider-backed responses
+- memory/search/docs/tools workflows
+- protected action testing
+- JD live acceptance
+
+This protocol does not apply to docs-only tasks.
+
+### Master Law
+
+Every runtime live acceptance test must be operated as an interactive observation and repair loop.
+
+Codex must not merely tell JD to test and wait for a vague result.
+
+Codex must:
+
+- prepare the latest app/runtime
+- tell JD exactly what to type/say/click/upload
+- observe or capture the actual JD input where possible
+- observe or capture the visible/audible result where possible
+- verify backend trace/proof for that exact action
+- compare visible result against expected design
+- classify every failure precisely
+- repair only narrow in-scope defects where authorized
+- rerun automated tests after repair
+- rerun live test after repair
+- repeat until JD and backend evidence agree, or until an out-of-scope blocker is reported
+
+A slice is not accepted because Codex thinks it probably worked.
+
+A slice is accepted only when:
+
+- JD confirms the visible/audible result is correct
+- Codex verifies backend evidence for the same action
+- the correct engine path was used
+- forbidden legacy paths were not used
+- no out-of-scope or unproven behavior remains
+
+### Input/Output Capture Law
+
+For every JD live test, Codex must record or request:
+
+- exact JD input typed/spoken/clicked/uploaded
+- timestamp or test run marker
+- app/client used
+- screen/app state before action, where available
+- visible response text, screenshot, audio confirmation, or UI result
+- backend request ID
+- session ID
+- turn ID
+- endpoint/path used
+- engine sequence used
+- output packet/render packet ID
+- error/degraded state if any
+
+If Codex has direct GUI/screenshot/app automation access, Codex must use it where lawful and practical.
+
+If Codex cannot directly observe the GUI, Codex must explicitly ask JD for:
+
+- exact visible response text
+- screenshot
+- exact error message
+- exact audible result for voice tests
+
+Codex must not infer visible Desktop/iPhone behavior only from backend success.
+
+### Step-by-Step Operator Duty
+
+For every live test, Codex must guide JD one step at a time.
+
+Codex must say:
+
+- backend/local-cloud runtime is ready or not ready
+- latest app is launched or exact manual launch path
+- exact prompt/action JD must perform
+- expected visible/audible result
+- what evidence Codex is watching
+- what JD should report back
+- whether the step passed or failed
+- what the next step is
+
+Codex must not ask JD to "test generally."
+
+Codex must not ask JD to guess what matters.
+
+Codex must not move to the next step until the current step is classified.
+
+### Per-Step PASS/FAIL Classification
+
+Every live test step must be classified as exactly one of:
+
+- STEP_NOT_READY
+- STEP_RUNNING
+- STEP_PASSED
+- STEP_FAILED
+- STEP_BLOCKED_OUT_OF_SCOPE
+- STEP_REQUIRES_JD_VISIBLE_CONFIRMATION
+- STEP_REQUIRES_BACKEND_EVIDENCE
+- STEP_REPAIRED_AND_RETEST_REQUIRED
+
+Codex must explain the reason for each failed or blocked step.
+
+### Automated Evidence Correlation
+
+Codex must correlate JD-visible behavior with backend proof.
+
+For every successful step, Codex must prove:
+
+- the visible/audible result came from the expected endpoint/path
+- the expected engine sequence ran
+- PH1.X ran before provider when required
+- PH1.WRITE finalized output when required
+- PH1.PROVIDERS was used before provider calls when required
+- Desktop/iPhone did not call providers directly
+- old legacy paths did not own the turn
+- adapter monolith did not execute forbidden provider logic
+- trace/proof belongs to the same JD action
+- no stale app/runtime instance produced the result
+
+### Failure Diagnosis Matrix
+
+Codex must classify failures into exact categories before fixing.
+
+Standing categories:
+
+- APP_NOT_LAUNCHED
+- STALE_APP_UNPROVEN
+- WRONG_APP_BUNDLE
+- BACKEND_NOT_RUNNING
+- CLIENT_BACKEND_CONNECTION_FAILED
+- WRONG_ENDPOINT_USED
+- LEGACY_ENDPOINT_USED
+- PROVIDER_KEY_MISSING
+- PROVIDER_CALL_FAILED
+- VAULT_READ_FAILED
+- PH1X_NOT_RUN
+- PH1WRITE_BYPASSED
+- PROVIDER_BYPASS_DETECTED
+- DESKTOP_DIRECT_PROVIDER_CALL_DETECTED
+- ADAPTER_MONOLITH_EXECUTION_DETECTED
+- OLD_PH1OS_PATH_USED
+- TRACE_MISSING
+- TRACE_DOES_NOT_MATCH_VISIBLE_OUTPUT
+- UI_RENDER_FAILED
+- AUDIO_CAPTURE_FAILED
+- AUDIO_PLAYBACK_FAILED
+- BARge_IN_NOT_DETECTED
+- CANCEL_OUTPUT_FAILED
+- MEMORY_RETRIEVAL_UNPROVEN
+- SEARCH_EVIDENCE_MISSING
+- FILE_UPLOAD_FAILED
+- PROTECTED_GATE_BYPASSED
+- JD_VISIBLE_RESULT_INCORRECT
+- UNKNOWN
+
+UNKNOWN is not acceptable as a final state unless Codex explains what evidence is missing and what would be needed to classify it.
+
+### Narrow Repair Loop Law
+
+If a failure is inside the approved slice scope, Codex may repair narrowly only inside the approved file scope for that slice.
+
+After any repair, Codex must:
+
+- show changed files
+- prove no forbidden files changed
+- rerun required automated tests
+- rebuild latest app if client behavior changed
+- relaunch latest app or give JD exact new launch path
+- rerun the same JD live test
+- verify backend evidence again
+- ask JD to confirm the visible/audible result again
+
+Codex must not:
+
+- broaden scope
+- implement future slices
+- rewrite unrelated systems
+- delete legacy code broadly
+- hide failures behind mocks/tests
+- claim acceptance without retesting the real app
+
+### JD Reconciliation Law
+
+Before a slice can reach JD_LIVE_ACCEPTANCE_PASSED, Codex must explicitly reconcile with JD.
+
+Codex must ask JD a direct confirmation question:
+
+```text
+Do you confirm the visible/audible result in the real app matches the expected behavior for this step?
+```
+
+JD must answer yes/confirmed or provide the actual visible/audible problem.
+
+If JD confirms and backend evidence agrees, Codex may mark:
+
+```text
+JD_LIVE_ACCEPTANCE_PASSED
+```
+
+If backend evidence passes but JD has not confirmed, status remains:
+
+```text
+JD_LIVE_ACCEPTANCE_PENDING
+```
+
+If JD says the result is wrong, status is:
+
+```text
+JD_LIVE_ACCEPTANCE_FAILED
+```
+
+until repaired and retested.
+
+### Cannot-See-GUI Rule
+
+If Codex cannot directly see the GUI, Codex must not pretend it can.
+
+Codex must state:
+
+```text
+GUI_DIRECT_OBSERVATION_UNAVAILABLE
+```
+
+Then Codex must rely on:
+
+- backend trace/proof it can inspect
+- exact visible response text from JD
+- screenshot from JD where possible
+- exact error messages from JD
+- app logs where available
+
+Codex may not mark the step passed from backend evidence alone if the requirement is user-visible Desktop/iPhone behavior.
+
+### Final Report Law
+
+Every runtime live acceptance final report must include:
+
+- exact JD input/action
+- whether Codex directly observed GUI or JD reported result
+- visible response text or screenshot status
+- backend request ID
+- endpoint/path used
+- engine sequence
+- output/render packet ID
+- forbidden path checks
+- app provenance proof
+- backend provenance proof
+- step-by-step PASS/FAIL table
+- failures found
+- repairs made
+- tests rerun
+- live retest result
+- JD reconciliation statement
+- final acceptance state
+
+Final acceptance state must be one of:
+
+- JD_LIVE_ACCEPTANCE_PASSED
+- JD_LIVE_ACCEPTANCE_PENDING
+- JD_LIVE_ACCEPTANCE_FAILED
+- BLOCKED_OUT_OF_SCOPE
+
+Codex must not use vague wording such as:
+
+- "seems to work"
+- "should be fine"
+- "ready for JD"
+- "implemented"
+- "likely working"
+
+as acceptance.
+
+### Future Instruction Law
+
+Every future runtime implementation or live acceptance Codex instruction must reference:
+
+- DOC 86 Universal Runtime Slice Live Acceptance Operator Protocol
+- DOC 86 Universal Latest Client App Provenance + Launch Readiness Protocol
+- DOC 86 Universal Interactive Live Test Observation + Repair Protocol
+
+If a future instruction omits these phrases, DOC 86 still controls and Codex must apply all three protocols.
+
 ## 4. First Executable Build Sequence
 
 DOC 86 defines these slices in this order unless JD explicitly overrides later.
