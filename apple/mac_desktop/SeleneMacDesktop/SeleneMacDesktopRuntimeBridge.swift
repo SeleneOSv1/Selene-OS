@@ -5079,6 +5079,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
     private let tenantID: String?
     private let deviceID: String
     private let urlSession: URLSession
+    private let providerBackedTextTurnURLSession: URLSession
     private let openAITtsURLSession: URLSession
     private var managedAdapterProcess: Process?
     private var managedAdapterLogHandle: FileHandle?
@@ -5096,6 +5097,12 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         configuration.timeoutIntervalForRequest = 15
         configuration.timeoutIntervalForResource = 15
         self.urlSession = URLSession(configuration: configuration)
+        let providerBackedTextTurnConfiguration = URLSessionConfiguration.ephemeral
+        providerBackedTextTurnConfiguration.timeoutIntervalForRequest = 90
+        providerBackedTextTurnConfiguration.timeoutIntervalForResource = 90
+        self.providerBackedTextTurnURLSession = URLSession(
+            configuration: providerBackedTextTurnConfiguration
+        )
         let openAITtsConfiguration = URLSessionConfiguration.ephemeral
         openAITtsConfiguration.timeoutIntervalForRequest = 45
         openAITtsConfiguration.timeoutIntervalForResource = 45
@@ -5628,7 +5635,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         do {
             try await ensureAdapterAvailable()
 
-            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let (data, response) = try await providerBackedTextTurnURLSession.data(
+                for: ingressContext.urlRequest
+            )
             let decoder = JSONDecoder()
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.statusCode ?? 0
@@ -5959,7 +5968,9 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         do {
             try await ensureAdapterAvailable()
 
-            let (data, response) = try await urlSession.data(for: ingressContext.urlRequest)
+            let (data, response) = try await providerBackedTextTurnURLSession.data(
+                for: ingressContext.urlRequest
+            )
             let decoder = JSONDecoder()
             let httpResponse = response as? HTTPURLResponse
             let statusCode = httpResponse?.statusCode ?? 0
@@ -7363,6 +7374,7 @@ final class DesktopCanonicalRuntimeBridge: ObservableObject {
         let body = try encoder.encode(payload)
         let endpointURL = adapterBaseURL.appendingPathComponent("v1/probabilistic/slice1/text")
         var urlRequest = URLRequest(url: endpointURL)
+        urlRequest.timeoutInterval = 90
         urlRequest.httpMethod = "POST"
         urlRequest.httpBody = body
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")

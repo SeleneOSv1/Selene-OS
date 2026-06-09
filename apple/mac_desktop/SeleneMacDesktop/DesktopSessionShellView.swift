@@ -7123,7 +7123,7 @@ private struct DesktopSubmittedUserContinuityPreviewState: Identifiable, Equatab
     let text: String
 
     var id: String {
-        [requestID, inputMode.rawValue, text].joined(separator: "::")
+        "user::\(requestID)"
     }
 
     var timelineEntry: DesktopConversationTimelineEntryState {
@@ -10138,11 +10138,23 @@ struct DesktopSessionShellView: View {
             }
 
             let alreadyVisible = mergedTimelineEntries.contains { entry in
-                entry.id == persistedEntry.id
-                    || desktopConversationTimelineEntriesRenderSameTurn(
-                        entry,
-                        persistedEntry
-                    )
+                if entry.id == persistedEntry.id {
+                    return true
+                }
+
+                guard desktopConversationTimelineEntriesRenderSameTurn(
+                    entry,
+                    persistedEntry
+                ) else {
+                    return false
+                }
+
+                if desktopConversationTimelineEntryHasTurnOrder(persistedEntry),
+                   !desktopConversationTimelineEntryHasTurnOrder(entry) {
+                    return false
+                }
+
+                return true
             }
 
             if !alreadyVisible {
@@ -10170,10 +10182,15 @@ struct DesktopSessionShellView: View {
            ) {
             mergedTimelineEntries.append(
                 DesktopConversationTimelineEntryState(
+                    stableID: "user::\(pendingTypedTurnRequest.id)",
                     speaker: "You",
                     posture: pendingTypedTurnRequest.origin.timelinePendingPosture,
                     body: pendingTypedTurnRequest.boundedPreview,
-                    detail: pendingTypedTurnRequest.origin.timelinePendingDetail,
+                    detail: desktopConversationTimelineEntryDetailAppendingTurnOrdering(
+                        pendingTypedTurnRequest.origin.timelinePendingDetail,
+                        requestID: pendingTypedTurnRequest.id,
+                        role: "user"
+                    ),
                     sourceSurface: pendingTypedTurnRequest.origin.pendingSourceSurface
                 )
             )
@@ -10208,7 +10225,11 @@ struct DesktopSessionShellView: View {
             speaker: "You",
             posture: inputMode.posture,
             body: normalizedText,
-            detail: inputMode.detail,
+            detail: desktopConversationTimelineEntryDetailAppendingTurnOrdering(
+                inputMode.detail,
+                requestID: requestID,
+                role: "user"
+            ),
             sourceSurface: inputMode.sourceSurface
         )
         desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
@@ -10229,7 +10250,8 @@ struct DesktopSessionShellView: View {
     private func desktopPersistAuthoritativeReplyIfNeeded(
         requestID: String,
         text: String?,
-        conversationKey: String
+        conversationKey: String,
+        completionTimingLabel: String? = nil
     ) {
         let normalizedText = text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard !normalizedText.isEmpty else {
@@ -10241,7 +10263,10 @@ struct DesktopSessionShellView: View {
             speaker: "Selene",
             posture: "authoritative_reply_text",
             body: normalizedText,
-            detail: "",
+            detail: desktopAuthoritativeReplyTimelineEntryDetail(
+                requestID: requestID,
+                completionTimingLabel: completionTimingLabel
+            ),
             sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
         )
         desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
@@ -10265,7 +10290,11 @@ struct DesktopSessionShellView: View {
             speaker: "Selene",
             posture: "canonical_runtime_missing_reply_text",
             body: body,
-            detail: "Completed runtime turn without reply text.",
+            detail: desktopConversationTimelineEntryDetailAppendingTurnOrdering(
+                "Completed runtime turn without reply text.",
+                requestID: requestID,
+                role: "assistant_missing"
+            ),
             sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
         )
         desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
@@ -10339,7 +10368,15 @@ struct DesktopSessionShellView: View {
                 failureClass: failureClass,
                 detail: detail
             ),
-            detail: detail ?? summary,
+            detail: desktopConversationTimelineEntryDetailAppendingTurnOrdering(
+                [
+                    "reason_code=\(reasonCode ?? "not_available")",
+                    "failure_class=\(failureClass ?? "not_available")",
+                    detail ?? summary,
+                ].joined(separator: " | "),
+                requestID: requestID,
+                role: "assistant_failure"
+            ),
             sourceSurface: "CANONICAL_RUNTIME_FAILED"
         )
         desktopPersistConversationTimelineEntry(entry, conversationKey: conversationKey)
@@ -12613,6 +12650,9 @@ struct DesktopSessionShellView: View {
         }
 
         timelineEntries = desktopConversationTimelineEntriesSuppressingDuplicateTransientUserText(timelineEntries)
+        timelineEntries = desktopConversationTimelineEntriesSuppressingRetryableBridgeFailures(timelineEntries)
+        timelineEntries = desktopConversationTimelineEntriesPreferringSequencedTurnEntries(timelineEntries)
+        timelineEntries = desktopConversationTimelineEntriesInStableTurnOrder(timelineEntries)
 
         guard !timelineEntries.isEmpty
             || dominantPosture == "SESSION_SUSPENDED_VISIBLE"
@@ -12767,6 +12807,9 @@ struct DesktopSessionShellView: View {
         }
 
         timelineEntries = desktopConversationTimelineEntriesSuppressingDuplicateTransientUserText(timelineEntries)
+        timelineEntries = desktopConversationTimelineEntriesSuppressingRetryableBridgeFailures(timelineEntries)
+        timelineEntries = desktopConversationTimelineEntriesPreferringSequencedTurnEntries(timelineEntries)
+        timelineEntries = desktopConversationTimelineEntriesInStableTurnOrder(timelineEntries)
 
         let explicitVoiceLivePreviewAttachmentState =
             desktopConversationExplicitVoiceLivePreviewAttachmentState(for: timelineEntries)
@@ -12920,20 +12963,36 @@ struct DesktopSessionShellView: View {
     }
 
     private func desktopVoiceAnswerThoughtDurationLabel(requestID: String) -> String? {
+        desktopCompletedAnswerPresentationTimingLabel(requestID: requestID)
+    }
+
+    private func desktopCompletedAnswerPresentationTimingLabel(requestID: String) -> String? {
         guard desktopVoiceAnswerPresentationPendingRequestID == requestID,
               let startedNS = desktopVoiceAnswerPresentationStartedNS else {
             return nil
         }
 
+        let elapsedSeconds = desktopAnswerPresentationElapsedSeconds(startedNS: startedNS)
+        return desktopAnswerPresentationDurationLabel(elapsedSeconds: elapsedSeconds)
+    }
+
+    private func desktopAnswerPresentationElapsedSeconds(startedNS: UInt64) -> Double {
         let nowNS = Swift.max(DispatchTime.now().uptimeNanoseconds, 1)
-        let elapsedSeconds = nowNS > startedNS
+        return nowNS > startedNS
             ? Double(nowNS - startedNS) / 1_000_000_000.0
             : 0
-        if elapsedSeconds < 2.0 {
-            return "Thought for a few seconds"
+    }
+
+    private func desktopAnswerPresentationDurationLabel(elapsedSeconds: Double) -> String {
+        if elapsedSeconds < 1.0 {
+            return "Answered in <1s"
         }
 
-        return "Thought for \(Swift.max(1, Int(elapsedSeconds.rounded())))s"
+        if elapsedSeconds < 10.0 {
+            return "Answered in \(String(format: "%.1f", elapsedSeconds))s"
+        }
+
+        return "Answered in \(Swift.max(1, Int(elapsedSeconds.rounded())))s"
     }
 
     private var desktopConversationInlineProgressLabel: String {
@@ -13019,6 +13078,38 @@ struct DesktopSessionShellView: View {
         )
     }
 
+    private func desktopAuthoritativeReplyTimelineEntryDetail(
+        requestID: String? = nil,
+        completionTimingLabel: String?
+    ) -> String {
+        let baseDetail = "Cloud-authored authoritative reply text only. This shell does not fabricate local answer content."
+        var detailLines = [baseDetail]
+        guard let completionTimingLabel = completionTimingLabel?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !completionTimingLabel.isEmpty else {
+            if let requestID {
+                detailLines.append(
+                    desktopConversationTurnOrderingDetail(
+                        requestID: requestID,
+                        role: "assistant"
+                    )
+                )
+            }
+            return detailLines.joined(separator: "\n")
+        }
+
+        detailLines.append("answer_duration_label=\(completionTimingLabel)")
+        if let requestID {
+            detailLines.append(
+                desktopConversationTurnOrderingDetail(
+                    requestID: requestID,
+                    role: "assistant"
+                )
+            )
+        }
+        return detailLines.joined(separator: "\n")
+    }
+
     private func desktopRevealAuthoritativeReply(
         outcomeState: DesktopCanonicalRuntimeOutcomeState,
         requestID: String,
@@ -13029,11 +13120,13 @@ struct DesktopSessionShellView: View {
         presentProvenanceSummary: String,
         completionTimingLabel: String? = nil
     ) {
+        let resolvedCompletionTimingLabel = completionTimingLabel
+            ?? desktopCompletedAnswerPresentationTimingLabel(requestID: requestID)
         desktopAuthoritativeReplyRenderState = desktopAuthoritativeReplyRenderState(
             outcomeState: outcomeState,
             missingSummary: missingReplySummary,
             presentSummary: presentReplySummary,
-            completionTimingLabel: completionTimingLabel
+            completionTimingLabel: resolvedCompletionTimingLabel
         )
         desktopAuthoritativeReplyProvenanceRenderState = desktopAuthoritativeReplyProvenanceRenderState(
             outcomeState: outcomeState,
@@ -13043,7 +13136,8 @@ struct DesktopSessionShellView: View {
         desktopPersistAuthoritativeReplyIfNeeded(
             requestID: requestID,
             text: outcomeState.authoritativeResponseText,
-            conversationKey: conversationKey
+            conversationKey: conversationKey,
+            completionTimingLabel: resolvedCompletionTimingLabel
         )
 
         let normalizedReplyText = outcomeState.authoritativeResponseText?
@@ -13055,7 +13149,10 @@ struct DesktopSessionShellView: View {
                     speaker: "Selene",
                     posture: "authoritative_reply_text",
                     body: normalizedReplyText,
-                    detail: "Cloud-authored authoritative reply text only. This shell does not fabricate local answer content.",
+                    detail: desktopAuthoritativeReplyTimelineEntryDetail(
+                        requestID: requestID,
+                        completionTimingLabel: resolvedCompletionTimingLabel
+                    ),
                     sourceSurface: "CANONICAL_RUNTIME_COMPLETED"
                 )
             )
@@ -17461,8 +17558,7 @@ struct DesktopSessionShellView: View {
         _ entry: DesktopConversationTimelineEntryState
     ) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            if desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry),
-               let completionTimingLabel = desktopAuthoritativeReplyRenderState?.completionTimingLabel {
+            if let completionTimingLabel = desktopConversationCompletionTimingLabel(for: entry) {
                 Text(completionTimingLabel)
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(Color.secondary.opacity(0.72))
@@ -17757,6 +17853,173 @@ struct DesktopSessionShellView: View {
         text.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
     }
 
+    private func desktopConversationTimelineEntryDetailAppendingTurnOrdering(
+        _ detail: String,
+        requestID: String,
+        role: String
+    ) -> String {
+        let normalizedDetail = detail.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedDetail.contains("turn_pair_id=") {
+            return normalizedDetail
+        }
+
+        let orderingDetail = desktopConversationTurnOrderingDetail(
+            requestID: requestID,
+            role: role
+        )
+        return normalizedDetail.isEmpty
+            ? orderingDetail
+            : "\(normalizedDetail)\n\(orderingDetail)"
+    }
+
+    private func desktopConversationTurnOrderingDetail(
+        requestID: String,
+        role: String
+    ) -> String {
+        var fields = [
+            "request_id=\(requestID)",
+            "turn_pair_id=\(requestID)",
+            "timeline_role=\(role)",
+        ]
+        if let clientSequence = desktopConversationClientSequence(fromRequestID: requestID) {
+            fields.append("client_sequence=\(clientSequence)")
+        }
+        return fields.joined(separator: " | ")
+    }
+
+    private func desktopConversationClientSequence(fromRequestID requestID: String) -> UInt64? {
+        guard let suffix = requestID.split(separator: "_").last else {
+            return nil
+        }
+        return UInt64(suffix)
+    }
+
+    private func desktopConversationTimelineDetailValue(
+        _ detail: String,
+        key: String
+    ) -> String? {
+        let prefix = "\(key)="
+        for rawLine in detail.split(separator: "\n", omittingEmptySubsequences: false) {
+            for component in String(rawLine).components(separatedBy: "|") {
+                let trimmedComponent = component.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard trimmedComponent.hasPrefix(prefix) else {
+                    continue
+                }
+
+                let value = String(trimmedComponent.dropFirst(prefix.count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                return value.isEmpty ? nil : value
+            }
+        }
+
+        return nil
+    }
+
+    private func desktopConversationTimelineEntryRequestID(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> String? {
+        for stableIDPrefix in [
+            "user::",
+            "selene::",
+            "selene_missing_reply::",
+            "selene_failure::",
+        ] where entry.stableID.hasPrefix(stableIDPrefix) {
+            let requestID = String(entry.stableID.dropFirst(stableIDPrefix.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return requestID.isEmpty ? nil : requestID
+        }
+
+        return desktopConversationTimelineDetailValue(entry.detail, key: "request_id")
+    }
+
+    private func desktopConversationTimelineEntryClientSequence(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> UInt64? {
+        if let clientSequenceText = desktopConversationTimelineDetailValue(
+            entry.detail,
+            key: "client_sequence"
+        ),
+            let clientSequence = UInt64(clientSequenceText) {
+            return clientSequence
+        }
+
+        guard let requestID = desktopConversationTimelineEntryRequestID(entry) else {
+            return nil
+        }
+        return desktopConversationClientSequence(fromRequestID: requestID)
+    }
+
+    private func desktopConversationTimelineEntryHasTurnOrder(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        desktopConversationTimelineEntryClientSequence(entry) != nil
+    }
+
+    private func desktopConversationTimelineEntryRoleRank(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> Int {
+        if entry.isUserAuthored {
+            return 0
+        }
+
+        if entry.stableID.hasPrefix("selene_missing_reply::")
+            || entry.stableID.hasPrefix("selene_failure::")
+            || entry.posture == "canonical_runtime_failure_text"
+            || entry.posture == "canonical_runtime_missing_reply_text" {
+            return 3
+        }
+
+        if entry.posture.contains("pending") {
+            return 1
+        }
+
+        return 2
+    }
+
+    private func desktopConversationTimelineEntriesPreferringSequencedTurnEntries(
+        _ timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> [DesktopConversationTimelineEntryState] {
+        timelineEntries.filter { entry in
+            if desktopConversationTimelineEntryHasTurnOrder(entry) {
+                return true
+            }
+
+            return !timelineEntries.contains { otherEntry in
+                otherEntry.id != entry.id
+                    && desktopConversationTimelineEntryHasTurnOrder(otherEntry)
+                    && desktopConversationTimelineEntriesRenderSameTurn(entry, otherEntry)
+            }
+        }
+    }
+
+    private func desktopConversationTimelineEntriesInStableTurnOrder(
+        _ timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> [DesktopConversationTimelineEntryState] {
+        let indexedEntries = timelineEntries.enumerated().map { index, entry in
+            (
+                index: index,
+                sequence: desktopConversationTimelineEntryClientSequence(entry),
+                roleRank: desktopConversationTimelineEntryRoleRank(entry),
+                entry: entry
+            )
+        }
+
+        return indexedEntries.sorted { lhs, rhs in
+            if let lhsSequence = lhs.sequence,
+               let rhsSequence = rhs.sequence {
+                if lhsSequence != rhsSequence {
+                    return lhsSequence < rhsSequence
+                }
+
+                if lhs.roleRank != rhs.roleRank {
+                    return lhs.roleRank < rhs.roleRank
+                }
+            }
+
+            return lhs.index < rhs.index
+        }.map { $0.entry }
+    }
+
     private func desktopConversationTimelineContainsSubmittedUserText(
         _ timelineEntries: [DesktopConversationTimelineEntryState],
         candidateText: String
@@ -17781,6 +18044,48 @@ struct DesktopSessionShellView: View {
                 || entry.sourceSurface == "KEYBOARD_TYPED_TURN_SUBMITTED"
                 || entry.sourceSurface == "EXPLICIT_VOICE_SUBMITTED"
         }
+    }
+
+    private func desktopConversationSubmittedUserTextsMatch(
+        _ lhs: String,
+        _ rhs: String
+    ) -> Bool {
+        let lhs = desktopConversationNormalizedSubmittedUserText(lhs)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".…"))
+        let rhs = desktopConversationNormalizedSubmittedUserText(rhs)
+            .trimmingCharacters(in: CharacterSet(charactersIn: ".…"))
+        guard !lhs.isEmpty, !rhs.isEmpty else {
+            return false
+        }
+
+        return lhs == rhs || lhs.hasPrefix(rhs) || rhs.hasPrefix(lhs)
+    }
+
+    private func desktopConversationTimelineEntryIsSubmittedUserPreviewText(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        entry.posture == "typed_turn_submitted_continuity"
+            || entry.posture == "explicit_voice_submitted_continuity"
+            || entry.posture == "explicit_voice_live_preview"
+            || entry.posture == "wake_voice_live_preview"
+            || entry.posture == "explicit_voice_pending_preview"
+            || entry.posture == "wake_voice_pending_preview"
+            || entry.posture == "typed_turn_pending_preview"
+            || entry.sourceSurface == "KEYBOARD_TYPED_TURN_SUBMITTED"
+            || entry.sourceSurface == "EXPLICIT_VOICE_SUBMITTED"
+            || entry.sourceSurface == "EXPLICIT_VOICE_LISTENING"
+            || entry.sourceSurface == "WAKE_TRIGGERED_VOICE_LISTENING"
+            || entry.sourceSurface == "EXPLICIT_VOICE_PENDING"
+            || entry.sourceSurface == "WAKE_TRIGGERED_VOICE_PENDING"
+    }
+
+    private func desktopConversationTimelineEntryIsCanonicalUserText(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        entry.posture == "current_user_turn_text"
+            || entry.posture == "archived_user_turn_text"
+            || entry.sourceSurface == "SESSION_ACTIVE_VISIBLE"
+            || entry.sourceSurface == "SESSION_SOFT_CLOSED_VISIBLE"
     }
 
     private func desktopConversationTimelineEntryIsTransientSubmittedUserText(
@@ -17815,7 +18120,19 @@ struct DesktopSessionShellView: View {
             let normalizedBody = desktopConversationNormalizedSubmittedUserText(entry.body)
             if entry.isUserAuthored,
                !normalizedBody.isEmpty,
-               desktopConversationTimelineEntryIsTransientSubmittedUserText(entry),
+               desktopConversationTimelineEntryIsSubmittedUserPreviewText(entry),
+               !desktopConversationTimelineEntryHasTurnOrder(entry),
+               desktopConversationTimelineEntriesContainCanonicalUserText(
+                   timelineEntries,
+                   matching: entry.body
+               ) {
+                continue
+            }
+
+            if entry.isUserAuthored,
+               !normalizedBody.isEmpty,
+               desktopConversationTimelineEntryIsSubmittedUserPreviewText(entry),
+               !desktopConversationTimelineEntryHasTurnOrder(entry),
                visibleUserTexts.contains(normalizedBody) {
                 continue
             }
@@ -17825,6 +18142,33 @@ struct DesktopSessionShellView: View {
             if entry.isUserAuthored, !normalizedBody.isEmpty {
                 visibleUserTexts.insert(normalizedBody)
             }
+        }
+
+        return filteredEntries
+    }
+
+    private func desktopConversationTimelineEntriesContainCanonicalUserText(
+        _ timelineEntries: [DesktopConversationTimelineEntryState],
+        matching candidateText: String
+    ) -> Bool {
+        timelineEntries.contains { entry in
+            entry.isUserAuthored
+                && desktopConversationTimelineEntryIsCanonicalUserText(entry)
+                && desktopConversationSubmittedUserTextsMatch(entry.body, candidateText)
+        }
+    }
+
+    private func desktopConversationTimelineEntriesSuppressingRetryableBridgeFailures(
+        _ timelineEntries: [DesktopConversationTimelineEntryState]
+    ) -> [DesktopConversationTimelineEntryState] {
+        var filteredEntries: [DesktopConversationTimelineEntryState] = []
+
+        for entry in timelineEntries {
+            if desktopConversationTimelineEntryIsRetryableBridgeFailureText(entry) {
+                continue
+            }
+
+            filteredEntries.append(entry)
         }
 
         return filteredEntries
@@ -17860,6 +18204,56 @@ struct DesktopSessionShellView: View {
             || entry.posture == "archived_selene_turn_text"
             || entry.sourceSurface == "SESSION_ACTIVE_VISIBLE"
             || entry.sourceSurface == "SESSION_SOFT_CLOSED_VISIBLE"
+    }
+
+    private func desktopConversationTimelineEntryIsRetryableBridgeFailureText(
+        _ entry: DesktopConversationTimelineEntryState
+    ) -> Bool {
+        let normalizedBody = entry.body.lowercased()
+        let normalizedDetail = entry.detail.lowercased()
+        let isGenericRetryableFailureText =
+            normalizedBody.contains("i couldn't answer that just now. please try again.")
+            || normalizedBody.contains("i couldn’t answer that just now. please try again.")
+        let isRetryableFailureDetail =
+            normalizedDetail.contains("failure_class=retryableruntime")
+            || normalizedDetail.contains("desktop_runtime_bridge_failure")
+
+        return entry.posture == "canonical_runtime_failure_text"
+            && entry.sourceSurface == "CANONICAL_RUNTIME_FAILED"
+            && (isRetryableFailureDetail
+                || isGenericRetryableFailureText
+                || normalizedBody.contains("desktop runtime bridge did not complete"))
+    }
+
+    private func desktopConversationCompletionTimingLabel(
+        for entry: DesktopConversationTimelineEntryState
+    ) -> String? {
+        if let timingLabel = desktopConversationCompletionTimingLabel(from: entry.detail) {
+            return timingLabel
+        }
+
+        guard desktopConversationShouldAttachAuthoritativeReplyArtifacts(to: entry) else {
+            return nil
+        }
+
+        return desktopAuthoritativeReplyRenderState?.completionTimingLabel?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func desktopConversationCompletionTimingLabel(from detail: String) -> String? {
+        let marker = "answer_duration_label="
+        for rawLine in detail.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = String(rawLine)
+            guard line.hasPrefix(marker) else {
+                continue
+            }
+
+            let timingLabel = String(line.dropFirst(marker.count))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return timingLabel.isEmpty ? nil : timingLabel
+        }
+
+        return nil
     }
 
     private func desktopConversationShouldSuppressSupportRailArchivedRecentSliceTranscript() -> Bool {
@@ -23923,6 +24317,7 @@ struct DesktopSessionShellView: View {
             if let pendingVoiceAnswerRequestID = desktopVoiceAnswerPresentationPendingRequestID {
                 desktopClearVoiceAnswerPresentationTiming(requestID: pendingVoiceAnswerRequestID)
             }
+            desktopBeginVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
 
             let outcomeState = await desktopCanonicalRuntimeBridge.dispatchPreparedTypedTurnRequest(
                 ingressContext
@@ -23931,6 +24326,7 @@ struct DesktopSessionShellView: View {
                 "typed dispatch outcome id=\(pendingRequest.id) phase=\(outcomeState.phase.rawValue)"
             )
             guard desktopTypedTurnPendingRequest?.id == pendingRequest.id else {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 return
             }
 
@@ -23955,6 +24351,7 @@ struct DesktopSessionShellView: View {
                 } else {
                     await synchronizeDesktopWakeListenerLifecycleState()
                 }
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 desktopTypedTurnPendingRequest = nil
                 return
             }
@@ -23963,6 +24360,7 @@ struct DesktopSessionShellView: View {
                 requestID: pendingRequest.id,
                 source: "typed"
             ) != nil {
+                desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
                 desktopTypedTurnPendingRequest = nil
                 await synchronizeDesktopWakeListenerLifecycleState()
                 return
@@ -24026,6 +24424,7 @@ struct DesktopSessionShellView: View {
                     conversationKey: conversationKey
                 )
             }
+            desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
             if !desktopComposerVoiceModeAwaitingReplyPlaybackCompletion {
                 desktopTypedTurnShouldResumeComposerVoiceModeAfterReply = false
             }
@@ -24055,6 +24454,7 @@ struct DesktopSessionShellView: View {
             desktopAuthoritativeReplyProvenanceRenderState = nil
             desktopAuthoritativeReplyPlaybackController.reset()
             desktopAuthoritativeReplyPlaybackState = .idle
+            desktopClearVoiceAnswerPresentationTiming(requestID: pendingRequest.id)
             if pendingRequest.origin == .keyboardComposer {
                 desktopSubmittedUserContinuityPreviewState = DesktopSubmittedUserContinuityPreviewState(
                     requestID: pendingRequest.id,
